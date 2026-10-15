@@ -5,5 +5,5 @@ edition = "2024"
 description = "DID, key management and verifiable credential primitives"
 license = "Apache-2.0"
 repository = "https://github.com/impierce/identity-kit"
-keywords = ["did", "ssi", "verifiable-credentials", "vc"]
+keywords = ["did", "ssi", "digital-credentials", "vc"]
 categories = ["cryptography", "authentication"]
