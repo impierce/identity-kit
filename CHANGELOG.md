@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3](https://github.com/impierce/identity-kit/compare/v0.0.2...v0.0.3) - 2026-10-17
+
+### Added
+
+- *(did)* add `Did` and `DidUrl` types ([#4](https://github.com/impierce/identity-kit/pull/4))
+
 ## [0.0.2](https://github.com/impierce/identity-kit/compare/v0.0.1...v0.0.2) - 2026-10-17
 
 ### Changed
