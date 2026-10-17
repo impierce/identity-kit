@@ -7,6 +7,7 @@
 - `docs/DESIGN.md` is the architecture. Follow it unless there is a concrete reason not to, and record any deviation as an ADR in `docs/adr/`.
 - The work breakdown is tracked as GitHub Issues labelled `ready-for-agent`, linked by native issue dependencies. Pick the lowest-numbered open issue with no open blockers, one pull request per issue, each with its tests.
 - `CONTRIBUTING.md` lists the checks CI runs and the pull request conventions. Read it before writing a pull request title.
+- `docs/FEATURES.md` is the feature checklist. When a pull request implements a row, flip its status to ✅ in that pull request.
 
 ## Ground rules
 
