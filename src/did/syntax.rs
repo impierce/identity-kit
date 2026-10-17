@@ -363,6 +363,35 @@ impl DidUrl {
         }
     }
 
+    /// A copy of this URL with its DID replaced by `did`, keeping path, query and fragment.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use identity_kit::did::{Did, DidUrl};
+    ///
+    /// let url = DidUrl::parse("did:example:123/path?versionId=1#key-1")?;
+    /// let moved = url.with_did(Did::parse("did:web:example.com")?);
+    /// assert_eq!(moved.as_str(), "did:web:example.com/path?versionId=1#key-1");
+    /// assert_eq!(moved.fragment(), Some("key-1"));
+    /// # Ok::<(), identity_kit::did::DidError>(())
+    /// ```
+    #[must_use]
+    pub fn with_did(&self, did: Did) -> Self {
+        let old_len = self.did.0.len();
+        let suffix = &self.url[old_len..];
+        let mut url = String::with_capacity(did.0.len() + suffix.len());
+        url.push_str(&did.0);
+        url.push_str(suffix);
+        let shift = |offset: usize| offset - old_len + did.0.len();
+        Self {
+            url,
+            query_start: self.query_start.map(shift),
+            fragment_start: self.fragment_start.map(shift),
+            did,
+        }
+    }
+
     /// A copy of this URL without a fragment.
     #[must_use]
     pub fn without_fragment(&self) -> Self {
