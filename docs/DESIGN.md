@@ -18,14 +18,16 @@ replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did
    carried as data.
 4. **The key store is shaped by remote signers.** Opaque key ids, one algorithm per key, optional
    key generation, declared algorithm support, JWS-ready signatures. A KMS or HSM is the design
-   target; in-memory and file-based software keys are the development backends.
+   target; in-memory and file-based software keys are the development backends. The crate ships
+   vendor-neutral backends only; vendor-specific ones (cloud KMS services) live in their own crates
+   and implement `KeyStore`.
 5. **Specification conformance is the test oracle.** W3C and method test vectors, RFC JOSE vectors,
    one behavioural suite every key backend must pass, determinism tests. No fixtures of any other
    library's output.
 6. **Publishable from day one.** No git or path dependencies. `cargo publish --dry-run` runs on
    every PR. Small, maintained building blocks only: RustCrypto (`ed25519-dalek`, `p256`, `k256`,
    `rsa`, `sha2`), `jsonwebtoken`, `multibase`, `unsigned-varint`, `url`, `serde_json`, `indexmap`,
-   `sd-jwt-payload`, `aws-sdk-kms`, `cryptoki`.
+   `sd-jwt-payload`, `cryptoki`.
 7. **Developer experience.** A `prelude` per layer; docs.rs built with `all-features` and
    `doc_cfg`; `#![forbid(unsafe_code)]`; MSRV pinned; one `CHANGELOG.md`; `release-plz`.
 
@@ -38,7 +40,7 @@ identity-kit/
 │   └── src/
 │       ├── did/               # Did, DidUrl, DidDocument, VerificationMethod, Service, resolution metadata
 │       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode
-│       ├── keys/              # KeyStore, KeySigner, KeyId, KeySpec; backends in_memory, software, aws_kms, pkcs11
+│       ├── keys/              # KeyStore, KeySigner, KeyId, KeySpec; backends in_memory, software, pkcs11
 │       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing
 │       ├── methods/           # key, jwk, web
 │       ├── vc/                # [vc] Jwt, Credential, Presentation, CredentialV2, EnvelopedVc, validation
@@ -60,7 +62,6 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `rsa`                | off     | `rsa`                                                         |
 | `in-memory`          | off     | test and development key store                                |
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
-| `aws-kms`            | off     | `aws-sdk-kms`, `aws-config`                                   |
 | `pkcs11`             | off     | `cryptoki`                                                    |
 | `vc`                 | on      | W3C VC/VP JWT profile and validators                          |
 | `sd-jwt`             | on      | `sd-jwt-payload`; implies `vc`                                |
@@ -146,12 +147,12 @@ the JWS raw `r || s` form at the trait boundary.
 
 Designed for remote signers first:
 
-- Keys are referenced by an opaque `KeyId` (a name, an AWS ARN or alias, a PKCS#11 label).
+- Keys are referenced by an opaque `KeyId` (a name, a PKCS#11 label, a cloud KMS key ARN).
 - Private keys never leave the backend; `sign` is remote and async.
 - Generation is optional: a KMS or HSM is usually provisioned out of band.
-- One algorithm per key. Backends declare which algorithms they support (AWS KMS: ES256, ES256K,
-  RS256, PS256, no EdDSA; PKCS#11: Ed25519, ECDSA, RSA depending on the module).
-- Backends convert their native signature encoding (DER for AWS KMS ECDSA) to raw `r || s`.
+- One algorithm per key. Backends declare which algorithms they support (PKCS#11: Ed25519, ECDSA,
+  RSA depending on the module).
+- Backends convert their native signature encoding (such as DER-encoded ECDSA) to raw `r || s`.
 - Callers cache public keys; a round trip per `kid` lookup is unacceptable.
 
 ```rust
@@ -174,7 +175,7 @@ pub struct KeySigner<'a> { store: &'a dyn KeyStore, key: KeyId, alg: JwsAlgorith
 
 Backends: `InMemoryKeyStore` (`in-memory`; optional deterministic seed for fixtures),
 `SoftwareKeyStore` (`software`; private JWK set file, permission check, `zeroize`, atomic write on
-generate), `AwsKmsKeyStore` (`aws-kms`), `Pkcs11KeyStore` (`pkcs11`). `keys::testsuite`
+generate), `Pkcs11KeyStore` (`pkcs11`). `keys::testsuite`
 (`test-vectors`) runs one behavioural suite against every backend.
 
 ## `resolver` and `methods`
@@ -225,8 +226,7 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 - DID documents: W3C DID Core JSON representation; did:key, did:jwk, did:web vectors.
 - JOSE: RFC 7515/7517/7638 vectors; cross-verification against `jsonwebtoken` where it supports the
   algorithm and against `k256` for ES256K.
-- Key stores: `keys::testsuite` against every backend; AWS KMS against LocalStack and PKCS#11
-  against SoftHSM2 in CI.
+- Key stores: `keys::testsuite` against every backend; PKCS#11 against SoftHSM2 in CI.
 - Credentials: DIF DID configuration examples; SD-JWT VC draft examples; the `openid4vc` test suite
   once ported.
 - Determinism: same inputs produce byte-identical documents and configuration resources.
