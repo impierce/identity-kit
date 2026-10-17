@@ -10,6 +10,13 @@ keywords = ["did", "ssi", "digital-credentials", "vc"]
 categories = ["cryptography", "authentication"]
 include = ["/src", "/CHANGELOG.md", "/README.md", "/LICENSE"]
 
+[dependencies]
+serde = "1.0"
+thiserror = "2.0"
+
+[dev-dependencies]
+proptest = "1.0"
+
 [lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"
