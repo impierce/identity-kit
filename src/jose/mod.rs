@@ -22,7 +22,7 @@
 //! - `rsa`: RS256 and PS256, via `rsa`.
 
 mod algorithm;
-mod base64url;
+pub(crate) mod base64url;
 mod compact;
 mod error;
 mod jwk;

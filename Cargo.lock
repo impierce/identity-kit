@@ -615,6 +615,7 @@ dependencies = [
  "async-trait",
  "base64",
  "ed25519-dalek 3.0.0",
+ "getrandom 0.4.3",
  "indexmap",
  "jsonwebtoken",
  "k256",
@@ -624,6 +625,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "thiserror",
  "tokio",
  "zeroize",
@@ -701,6 +703,12 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 dependencies = [
  "spin",
 ]
+
+[[package]]
+name = "lexopt"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "803ec87c9cfb29b9d2633f20cba1f488db3fd53f2158b1024cbefb47ba05d413"
 
 [[package]]
 name = "libc"
@@ -1531,6 +1539,16 @@ dependencies = [
  "group 0.14.0",
  "hybrid-array",
  "primefield",
+]
+
+[[package]]
+name = "xtask"
+version = "0.0.0"
+dependencies = [
+ "identity-kit",
+ "lexopt",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
