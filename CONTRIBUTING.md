@@ -21,6 +21,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
 cargo deny check
 ```
 
+CI also measures test coverage and reports it on the pull request via [Codecov](https://codecov.io/gh/impierce/identity-kit).
+To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and run `cargo llvm-cov --all-features --open`.
+
 ## Pull requests
 
 Pull requests are squash-merged, so the **pull request title** becomes the commit message on `main`.

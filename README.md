@@ -1,6 +1,7 @@
 ![banner](https://github.com/impierce/identity-kit/raw/HEAD/.github/banner.png)
 
 [![QA](https://github.com/impierce/identity-kit/actions/workflows/qa.yml/badge.svg)](https://github.com/impierce/identity-kit/actions/workflows/qa.yml)
+[![Coverage](https://codecov.io/gh/impierce/identity-kit/graph/badge.svg)](https://codecov.io/gh/impierce/identity-kit)
 [![crates.io](https://img.shields.io/crates/v/identity-kit.svg)](https://crates.io/crates/identity-kit)
 [![docs.rs](https://img.shields.io/docsrs/identity-kit)](https://docs.rs/identity-kit)
 [![License](https://img.shields.io/crates/l/identity-kit.svg)](https://github.com/impierce/identity-kit/blob/HEAD/LICENSE)
