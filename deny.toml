@@ -8,7 +8,11 @@ all-features = true
 # Also fail on unmaintained crates anywhere in the graph and on yanked versions.
 unmaintained = "all"
 yanked = "deny"
-ignore = []
+ignore = [
+    # Marvin attack: timing side channel in `rsa` private-key operations, no fixed version.
+    # This crate uses `rsa` for public-key verification only; see docs/adr/0001-rsa-verification-only.md.
+    { id = "RUSTSEC-2023-0071", reason = "rsa is used for signature verification only; no private-key operations" },
+]
 
 [licenses]
 # Permissive licenses compatible with distributing this crate under Apache-2.0.
