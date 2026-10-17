@@ -121,6 +121,11 @@ impl<T> OneOrMany<T> {
     }
 }
 
+/// `skip_serializing_if` for optional lists: `None` and empty lists are omitted alike.
+fn is_none_or_empty<T>(value: &Option<OneOrMany<T>>) -> bool {
+    value.as_ref().is_none_or(OneOrMany::is_empty)
+}
+
 impl<T> From<T> for OneOrMany<T> {
     fn from(value: T) -> Self {
         Self::One(value)
@@ -808,8 +813,8 @@ pub struct DidDocument {
     /// Other identifiers of the subject.
     #[serde(rename = "alsoKnownAs", default, skip_serializing_if = "Vec::is_empty")]
     pub also_known_as: Vec<Uri>,
-    /// The DIDs whose controllers may change this document.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The DIDs whose controllers may change this document; omitted when `None` or empty.
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub controller: Option<OneOrMany<Did>>,
     /// Verification methods that relationships may reference.
     #[serde(

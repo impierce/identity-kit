@@ -298,9 +298,12 @@ impl ResolutionResult {
 }
 
 impl fmt::Display for ResolutionResult {
-    /// The result as compact JSON.
+    /// The result as compact JSON, or a placeholder naming the reason when it cannot be
+    /// serialized (a verification method holding a private JWK).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let json = serde_json::to_string(self).map_err(|_| fmt::Error)?;
-        f.write_str(&json)
+        match serde_json::to_string(self) {
+            Ok(json) => f.write_str(&json),
+            Err(e) => write!(f, "<unserializable resolution result: {e}>"),
+        }
     }
 }

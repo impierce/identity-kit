@@ -6,7 +6,8 @@ use core::str::FromStr;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{Did, DidError, DidUrl};
+use super::syntax::{check_len, scan_url_suffix};
+use super::{DEFAULT_MAX_LEN, Did, DidError, DidUrl};
 
 /// A reference to a resource of a DID document: either an absolute [`DidUrl`] or a relative DID
 /// URL (DID Core §3.2.2) such as `#key-1`, which is resolved against the document's `id`.
@@ -43,16 +44,18 @@ pub enum DidUrlReference {
 }
 
 impl DidUrlReference {
-    /// Parses a DID URL or a relative DID URL.
+    /// Parses a DID URL or a relative DID URL, rejecting input longer than [`DEFAULT_MAX_LEN`]
+    /// bytes.
     ///
     /// # Errors
     ///
     /// A [`DidError`] when the input is neither a valid DID URL nor a relative reference starting
-    /// with `/`, `?` or `#` whose components are valid per RFC 3986.
+    /// with `/`, `?` or `#` whose components are valid per RFC 3986. Positions in the error are
+    /// byte offsets into the input.
     pub fn parse(s: &str) -> Result<Self, DidError> {
         if s.starts_with(['/', '?', '#']) {
-            // Validate the components by joining them to a placeholder DID.
-            placeholder_did().join(s)?;
+            check_len(s, DEFAULT_MAX_LEN)?;
+            scan_url_suffix(s, 0)?;
             Ok(Self::Relative(s.to_owned()))
         } else {
             DidUrl::parse(s).map(Self::Absolute)
@@ -93,11 +96,6 @@ impl DidUrlReference {
             Self::Relative(_) => self.resolve(base).is_ok_and(|resolved| &resolved == url),
         }
     }
-}
-
-/// A DID that any relative reference can be joined to, for validation.
-fn placeholder_did() -> Did {
-    Did::parse("did:example:0").expect("`did:example:0` is a valid DID")
 }
 
 impl fmt::Display for DidUrlReference {

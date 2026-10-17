@@ -516,7 +516,7 @@ fn validate_did(s: &str, max_len: usize) -> Result<(), DidError> {
     Ok(())
 }
 
-fn check_len(s: &str, max_len: usize) -> Result<(), DidError> {
+pub(super) fn check_len(s: &str, max_len: usize) -> Result<(), DidError> {
     if s.len() > max_len {
         return Err(DidError::TooLong { max: max_len });
     }
@@ -579,7 +579,10 @@ fn scan_did(s: &str) -> Result<usize, DidError> {
 /// Scans `path-abempty [ "?" query ] [ "#" fragment ]` from `start` to the end of `s`.
 ///
 /// Returns the byte offsets of the `?` and the `#`, if present.
-fn scan_url_suffix(s: &str, start: usize) -> Result<(Option<usize>, Option<usize>), DidError> {
+pub(super) fn scan_url_suffix(
+    s: &str,
+    start: usize,
+) -> Result<(Option<usize>, Option<usize>), DidError> {
     let bytes = s.as_bytes();
     let mut i = start;
 

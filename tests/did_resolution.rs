@@ -2,8 +2,9 @@
 
 use identity_kit::did::{
     APPLICATION_DID_JSON, APPLICATION_DID_LD_JSON, Did, DidDocument, DidError, DocumentMetadata,
-    ResolutionError, ResolutionMetadata, ResolutionOptions, ResolutionResult,
+    ResolutionError, ResolutionMetadata, ResolutionOptions, ResolutionResult, VerificationMaterial,
 };
+use identity_kit::jose::Jwk;
 use serde_json::{Value, json};
 
 fn canonical(json: &str) -> String {
@@ -199,4 +200,35 @@ fn resolution_results() {
     let minimal: ResolutionResult =
         serde_json::from_str(r#"{"didDocument":{"id":"did:example:123"}}"#).unwrap();
     assert_eq!(minimal.into_document().unwrap().id, document.id);
+}
+
+#[test]
+fn display_names_the_reason_when_the_result_cannot_be_serialized() {
+    let mut document: DidDocument = serde_json::from_value(json!({
+        "id": "did:example:123",
+        "verificationMethod": [{
+            "id": "did:example:123#key-1",
+            "type": "JsonWebKey2020",
+            "controller": "did:example:123",
+            "publicKeyJwk": {"kty": "OKP", "crv": "Ed25519", "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}
+        }]
+    }))
+    .unwrap();
+    // A private JWK cannot be written into a document, so the result has no JSON form.
+    let private: Jwk = serde_json::from_value(json!({
+        "kty": "OKP", "crv": "Ed25519",
+        "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        "d": "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"
+    }))
+    .unwrap();
+    document.verification_method[0].material =
+        VerificationMaterial::PublicKeyJwk(Box::new(private));
+    let result = ResolutionResult::new(document);
+    assert!(serde_json::to_string(&result).is_err());
+    let shown = result.to_string();
+    assert!(
+        shown.starts_with("<unserializable resolution result: "),
+        "{shown}"
+    );
+    assert!(shown.contains("private"), "{shown}");
 }

@@ -7,9 +7,9 @@
 //! serializing it again gives the same compact JSON, member for member, as the example itself.
 
 use identity_kit::did::{
-    Context, Did, DidDocument, DidUrl, DidUrlReference, DocumentError, MethodRef, MethodType,
-    OneOrMany, Service, ServiceEndpoint, Uri, VerificationMaterial, VerificationMethod,
-    VerificationRelationship,
+    Context, DEFAULT_MAX_LEN, Did, DidDocument, DidError, DidUrl, DidUrlReference, DocumentError,
+    MethodRef, MethodType, OneOrMany, Service, ServiceEndpoint, Uri, VerificationMaterial,
+    VerificationMethod, VerificationRelationship,
 };
 use identity_kit::jose::Jwk;
 use indexmap::IndexMap;
@@ -625,8 +625,9 @@ fn examples_with_public_key_base58_are_rejected() {
 
 #[test]
 fn context_is_first_and_empties_are_omitted() {
-    let json = r#"{"service":[],"id":"did:example:1","foo":1,"verificationMethod":[],"@context":"https://www.w3.org/ns/did/v1","authentication":[]}"#;
+    let json = r#"{"service":[],"id":"did:example:1","controller":[],"foo":1,"verificationMethod":[],"@context":"https://www.w3.org/ns/did/v1","authentication":[]}"#;
     let document = parse(json);
+    assert_eq!(document.controller, Some(OneOrMany::Many(Vec::new())));
     assert_eq!(
         serde_json::to_string(&document).unwrap(),
         r#"{"@context":"https://www.w3.org/ns/did/v1","id":"did:example:1","foo":1}"#
@@ -1332,27 +1333,129 @@ fn uris_are_checked_and_kept_verbatim() {
     );
     assert!(Uri::parse("did:example:123").unwrap().is_did_url());
     assert!(!Uri::parse("https://example.com").unwrap().is_did_url());
-    for invalid in [
-        "",
-        "no-scheme",
-        ":missing",
-        "1abc:x",
-        "ab_c:x",
-        "http://exa mple.com",
-        "http://a#b#c",
-        "http://%zz",
-        "http://%2",
-        "http://ü.example",
-        "http://a\"b",
-        "http://a<b>",
-        "http://a\\b",
-        "http://a{b}",
-        "http://a|b",
-        "http://a\x7f",
-        "/relative/path",
-        "#fragment",
+    for (invalid, expected) in [
+        (
+            "",
+            DidError::InvalidChar {
+                position: 0,
+                ch: ':',
+            },
+        ),
+        (
+            "no-scheme",
+            DidError::InvalidChar {
+                position: 9,
+                ch: ':',
+            },
+        ),
+        (
+            ":missing",
+            DidError::InvalidChar {
+                position: 0,
+                ch: ':',
+            },
+        ),
+        (
+            "1abc:x",
+            DidError::InvalidChar {
+                position: 0,
+                ch: '1',
+            },
+        ),
+        (
+            "ab_c:x",
+            DidError::InvalidChar {
+                position: 2,
+                ch: '_',
+            },
+        ),
+        (
+            "http://exa mple.com",
+            DidError::InvalidChar {
+                position: 10,
+                ch: ' ',
+            },
+        ),
+        (
+            "http://a#b#c",
+            DidError::InvalidChar {
+                position: 10,
+                ch: '#',
+            },
+        ),
+        (
+            "http://%zz",
+            DidError::InvalidPercentEncoding { position: 7 },
+        ),
+        (
+            "http://%2",
+            DidError::InvalidPercentEncoding { position: 7 },
+        ),
+        (
+            "http://ü.example",
+            DidError::InvalidChar {
+                position: 7,
+                ch: 'ü',
+            },
+        ),
+        (
+            "http://a\"b",
+            DidError::InvalidChar {
+                position: 8,
+                ch: '"',
+            },
+        ),
+        (
+            "http://a<b>",
+            DidError::InvalidChar {
+                position: 8,
+                ch: '<',
+            },
+        ),
+        (
+            "http://a\\b",
+            DidError::InvalidChar {
+                position: 8,
+                ch: '\\',
+            },
+        ),
+        (
+            "http://a{b}",
+            DidError::InvalidChar {
+                position: 8,
+                ch: '{',
+            },
+        ),
+        (
+            "http://a|b",
+            DidError::InvalidChar {
+                position: 8,
+                ch: '|',
+            },
+        ),
+        (
+            "http://a\x7f",
+            DidError::InvalidChar {
+                position: 8,
+                ch: '\x7f',
+            },
+        ),
+        (
+            "/relative/path",
+            DidError::InvalidChar {
+                position: 14,
+                ch: ':',
+            },
+        ),
+        (
+            "#fragment",
+            DidError::InvalidChar {
+                position: 9,
+                ch: ':',
+            },
+        ),
     ] {
-        assert!(Uri::parse(invalid).is_err(), "{invalid:?}");
+        assert_eq!(Uri::parse(invalid), Err(expected), "{invalid:?}");
         assert!(
             serde_json::from_str::<Uri>(&serde_json::to_string(invalid).unwrap()).is_err(),
             "{invalid:?}"
@@ -1396,17 +1499,37 @@ fn did_url_references_parse_resolve_and_round_trip() {
         );
         assert_eq!(input.parse::<DidUrlReference>().unwrap(), reference);
     }
-    for invalid in [
-        "",
-        "key-1",
-        "did:Example:1#k",
-        "#a#b",
-        "?a b",
-        "/p#a#b",
-        "https://example.com#k",
+    // Positions are byte offsets into the input, for relative references too.
+    for (invalid, expected) in [
+        ("", DidError::MissingScheme),
+        ("key-1", DidError::MissingScheme),
+        ("https://example.com#k", DidError::MissingScheme),
+        (
+            "did:Example:1#k",
+            DidError::InvalidMethodName { position: 4 },
+        ),
+        ("#a#b", DidError::InvalidFragment),
+        ("?a b", DidError::InvalidQuery),
+        ("/p#a#b", DidError::InvalidFragment),
+        ("/p q", DidError::InvalidPath),
+        ("#a%zz", DidError::InvalidPercentEncoding { position: 2 }),
+        ("/p?q=%4", DidError::InvalidPercentEncoding { position: 5 }),
     ] {
-        assert!(DidUrlReference::parse(invalid).is_err(), "{invalid}");
+        assert_eq!(
+            DidUrlReference::parse(invalid),
+            Err(expected),
+            "{invalid:?}"
+        );
     }
+    // The length limit applies to relative references as it does to DID URLs.
+    let longest = format!("#{}", "k".repeat(DEFAULT_MAX_LEN - 1));
+    assert!(DidUrlReference::parse(&longest).is_ok());
+    assert_eq!(
+        DidUrlReference::parse(&format!("{longest}k")),
+        Err(DidError::TooLong {
+            max: DEFAULT_MAX_LEN
+        })
+    );
     assert_eq!(
         DidUrlReference::from(url("did:example:1#k")),
         DidUrlReference::Absolute(url("did:example:1#k"))
