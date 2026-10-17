@@ -264,16 +264,27 @@ fn rsa_signatures_cross_check_with_jsonwebtoken() {
         ),
         Err(VerificationError::InvalidSignature)
     );
-    // A signature of another length than the modulus is malformed.
-    assert_eq!(
-        DefaultVerifier.verify(
-            JwsAlgorithm::PS256,
-            jws.signing_input(),
-            &ps256[1..],
-            &rfc7515_a2_key()
+    // The signature must be exactly as long as the modulus (RFC 7518 §3.5): the `rsa` crate
+    // reads it as an integer, so a leading zero byte dropped (one PS256 signature in 256 has
+    // one) or added would otherwise still verify.
+    for (alg, signature) in [
+        (JwsAlgorithm::PS256, ps256[1..].to_vec()),
+        (JwsAlgorithm::PS256, [&[0u8][..], &ps256].concat()),
+        (JwsAlgorithm::RS256, RFC7515_A2_SIGNATURE[1..].to_vec()),
+        (
+            JwsAlgorithm::RS256,
+            [&[0u8][..], RFC7515_A2_SIGNATURE].concat(),
         ),
-        Err(VerificationError::InvalidSignature)
-    );
+    ] {
+        assert_eq!(
+            DefaultVerifier.verify(alg, jws.signing_input(), &signature, &rfc7515_a2_key()),
+            Err(VerificationError::InvalidSignatureLength {
+                expected: 256,
+                actual: signature.len(),
+            }),
+            "{alg}"
+        );
+    }
 
     // An even modulus is not an RSA key.
     let even = Jwk::from_rsa_public(&[0xff, 0xfe], &[1, 0, 1]).unwrap();
