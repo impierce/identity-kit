@@ -29,11 +29,13 @@ To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-l
 Pull requests are squash-merged, so the **pull request title** becomes the commit message on `main`.
 It must follow [Conventional Commits](https://www.conventionalcommits.org/), which CI checks:
 
-- `feat: add did:key resolution`
+- `` feat: add `did:key` resolution ``
 - `fix(jwk): reject keys with missing curve parameters`
-- `feat!: rename the credential builder` (breaking change)
+- `feat!: rename credential builder` (breaking change)
 
 The title also determines the next version number and the changelog entry, so describe the change from a user's point of view.
+Write it in terse commit style: drop articles (_the_, _a_, _an_) and wrap code literals in backticks, as in `` feat(did): add `Did` and `DidUrl` types ``.
+Write `feat: add description to file`, not `feat: add a description to the file`.
 
 ## Releases
 

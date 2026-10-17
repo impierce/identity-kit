@@ -1,0 +1,247 @@
+# IdentityKit: Design
+
+`identity-kit` is a Rust library for decentralized identifiers (DIDs), key management behind a
+pluggable key store, and JWT-based verifiable credentials. It is published as **one crate** with
+Cargo features. Consumers today are `impierce/openid4vc` and `impierce/ssi-agent` (UniCore); it
+replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did-*` and `did-key`.
+
+## Principles
+
+1. **One crate, two layers, hard boundary.** Lower layer: `did`, `jose`, `keys`, `resolver`,
+   `methods`. Upper layer: `vc`, `sd_jwt_vc`, `domain_linkage`. Lower modules never import upper
+   ones. The upper modules are feature-gated so CI can prove the boundary (see Conformance).
+2. **Traits, not enums, for extension points.** A DID method implements `DidResolver` and/or
+   `DidProducer` and declares `MethodCapabilities`. A key backend implements `KeyStore` and declares
+   `KeyStoreCapabilities`. Adding either is a new module behind a feature plus registration; no
+   `match` over a closed enum anywhere in the library.
+3. **JWT/JWS and SD-JWT only.** No JSON-LD processing, no Data Integrity proofs. `@context` is
+   carried as data.
+4. **The key store is shaped by remote signers.** Opaque key ids, one algorithm per key, optional
+   key generation, declared algorithm support, JWS-ready signatures. A KMS or HSM is the design
+   target; in-memory and file-based software keys are the development backends. The crate ships
+   vendor-neutral backends only; vendor-specific ones (cloud KMS services) live in their own crates
+   and implement `KeyStore`.
+5. **Specification conformance is the test oracle.** W3C and method test vectors, RFC JOSE vectors,
+   one behavioural suite every key backend must pass, determinism tests. No fixtures of any other
+   library's output.
+6. **Publishable from day one.** No git or path dependencies. `cargo publish --dry-run` runs on
+   every PR. Small, maintained building blocks only: RustCrypto (`ed25519-dalek`, `p256`, `k256`,
+   `rsa`, `sha2`), `jsonwebtoken`, `multibase`, `unsigned-varint`, `url`, `serde_json`, `indexmap`,
+   `sd-jwt-payload`, `cryptoki`.
+7. **Developer experience.** A `prelude` per layer; docs.rs built with `all-features` and
+   `doc_cfg`; `#![forbid(unsafe_code)]`; MSRV pinned; one `CHANGELOG.md`; `release-plz`.
+
+## Layout
+
+```
+identity-kit/
+├── Cargo.toml                 # workspace
+├── identity-kit/              # the published crate; lib name `identity_kit`
+│   └── src/
+│       ├── did/               # Did, DidUrl, DidDocument, VerificationMethod, Service, resolution metadata
+│       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode
+│       ├── keys/              # KeyStore, KeySigner, KeyId, KeySpec; backends in_memory, software, pkcs11
+│       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing
+│       ├── methods/           # key, jwk, web
+│       ├── vc/                # [vc] Jwt, Credential, Presentation, CredentialV2, EnvelopedVc, validation
+│       ├── sd_jwt_vc/         # [sd-jwt] builder, parser, Status, StatusListRef, type metadata
+│       └── domain_linkage/    # [domain-linkage] DID configuration resource builder and validator
+├── xtask/                     # publish = false: release checks, vector regeneration, key CLI
+└── examples/                  # publish = false
+```
+
+## Features
+
+All additive. CI runs `cargo hack --each-feature` and the no-default-features build.
+
+| Feature              | Default | Pulls in                                                      |
+| -------------------- | ------- | ------------------------------------------------------------- |
+| `did-key`, `did-jwk` | on      | `multibase`, `unsigned-varint`                                |
+| `did-web`            | on      | `reqwest` (rustls); an injected `HttpClient` works without it |
+| `secp256k1`          | on      | `k256`                                                        |
+| `rsa`                | off     | `rsa`                                                         |
+| `in-memory`          | off     | test and development key store                                |
+| `software`           | on      | `zeroize`; JWK-file key store                                 |
+| `pkcs11`             | off     | `cryptoki`                                                    |
+| `vc`                 | on      | W3C VC/VP JWT profile and validators                          |
+| `sd-jwt`             | on      | `sd-jwt-payload`; implies `vc`                                |
+| `domain-linkage`     | on      | implies `vc` and `did-web`                                    |
+| `utoipa`             | off     | OpenAPI schemas for the public types                          |
+| `test-vectors`       | off     | re-exports conformance vectors and the key-store test suite   |
+
+## `did` module
+
+Pure data: no I/O, no async, no crypto. Typed core properties plus open extension properties
+(`properties: IndexMap<String, Value>`, insertion-ordered so output is deterministic).
+
+```rust
+pub struct Did(String);                       // validated on construction; serde as string
+impl Did {
+    pub fn parse(s: &str) -> Result<Self, DidError>;
+    pub fn method(&self) -> &str;             // "web"
+    pub fn method_specific_id(&self) -> &str; // "example.org%3A8443"
+    pub fn to_url(&self) -> DidUrl;
+    pub fn join(&self, fragment_or_path: &str) -> Result<DidUrl, DidError>;
+}
+pub struct DidUrl { did: Did, path: Option<String>, query: Option<String>, fragment: Option<String> }
+
+pub struct DidDocument {
+    pub context: Option<Context>,             // "@context", carried verbatim
+    pub id: Did,
+    pub also_known_as: Vec<Url>,
+    pub controller: Option<OneOrMany<Did>>,
+    pub verification_method: Vec<VerificationMethod>,
+    pub authentication: Vec<MethodRef>,
+    pub assertion_method: Vec<MethodRef>,
+    pub key_agreement: Vec<MethodRef>,
+    pub capability_invocation: Vec<MethodRef>,
+    pub capability_delegation: Vec<MethodRef>,
+    pub service: Vec<Service>,
+    pub properties: IndexMap<String, Value>,  // flattened extension properties
+}
+pub enum MethodRef { Reference(DidUrl), Embedded(Box<VerificationMethod>) }
+pub struct VerificationMethod { id: DidUrl, controller: Did, r#type: MethodType, material: VerificationMaterial, properties }
+pub enum VerificationMaterial { PublicKeyJwk(Jwk), PublicKeyMultibase(String) }
+pub struct MethodType(String);               // constants JSON_WEB_KEY_2020, JSON_WEB_KEY, MULTIKEY
+pub struct Service { id: DidUrl, r#type: OneOrMany<String>, service_endpoint: ServiceEndpoint, properties }
+pub enum ServiceEndpoint { Uri(Url), Set(IndexSet<Url>), Map(IndexMap<String, Value>) }
+pub enum VerificationRelationship { Authentication, AssertionMethod, KeyAgreement, CapabilityInvocation, CapabilityDelegation }
+```
+
+Operations on `DidDocument`: `builder()`, `insert_verification_method(method, relationships)`,
+`remove_verification_method`, `attach_relationship`, `detach_relationship`, `insert_service`,
+`remove_service`, `service`, `resolve_verification_method(&DidUrl, Option<VerificationRelationship>)`
+(fragment-only references resolve against `id`), `map_dids(FnMut(Did) -> Did)`.
+
+Resolution types follow the W3C DID Resolution specification: `ResolutionResult { document,
+document_metadata, resolution_metadata }`, `DocumentMetadata`, `ResolutionMetadata`, and the error
+vocabulary `invalidDid`, `notFound`, `methodNotSupported`, `representationNotSupported`.
+
+Serialization: empty arrays and `None` are omitted; `Did`, `DidUrl` serialize as strings;
+`Service.type` is a string when single; `@context` is emitted first.
+
+## `jose` module
+
+```rust
+pub struct Jwk { .. }                          // RFC 7517; private params never in Debug/Display
+impl Jwk {
+    pub fn thumbprint_sha256(&self) -> String;   // RFC 7638
+    pub fn public(&self) -> Jwk;
+    pub fn to_decoding_key(&self) -> Result<jsonwebtoken::DecodingKey>;
+    pub fn from_spki_der(hint: KeyType, der: &[u8]) -> Result<Jwk>;   // what KMS/HSM backends return
+}
+pub enum JwsAlgorithm { EdDSA, ES256, ES256K, ES384, RS256, PS256 }  // From/TryFrom jsonwebtoken::Algorithm
+pub trait JwsVerifier: Send + Sync {
+    fn verify(&self, alg: JwsAlgorithm, signing_input: &[u8], signature: &[u8], key: &Jwk) -> Result<(), VerificationError>;
+}
+pub struct DefaultVerifier;                    // ed25519-dalek, p256, k256 (secp256k1), rsa (rsa)
+pub struct CompactJws { .. }                   // decode(token); header(), kid(), alg(), signing_input(), payload(), signature()
+pub async fn encode_compact(header: &Header, payload: &[u8], signer: &dyn Signer) -> Result<String>;
+#[async_trait] pub trait Signer: Send + Sync { fn alg(&self) -> JwsAlgorithm; fn kid(&self) -> Option<&str>; async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>>; }
+```
+
+`jsonwebtoken` has no ES256K; sign and verify it with `k256` directly. ECDSA signatures are always
+the JWS raw `r || s` form at the trait boundary.
+
+## `keys` module
+
+Designed for remote signers first:
+
+- Keys are referenced by an opaque `KeyId` (a name, a PKCS#11 label, a cloud KMS key ARN).
+- Private keys never leave the backend; `sign` is remote and async.
+- Generation is optional: a KMS or HSM is usually provisioned out of band.
+- One algorithm per key. Backends declare which algorithms they support (PKCS#11: Ed25519, ECDSA,
+  RSA depending on the module).
+- Backends convert their native signature encoding (such as DER-encoded ECDSA) to raw `r || s`.
+- Callers cache public keys; a round trip per `kid` lookup is unacceptable.
+
+```rust
+pub struct KeyId(String);
+pub enum KeyType { Ed25519, P256, Secp256k1, Rsa2048, Rsa4096 }
+pub struct KeySpec { key_type: KeyType, alg: JwsAlgorithm, label: Option<String> }
+pub struct KeyStoreCapabilities { can_generate: bool, can_delete: bool, remote: bool, algorithms: Vec<JwsAlgorithm> }
+
+#[async_trait]
+pub trait KeyStore: Send + Sync {
+    fn capabilities(&self) -> KeyStoreCapabilities;
+    async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError>;
+    async fn sign(&self, key: &KeyId, alg: JwsAlgorithm, data: &[u8]) -> Result<Vec<u8>, KeyStoreError>;
+    async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError>;
+    async fn generate(&self, spec: KeySpec) -> Result<KeyId, KeyStoreError> { Err(KeyStoreError::Unsupported("generate")) }
+    async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> { Err(KeyStoreError::Unsupported("delete")) }
+}
+pub struct KeySigner<'a> { store: &'a dyn KeyStore, key: KeyId, alg: JwsAlgorithm, public: Jwk }  // implements jose::Signer
+```
+
+Backends: `InMemoryKeyStore` (`in-memory`; optional deterministic seed for fixtures),
+`SoftwareKeyStore` (`software`; private JWK set file, permission check, `zeroize`, atomic write on
+generate), `Pkcs11KeyStore` (`pkcs11`). `keys::testsuite`
+(`test-vectors`) runs one behavioural suite against every backend.
+
+## `resolver` and `methods`
+
+```rust
+#[async_trait]
+pub trait DidResolver: Send + Sync {
+    fn method(&self) -> &'static str;
+    async fn resolve(&self, did: &Did, options: &ResolutionOptions) -> Result<ResolutionResult, ResolutionError>;
+}
+#[async_trait]
+pub trait DidProducer: Send + Sync {
+    type Params: Send;
+    fn method(&self) -> &'static str;
+    fn capabilities(&self) -> MethodCapabilities;  // updatable, hosting: Embedded | Web | Registry, single_key, fixed_fragment
+    async fn produce(&self, keys: &[Jwk], params: Self::Params) -> Result<DidDocument, ProduceError>;
+}
+pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); resolve, resolve_document, dereference, resolve_public_key
+```
+
+- `methods::key`: multicodec table (`ed25519-pub 0xed`, `p256-pub 0x1200`, `secp256k1-pub 0xe7`,
+  `rsa-pub 0x1205`, `x25519-pub 0xec`), base58btc multibase (`z`), one `JsonWebKey2020` method with
+  `publicKeyJwk` and fragment equal to the method-specific id.
+- `methods::jwk`: `base64url(JWK)` as method-specific id; fragment `#0`.
+- `methods::web`: `did_from_origin(&Url)` (reject IP hosts and opaque origins; encode a non-default
+  port as `%3A<port>`), DID to document URL mapping (`https://host[:port]/.well-known/did.json` when
+  no path segments, else `https://host[:port]/<segments>/did.json`), resolver over an injected
+  `HttpClient` trait (default: HTTPS only, no redirects, size limit, no local addresses), producer
+  taking `{ origin }` and setting `@context` to `["https://www.w3.org/ns/did/v1",
+"https://w3id.org/security/suites/jws-2020/v1"]`.
+
+## Upper layer
+
+- `vc` (`vc`): `Jwt` newtype; `Credential`/`Presentation` for the VCDM 1.1 JWT profile with builders
+  and `to_jwt_claims` (`iss`/`sub`/`jti`/`nbf`/`exp`/`iat` mapping); `CredentialV2`, `EnvelopedVc`
+  for VCDM 2.0 enveloped credentials; `chrono` timestamps; `vc::validation` with
+  `JwtCredentialValidator`, `JwtPresentationValidator`, `SdJwtCredentialValidator` over
+  `JwsVerifier` + `VerificationMaterialResolver`, clock-skew leeway options, issuer and holder
+  binding, `FailFast`, a `StatusCheck` hook, `extract_holder`/`extract_issuer`.
+- `sd_jwt_vc` (`sd-jwt`): builder with first-class `jti`, parser, `Status`, `StatusListRef`,
+  `StatusMechanism`, type metadata, on `sd-jwt-payload`.
+- `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration`, credential builder, validator
+  implementing the DIF Well Known DID Configuration checks (`iss == sub`, exactly one `origin`,
+  `exp` present, `credentialSubject.id` matches); validation is at-least-one across linked DIDs.
+
+## Conformance and CI
+
+- DID documents: W3C DID Core JSON representation; did:key, did:jwk, did:web vectors.
+- JOSE: RFC 7515/7517/7638 vectors; cross-verification against `jsonwebtoken` where it supports the
+  algorithm and against `k256` for ES256K.
+- Key stores: `keys::testsuite` against every backend; PKCS#11 against SoftHSM2 in CI.
+- Credentials: DIF DID configuration examples; SD-JWT VC draft examples; the `openid4vc` test suite
+  once ported.
+- Determinism: same inputs produce byte-identical documents and configuration resources.
+- Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
+  `cargo tree` in that configuration must not list `sd-jwt-payload`.
+- `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, clippy pedantic as warnings
+  with `-D warnings` on the default lint set.
+
+## References
+
+- W3C DID Core 1.0: https://www.w3.org/TR/did-core/ (DID syntax ABNF in §3.1, DID URL syntax in §3.2)
+- W3C DID Resolution: https://www.w3.org/TR/did-resolution/
+- W3C Controlled Identifiers (verification material types): https://www.w3.org/TR/cid-1.0/
+- did:key: https://w3c-ccg.github.io/did-key-spec/
+- did:jwk: https://github.com/quartzjer/did-jwk/blob/main/spec.md
+- did:web: https://w3c-ccg.github.io/did-method-web/
+- DIF Well Known DID Configuration: https://identity.foundation/.well-known/resources/did-configuration/
+- RFC 3986 (URI, percent-encoding), RFC 7515 (JWS), RFC 7517 (JWK), RFC 7638 (JWK thumbprint)
