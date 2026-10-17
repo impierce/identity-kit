@@ -29,13 +29,13 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                | Status | Cargo feature | Specification                                                         | Issue                                                   |
 | ---------------------------------------------------------------------- | :----: | ------------- | --------------------------------------------------------------------- | ------------------------------------------------------- |
-| `Jwk` with private parameters redacted from `Debug`, `public()` view   |   📋   |               | [RFC 7517][rfc7517]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
-| SHA-256 JWK thumbprint                                                 |   📋   |               | [RFC 7638][rfc7638]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
-| `Jwk::from_spki_der` for keys returned by KMS and HSM backends         |   📋   |               | [RFC 5280 §4.1.2.7](https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.7) | [#7](https://github.com/impierce/identity-kit/issues/7) |
-| Compact JWS decode, `Signer` and `JwsVerifier` traits, async `encode_compact` |   📋   |               | [RFC 7515][rfc7515]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
-| `DefaultVerifier`: EdDSA, ES256, ES384, RS256, PS256                   |   📋   |               | [RFC 7518][rfc7518], [RFC 8037][rfc8037]                              | [#7](https://github.com/impierce/identity-kit/issues/7) |
-| ES256K signing and verification via `k256`                             |   📋   | `secp256k1`   | [RFC 8812][rfc8812]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
-| RSA algorithms (RS256, PS256)                                          |   📋   | `rsa`         | [RFC 7518 §3.3, §3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.3) | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| `Jwk` with private parameters redacted from `Debug`, `public()` view   |   ✅   |               | [RFC 7517][rfc7517]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| SHA-256 JWK thumbprint                                                 |   ✅   |               | [RFC 7638][rfc7638]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| `Jwk::from_spki_der` for keys returned by KMS and HSM backends         |   ✅   |               | [RFC 5280 §4.1.2.7](https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.7) | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| Compact JWS decode, `Signer` and `JwsVerifier` traits, async `encode_compact` |   ✅   |               | [RFC 7515][rfc7515]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| `DefaultVerifier`: EdDSA, ES256 (ES384 is in `JwsAlgorithm` but not verified) |   ✅   |               | [RFC 7518][rfc7518], [RFC 8037][rfc8037]                              | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| ES256K verification via `k256`                                         |   ✅   | `secp256k1`   | [RFC 8812][rfc8812]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| RSA algorithms (RS256, PS256), verification only ([ADR 0001](adr/0001-rsa-verification-only.md)) |   ✅   | `rsa`         | [RFC 7518 §3.3, §3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.3) | [#7](https://github.com/impierce/identity-kit/issues/7) |
 
 ### `keys`: key stores
 
