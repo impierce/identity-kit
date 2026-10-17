@@ -1,8 +1,10 @@
 //! The DID document data model (DID Core §5) and operations on it.
 
 use core::fmt;
+use core::mem;
 use core::str::FromStr;
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::{IndexMap, IndexSet};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
@@ -20,7 +22,8 @@ pub enum DocumentError {
     /// `@context` is not a string, a map or a non-empty array.
     #[error("`@context` must be a string, a map or a non-empty array")]
     InvalidContext,
-    /// A verification method with this id is already in the document.
+    /// A verification method with this id is already in the document, or the document defines
+    /// the id twice with different material.
     #[error("verification method `{0}` already exists")]
     DuplicateVerificationMethod(DidUrl),
     /// A service with this id is already in the document.
@@ -774,6 +777,11 @@ impl From<&str> for OneOrMany<String> {
 ///
 /// The fields are public for reading and plain mutation; the methods keep the invariants that
 /// DID Core requires (unique method and service ids, references that point at listed methods).
+/// Deserialization enforces them too: a document that defines one verification method id twice
+/// with different content (listed or embedded) is rejected, so no lookup can pick different
+/// material for one id, and so is one with two services sharing an id, as DID Core §5.4 requires
+/// of a consumer. Embedding the same method under several relationships, as DID Core's own
+/// examples do, is one definition and allowed.
 ///
 /// # Examples
 ///
@@ -804,6 +812,7 @@ impl From<&str> for OneOrMany<String> {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[serde(remote = "Self")]
 pub struct DidDocument {
     /// `@context`, carried verbatim.
     #[serde(rename = "@context", default, skip_serializing_if = "Option::is_none")]
@@ -860,6 +869,21 @@ pub struct DidDocument {
     /// Every other property, in insertion order.
     #[serde(flatten)]
     pub properties: IndexMap<String, Value>,
+}
+
+impl Serialize for DidDocument {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        Self::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DidDocument {
+    /// Reads the document and rejects duplicate verification method or service ids.
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let document = Self::deserialize(deserializer)?;
+        document.check_unique_ids().map_err(de::Error::custom)?;
+        Ok(document)
+    }
 }
 
 impl DidDocument {
@@ -1071,13 +1095,45 @@ impl DidDocument {
         Ok(())
     }
 
-    /// Removes the method `id`, listed or embedded, and every relationship entry for it.
-    pub fn remove_verification_method(&mut self, id: &DidUrl) -> Option<VerificationMethod> {
-        let listed = self
+    /// Checks that every verification method id (listed or embedded) has one definition and that
+    /// no two services share an id: the invariant the mutating methods keep and deserialization
+    /// enforces. The same method embedded under several relationships is one definition.
+    ///
+    /// # Errors
+    ///
+    /// [`DocumentError::DuplicateVerificationMethod`] naming the first id defined twice with
+    /// different content, or [`DocumentError::DuplicateService`] naming the first repeated
+    /// service id.
+    pub fn check_unique_ids(&self) -> Result<(), DocumentError> {
+        let mut seen = HashMap::new();
+        for method in self
             .verification_method
             .iter()
-            .position(|method| method.id == *id)
-            .map(|index| self.verification_method.remove(index));
+            .chain(self.embedded_methods())
+        {
+            if *seen.entry(&method.id).or_insert(method) != method {
+                return Err(DocumentError::DuplicateVerificationMethod(
+                    method.id.clone(),
+                ));
+            }
+        }
+        let mut seen = HashSet::new();
+        for service in &self.service {
+            if !seen.insert(&service.id) {
+                return Err(DocumentError::DuplicateService(service.id.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Removes the method `id`, listed or embedded, and every relationship entry for it.
+    pub fn remove_verification_method(&mut self, id: &DidUrl) -> Option<VerificationMethod> {
+        // Every listed entry with the id goes, should plain mutation have duplicated it.
+        let (matching, rest): (Vec<_>, Vec<_>) = mem::take(&mut self.verification_method)
+            .into_iter()
+            .partition(|method| method.id == *id);
+        self.verification_method = rest;
+        let listed = matching.into_iter().next();
         let mut embedded = None;
         let base = self.id.clone();
         for relationship in VerificationRelationship::ALL {
@@ -1169,6 +1225,10 @@ impl DidDocument {
     ///
     /// This is how a method whose DID depends on the document (a `did:web` moving domains, a
     /// placeholder DID replaced by the registered one) produces its final document.
+    ///
+    /// `f` is expected to map distinct DIDs to distinct DIDs. Merging two DIDs into one can give
+    /// two methods or services the same id; that is not checked here, and
+    /// [`check_unique_ids`](Self::check_unique_ids) reports it.
     ///
     /// # Examples
     ///

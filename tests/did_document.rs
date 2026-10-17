@@ -1098,11 +1098,82 @@ fn services_are_unique_by_id() {
     assert!(document.remove_service(&id).is_some());
     assert!(document.remove_service(&id).is_none());
     assert!(document.service(&id).is_none());
+    // DID Core §5.4: a consumer MUST produce an error on multiple service entries with one id.
     let err = serde_json::from_str::<DidDocument>(
         r#"{"id":"did:example:1","service":[{"id":"did:example:1#s","type":"T","serviceEndpoint":"https://a.example"},{"id":"did:example:1#s","type":"T","serviceEndpoint":"https://b.example"}]}"#,
+    )
+    .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        DocumentError::DuplicateService(id.clone()).to_string()
     );
-    // Duplicate ids in input are the producer's error; the consumer keeps both for inspection.
-    assert_eq!(err.unwrap().service.len(), 2);
+}
+
+#[test]
+fn duplicate_method_ids_are_rejected_on_read_and_cleared_on_removal() {
+    let listed = |key: &str| {
+        format!(
+            r##"{{"id":"did:example:1#k","type":"Multikey","controller":"did:example:1","publicKeyMultibase":"{key}"}}"##
+        )
+    };
+    let (a, b) = (listed("z6MkA"), listed("z6MkB"));
+    // Two listed methods, a listed and an embedded one, and two embedded ones: every pair of
+    // differing definitions for one id is rejected, so no lookup path can pick different material.
+    for (json, what) in [
+        (
+            format!(r#"{{"id":"did:example:1","verificationMethod":[{a},{b}]}}"#),
+            "listed twice",
+        ),
+        (
+            format!(
+                r#"{{"id":"did:example:1","verificationMethod":[{a}],"authentication":[{b}]}}"#
+            ),
+            "listed and embedded",
+        ),
+        (
+            format!(r#"{{"id":"did:example:1","authentication":[{a}],"assertionMethod":[{b}]}}"#),
+            "embedded twice",
+        ),
+    ] {
+        let err = serde_json::from_str::<DidDocument>(&json).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            DocumentError::DuplicateVerificationMethod(url("did:example:1#k")).to_string(),
+            "{what}"
+        );
+    }
+    // A reference to a listed method is not a second definition, and neither is the same method
+    // embedded under several relationships (DID Core Examples 7 to 11 do that).
+    let document = parse(&format!(
+        r##"{{"id":"did:example:1","verificationMethod":[{a}],"authentication":["#k"],"assertionMethod":["did:example:1#k"]}}"##
+    ));
+    assert_eq!(document.check_unique_ids(), Ok(()));
+    let twice = parse(&format!(
+        r#"{{"id":"did:example:1","authentication":[{a}],"assertionMethod":[{a}]}}"#
+    ));
+    assert_eq!(twice.check_unique_ids(), Ok(()));
+
+    // Plain field mutation can still define an id twice; removal then clears every definition.
+    let mut document = document;
+    let mut other = document.verification_method[0].clone();
+    other.material = VerificationMaterial::multibase("z6MkB");
+    document.verification_method.push(other.clone());
+    document.authentication.push(MethodRef::embedded(other));
+    assert_eq!(
+        document.check_unique_ids(),
+        Err(DocumentError::DuplicateVerificationMethod(url(
+            "did:example:1#k"
+        )))
+    );
+    let removed = document.remove_verification_method(&url("did:example:1#k"));
+    assert_eq!(
+        removed.map(|m| m.public_key_multibase().map(str::to_owned)),
+        Some(Some("z6MkA".to_owned()))
+    );
+    assert!(document.verification_method.is_empty());
+    assert!(document.authentication.is_empty());
+    assert!(document.assertion_method.is_empty());
+    assert_eq!(document.check_unique_ids(), Ok(()));
 }
 
 #[test]
