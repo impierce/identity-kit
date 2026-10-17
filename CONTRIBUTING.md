@@ -41,6 +41,12 @@ Write `feat: add description to file`, not `feat: add a description to the file`
 
 Releases are automated with [release-plz](https://release-plz.dev/): it keeps a release pull request open with the next version and changelog, and publishes to crates.io once that pull request is merged.
 Don't bump the version or edit `CHANGELOG.md` by hand.
+[`docs/RELEASE.md`](docs/RELEASE.md) describes the full process.
+
+## Feature checklist
+
+[`docs/FEATURES.md`](docs/FEATURES.md) lists every implemented and planned feature with its tracking issue.
+When a pull request implements a feature, change its status to ✅ in the same pull request.
 
 ## Security
 

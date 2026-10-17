@@ -6,9 +6,21 @@
 [![docs.rs](https://img.shields.io/docsrs/identity-kit)](https://docs.rs/identity-kit)
 [![License](https://img.shields.io/crates/l/identity-kit.svg)](https://github.com/impierce/identity-kit/blob/HEAD/LICENSE)
 
-Collection of primitives for SSI libraries and applications.
+Collection of primitives for SSI libraries and applications: decentralized identifiers (DIDs), key management behind a pluggable key store, and JWT-based verifiable credentials.
 
 ---
+
+## Features
+
+- ✅ `Did` and `DidUrl` parsing and validation per [W3C DID Core](https://www.w3.org/TR/did-core/)
+- 📋 `DidDocument` data model and [DID Resolution](https://www.w3.org/TR/did-resolution/) types
+- 📋 JWK and compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) with EdDSA, ECDSA and RSA
+- 📋 `KeyStore` trait designed for remote signers, with in-memory, file-based and PKCS#11 backends
+- 📋 `did:key`, `did:jwk` and `did:web` behind `DidResolver` and `DidProducer` traits
+- 📋 W3C Verifiable Credentials (JWT profile), SD-JWT VC and DIF Well Known DID Configuration
+
+✅ implemented, 📋 planned. The full checklist, with Cargo features, tracking issues and links to every specification, is in [`docs/FEATURES.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/FEATURES.md).
+The architecture is described in [`docs/DESIGN.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/DESIGN.md).
 
 ## Development
 
@@ -17,20 +29,8 @@ To report a vulnerability, see [SECURITY.md](https://github.com/impierce/identit
 
 ## Release
 
-Releases are automated with [release-plz](https://release-plz.dev/) and follow [Cargo's SemVer rules](https://doc.rust-lang.org/cargo/reference/semver.html). Versions are never bumped by hand.
-
-1. On every push to `main`, release-plz opens or updates a release pull request (`chore: release vX.Y.Z`, labelled `release`).
-   It contains the next version in `Cargo.toml` and `Cargo.lock` and a new `CHANGELOG.md` entry, both derived from the [Conventional Commits](https://www.conventionalcommits.org/) on `main` since the last release.
-   [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) makes sure an API-breaking change can't go out as a compatible version.
-2. A maintainer reviews the version and changelog. To adjust them, commit to the release branch shortly before merging, since release-plz regenerates the pull request whenever `main` changes.
-3. Approving and merging the release pull request publishes the crate to [crates.io](https://crates.io/crates/identity-kit), then tags the commit as `vX.Y.Z` and creates a GitHub release with the same changelog.
-
-Before 1.0, a breaking change (`feat!:`, `fix!:` or one detected by `cargo-semver-checks`) bumps the minor version (`0.1.3` → `0.2.0`), and anything else bumps the patch version (`0.1.3` → `0.1.4`).
-Only commits that matter to users of the crate appear in the changelog: `ci`, `test`, `style` and `chore` commits are left out, except dependency updates (`chore(deps)`).
-The rules are configured in [`release-plz.toml`](https://github.com/impierce/identity-kit/blob/HEAD/release-plz.toml).
-
-The [release workflow](https://github.com/impierce/identity-kit/blob/HEAD/.github/workflows/release-plz.yml) runs without long-lived publishing credentials:
-
-- crates.io accepts the upload through [trusted publishing](https://crates.io/docs/trusted-publishing), only from `release-plz.yml` running in the `release` environment, which is limited to `main`.
-- The release pull request, tags and GitHub releases are created by the `impierce-release-plz` GitHub App, so CI runs on the release pull request like on any other.
-  The App's credentials are stored in the repository variable `RELEASE_PLZ_CLIENT_ID` and the secret `RELEASE_PLZ_PRIVATE_KEY`.
+Releases are automated with [release-plz](https://release-plz.dev/) and follow [Cargo's SemVer rules](https://doc.rust-lang.org/cargo/reference/semver.html).
+Every push to `main` updates a release pull request with the next version and changelog, derived from the [Conventional Commits](https://www.conventionalcommits.org/) since the last release.
+Merging it publishes to [crates.io](https://crates.io/crates/identity-kit) and creates the tag and GitHub release.
+Versions and `CHANGELOG.md` are never edited by hand.
+See [`docs/RELEASE.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/RELEASE.md) for the versioning rules, changelog filtering and the credential setup.
