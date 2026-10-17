@@ -110,9 +110,11 @@ fn error_vocabulary() {
             ResolutionError::RepresentationNotSupported,
             "representationNotSupported",
         ),
+        (ResolutionError::InvalidDidDocument, "invalidDidDocument"),
+        (ResolutionError::InternalError, "internalError"),
         (
-            ResolutionError::Other("internalError".to_owned()),
-            "internalError",
+            ResolutionError::Other("invalidOptions".to_owned()),
+            "invalidOptions",
         ),
     ] {
         assert_eq!(error.as_str(), keyword);

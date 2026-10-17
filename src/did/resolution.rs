@@ -35,6 +35,13 @@ pub enum ResolutionError {
     /// `representationNotSupported`: the resolver cannot produce the requested media type.
     #[error("representation not supported")]
     RepresentationNotSupported,
+    /// `invalidDidDocument`: the method returned a document that is malformed or not the
+    /// document of the DID (DID Resolution "Errors").
+    #[error("invalid DID document")]
+    InvalidDidDocument,
+    /// `internalError`: the resolver failed unexpectedly (DID Resolution "Errors").
+    #[error("internal resolver error")]
+    InternalError,
     /// Any other keyword.
     #[error("resolution error `{0}`")]
     Other(String),
@@ -48,6 +55,8 @@ impl ResolutionError {
             Self::NotFound => "notFound",
             Self::MethodNotSupported => "methodNotSupported",
             Self::RepresentationNotSupported => "representationNotSupported",
+            Self::InvalidDidDocument => "invalidDidDocument",
+            Self::InternalError => "internalError",
             Self::Other(keyword) => keyword,
         }
     }
@@ -63,6 +72,8 @@ impl FromStr for ResolutionError {
             "notFound" => Self::NotFound,
             "methodNotSupported" => Self::MethodNotSupported,
             "representationNotSupported" => Self::RepresentationNotSupported,
+            "invalidDidDocument" => Self::InvalidDidDocument,
+            "internalError" => Self::InternalError,
             other => Self::Other(other.to_owned()),
         })
     }
