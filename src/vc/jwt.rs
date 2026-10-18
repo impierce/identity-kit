@@ -195,7 +195,9 @@ pub struct JwtClaims {
 
 /// Deserializes a `NumericDate` (RFC 7519 §2): a JSON number, possibly with a fraction, floored
 /// to whole seconds.
-fn numeric_date<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+pub(crate) fn numeric_date<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<i64>, D::Error> {
     let Some(number) = Option::<serde_json::Number>::deserialize(deserializer)? else {
         return Ok(None);
     };
@@ -209,6 +211,14 @@ fn numeric_date<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<i64
         })
         .map(Some)
         .ok_or_else(|| D::Error::custom(format!("NumericDate {number} is out of range")))
+}
+
+/// As [`numeric_date`], for a claim that must be present.
+#[cfg(feature = "sd-jwt")]
+pub(crate) fn required_numeric_date<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<i64, D::Error> {
+    numeric_date(deserializer)?.ok_or_else(|| serde::de::Error::custom("a NumericDate is required"))
 }
 
 impl JwtClaims {

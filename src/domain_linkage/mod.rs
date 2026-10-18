@@ -106,8 +106,10 @@ fn has_scheme(s: &str) -> bool {
 pub enum LinkedDid {
     /// A domain linkage credential in the JSON Web Token proof format.
     Jwt(Jwt),
-    /// A domain linkage credential in the Linked Data Proof format, carried as data.
-    LinkedDataProof(Value),
+    /// A domain linkage credential in the Linked Data Proof format, carried as data. An entry
+    /// that is neither a compact JWT nor an object is a parse error, not a silently skipped
+    /// credential.
+    LinkedDataProof(serde_json::Map<String, Value>),
 }
 
 /// The DID configuration resource: `@context` and the domain linkage credentials.

@@ -383,8 +383,12 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         required.time.check(None, None, Some(issued_at))?;
         if let Some(max_age) = required.max_age {
             let now = required.time.now();
-            let delta = chrono::TimeDelta::from_std(max_age).unwrap_or(chrono::TimeDelta::MAX);
-            if issued_at < now - delta {
+            // A `max_age` beyond what `chrono` represents bounds nothing.
+            let oldest = chrono::TimeDelta::from_std(max_age)
+                .ok()
+                .and_then(|delta| now.checked_sub_signed(delta))
+                .unwrap_or(DateTime::<Utc>::MIN_UTC);
+            if issued_at < oldest {
                 return Err(SdJwtValidationError::KeyBindingTooOld {
                     issued_at,
                     now,
@@ -470,6 +474,11 @@ mod status_list {
     ///
     /// The check trusts the key `kid` resolves to; whether that key may speak for the list is
     /// the application's policy to enforce around it, by restricting the resolver, say.
+    ///
+    /// The status list URI comes from the credential, so the client fetches whatever an issuer
+    /// names: `client` must enforce the protections `ReqwestClient` (feature `reqwest`) does
+    /// (HTTPS only, no redirects, no non-public addresses after name resolution, a body limit
+    /// and a timeout), or the status check becomes a request forgery primitive.
     pub struct StatusListCheck<C, R, V = DefaultVerifier> {
         client: C,
         resolver: R,

@@ -743,15 +743,38 @@ async fn v2_credential_validates() {
         Err(ValidationError::IssuerMismatch { .. })
     ));
 
-    // A 1.1 token is not a 2.0 credential, and the other way round.
+    // `typ` names the profile when present: a 1.1 token (`JWT`), a presentation (`vp+jwt`) or
+    // a key binding JWT is never read as a 2.0 credential, and a 2.0 credential is not a 1.1
+    // token. Without `typ`, the payload decides.
     let v1 = issue(&issuer, &self::credential(&issuer.did, &holder.did), |_| {}).await;
     assert!(matches!(
         validator.validate_v2(&v1, &at(now())).await,
-        Err(ValidationError::Credential(CredentialError::InvalidClaim {
-            claim: "vc",
-            ..
-        }))
+        Err(ValidationError::UnexpectedTyp { expected: "vc+jwt", found }) if found == "JWT"
     ));
+    for typ in ["vp+jwt", "kb+jwt", "VC+JWT"] {
+        let typed = Jwt::sign(
+            &header.clone().with_typ(typ),
+            &credential.to_jwt_claims().with_iat(now()),
+            &issuer.signer,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                validator.validate_v2(&typed, &at(now())).await,
+                Err(ValidationError::UnexpectedTyp { expected: "vc+jwt", found }) if found == typ
+            ),
+            "{typ}"
+        );
+    }
+    let untyped = Jwt::sign(
+        &JwsHeader::new(JwsAlgorithm::EdDSA).with_kid(issuer.kid.as_str()),
+        &credential.to_jwt_claims().with_iat(now()),
+        &issuer.signer,
+    )
+    .await
+    .unwrap();
+    assert!(validator.validate_v2(&untyped, &at(now())).await.is_ok());
     assert!(matches!(
         validator.validate(&jwt, &at(now())).await,
         Err(ValidationError::UnexpectedTyp { expected: "JWT", found }) if found == "vc+jwt"

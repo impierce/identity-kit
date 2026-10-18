@@ -119,14 +119,26 @@ pub struct SdJwtVcClaims {
     /// `jti`: the identifier of the credential.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jti: Option<String>,
-    /// `iat`: when the credential was issued.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `iat`: when the credential was issued. A `NumericDate` with a fraction is floored.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::vc::numeric_date"
+    )]
     pub iat: Option<i64>,
-    /// `nbf`: when the credential becomes valid.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `nbf`: when the credential becomes valid. A `NumericDate` with a fraction is floored.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::vc::numeric_date"
+    )]
     pub nbf: Option<i64>,
-    /// `exp`: when the credential expires.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `exp`: when the credential expires. A `NumericDate` with a fraction is floored.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::vc::numeric_date"
+    )]
     pub exp: Option<i64>,
     /// `cnf`: the holder's key, for key binding.
     #[serde(default, skip_serializing_if = "Option::is_none")]

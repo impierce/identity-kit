@@ -473,10 +473,15 @@ impl<'de> Deserialize<'de> for StatusList {
 pub struct StatusListToken {
     /// `sub`: the URI of the token, the `uri` referenced tokens use.
     pub sub: String,
-    /// `iat`: when the token was issued.
+    /// `iat`: when the token was issued. A `NumericDate` with a fraction is floored.
+    #[serde(deserialize_with = "crate::vc::required_numeric_date")]
     pub iat: i64,
-    /// `exp`: when the token expires.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `exp`: when the token expires. A `NumericDate` with a fraction is floored.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::vc::numeric_date"
+    )]
     pub exp: Option<i64>,
     /// `ttl`: how many seconds the token may be cached.
     #[serde(default, skip_serializing_if = "Option::is_none")]
