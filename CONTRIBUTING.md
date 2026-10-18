@@ -34,17 +34,13 @@ To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-l
 ### Fuzzing
 
 The parsers are fuzzed with [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) from the [`fuzz/`](fuzz/) crate, a workspace of its own that builds on nightly.
-Each target in `fuzz/fuzz_targets/` feeds arbitrary input to one surface (DID syntax, DID documents, the DID methods, JOSE, VC JWTs, SD-JWT, the SD-JWT builder, SD-JWT VC metadata) and asserts that nothing panics and that whatever parses round-trips through its serialization.
-CI runs every target for a minute on pull requests that touch `src/` and for ten minutes nightly, carrying the corpus over between runs; `fuzz/corpus/<target>/` holds the committed seeds, taken from the specification vectors.
+Each target feeds arbitrary input to one surface and asserts that nothing panics and that whatever parses round-trips; CI runs every target for a minute on pull requests that touch `src/` or `fuzz/` and for ten minutes nightly.
+[`fuzz/README.md`](fuzz/README.md) describes the targets, the committed seeds, the generated corpus and how to run, replay and extend them.
 
 ```sh
 cargo install --locked cargo-fuzz
-cargo +nightly fuzz list                                   # the targets
-cargo +nightly fuzz run sd_jwt -- -max_total_time=600      # one target, ten minutes
-cargo +nightly fuzz run sd_jwt fuzz/artifacts/sd_jwt/crash-…   # replay a crash
+fuzz/run.sh sd_jwt 600      # one target, ten minutes
 ```
-
-A crash is a bug: fix it in `src/`, add the input's behaviour as a regular test from the specification it violates, and keep the target's assertion.
 
 ## Pull requests
 

@@ -132,6 +132,7 @@ identity_kit::keys::testsuite::run_with_keys(&store, &[(key_id, JwsAlgorithm::ES
 ## Development
 
 See [CONTRIBUTING.md](https://github.com/impierce/identity-kit/blob/HEAD/CONTRIBUTING.md) for how to set up, test and submit changes.
+The parsers are fuzzed continuously with `cargo-fuzz`; [`fuzz/README.md`](https://github.com/impierce/identity-kit/blob/HEAD/fuzz/README.md) explains the targets, their seeds and how to run them.
 To report a vulnerability, see [SECURITY.md](https://github.com/impierce/identity-kit/blob/HEAD/SECURITY.md).
 
 ## Release
