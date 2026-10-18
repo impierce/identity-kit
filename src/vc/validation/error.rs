@@ -29,6 +29,11 @@ pub enum ValidationError {
         #[source]
         source: DidError,
     },
+    /// The `kid` carries a path or DID parameters. `versionId` and `versionTime` could select a
+    /// document version that still lists a retired key, so only `did:…#fragment` keys are
+    /// accepted.
+    #[error("`kid` `{0}` carries a path or DID parameters")]
+    KidWithParameters(DidUrl),
     /// The header `typ` is not the one the profile requires.
     #[error("header `typ` is {found:?}, not `{expected}`")]
     UnexpectedTyp {

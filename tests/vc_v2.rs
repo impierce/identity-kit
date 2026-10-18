@@ -220,8 +220,13 @@ fn enveloped_objects() {
             expected: "application/vc+jwt"
         })
     );
-    let cose = EnvelopedVc::new("application/vc+cose;base64", "0oREo...+Q==");
+    let cose = EnvelopedVc::new("application/vc+cose;base64", "0oREo...+Q==").unwrap();
     assert_eq!(cose.media_type(), "application/vc+cose");
+    // A `data:` URL is a URI: a space in the data is refused, not panicked on.
+    assert!(matches!(
+        EnvelopedVc::new("application/vc+jwt", "not a jwt"),
+        Err(CredentialError::InvalidClaim { claim: "id", .. })
+    ));
     assert_eq!(
         cose.to_jwt(),
         Err(CredentialError::UnsupportedMediaType {

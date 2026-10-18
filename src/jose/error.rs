@@ -146,6 +146,10 @@ pub enum JwsError {
     /// The header sets `b64` to `false` (RFC 7797); only base64url-encoded payloads are supported.
     #[error("unencoded payloads (`b64: false`) are not supported")]
     UnencodedPayload,
+    /// The payload cannot be signed as given: a claims set that holds a registered claim under
+    /// `additional` next to its field, say.
+    #[error("invalid JWS payload: {0}")]
+    InvalidPayload(String),
     /// The header `alg` differs from the algorithm of the signer.
     #[error("header `alg` {header} does not match the signer's {signer}")]
     AlgorithmMismatch {
