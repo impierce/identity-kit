@@ -99,11 +99,66 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --all-features --locked
 
+  # The lower layer builds on its own and pulls in none of the upper layer's dependencies.
+  layers:
+    name: Layer boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --no-default-features --features did-key,software --locked
+      - run: |
+          if cargo tree -e normal --no-default-features --features did-key,software --locked --prefix none | grep -E '^(chrono|miniz_oxide) '; then
+            echo "::error::the lower layer pulls in a dependency of the upper layer"
+            exit 1
+          fi
+
+  # Every feature compiles and lints on its own.
+  features:
+    name: Features
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo install cargo-hack --locked
+      - run: cargo hack clippy --each-feature --locked -- -D warnings
+
+  # The crate packages and builds from the package, with no git or path dependencies.
+  publish:
+    name: Publish dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo publish --dry-run --locked
+
   # Single required check for branch protection.
   qa:
     name: QA
     if: always()
-    needs: [fmt, clippy, test, docs, msrv]
+    needs: [fmt, clippy, test, docs, msrv, layers, features, publish]
     runs-on: ubuntu-latest
     steps:
       - env:

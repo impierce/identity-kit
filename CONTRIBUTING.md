@@ -8,6 +8,7 @@ Thanks for your interest in contributing to `identity-kit`!
 - The minimum supported Rust version (MSRV) is set by `rust-version` in [`Cargo.toml`](Cargo.toml) and checked in CI.
   Don't use language or standard library features newer than the MSRV without raising it.
 - [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) to run the dependency checks locally: `cargo install --locked cargo-deny`.
+- [`cargo-hack`](https://github.com/taiki-e/cargo-hack) to check every feature on its own: `cargo install --locked cargo-hack`.
 
 ## Checks
 
@@ -18,8 +19,14 @@ cargo fmt --all --check
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --locked
+cargo hack clippy --each-feature --locked -- -D warnings
+cargo build --no-default-features --features did-key,software --locked
+cargo publish --dry-run --locked
 cargo deny check
 ```
+
+The lower layer (`did`, `jose`, `keys`, `resolver`, `methods`) never imports the upper layer (`vc`, `sd_jwt_vc`, `domain_linkage`).
+CI proves it by building with `--no-default-features --features did-key,software`, which leaves the upper modules out, and by checking that `cargo tree` in that configuration lists neither `chrono` nor `miniz_oxide`, the upper layer's own dependencies.
 
 CI also measures test coverage and reports it on the pull request via [Codecov](https://codecov.io/gh/impierce/identity-kit).
 To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and run `cargo llvm-cov --all-features --open`.

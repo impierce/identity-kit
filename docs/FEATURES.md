@@ -93,10 +93,11 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                        | Status | Cargo feature | Specification                                | Issue                                                     |
 | ------------------------------------------------------------------------------ | :----: | ------------- | -------------------------------------------- | --------------------------------------------------------- |
-| OpenAPI schemas for the public types                                           |   📋   | `utoipa`      | [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) | [#14](https://github.com/impierce/identity-kit/issues/14) |
-| Re-exported conformance vectors                                                |   📋   | `test-vectors` |                                             | [#14](https://github.com/impierce/identity-kit/issues/14) |
-| CI proof of the layer boundary (`--no-default-features --features did-key,software` builds) |   📋   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
-| `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo-semver-checks`  |   📋   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
+| OpenAPI schemas for the public types                                           |   ✅   | `utoipa`      | [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) | [#14](https://github.com/impierce/identity-kit/issues/14) |
+| Re-exported conformance vectors (`vectors`)                                    |   ✅   | `test-vectors` |                                             | [#14](https://github.com/impierce/identity-kit/issues/14) |
+| CI proof of the layer boundary (`--no-default-features --features did-key,software` builds) |   ✅   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
+| `cargo hack --each-feature` and `cargo publish --dry-run` in CI; `cargo-semver-checks` through release-plz | ✅ | |                                        | [#14](https://github.com/impierce/identity-kit/issues/14) |
+| A `prelude` per layer                                                          |   ✅   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
 
 ## Out of scope
 

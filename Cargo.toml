@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/impierce/identity-kit"
 keywords = ["did", "ssi", "digital-credentials", "vc"]
 categories = ["cryptography", "authentication"]
-include = ["/src", "/CHANGELOG.md", "/README.md", "/LICENSE"]
+include = ["/src", "/tests/vectors", "/CHANGELOG.md", "/README.md", "/LICENSE"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -24,7 +24,8 @@ rsa = ["dep:rsa"]
 in-memory = ["dep:getrandom"]
 # `SoftwareKeyStore`: a key store over a private JWK set file.
 software = ["dep:getrandom"]
-# `keys::testsuite`, the behavioural suite every key store must pass.
+# `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the
+# specification vectors the tests run against.
 test-vectors = []
 # The `did:key` method (`methods::key`).
 did-key = []
@@ -40,6 +41,8 @@ vc = ["dep:chrono"]
 sd-jwt = ["vc", "dep:getrandom", "dep:miniz_oxide"]
 # DIF Well Known DID Configuration (`domain_linkage`), over the `vc` module and `did:web`'s `url`.
 domain-linkage = ["vc", "did-web"]
+# OpenAPI schemas (`utoipa::ToSchema`) for the public JSON types.
+utoipa = ["dep:utoipa"]
 
 [dependencies]
 async-trait = "0.1"
@@ -62,9 +65,11 @@ sha2 = "0.11"
 thiserror = "2.0"
 tokio = { version = "1.0", features = ["net"], optional = true }
 url = { version = "2.5", optional = true }
+utoipa = { version = "5.5", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
+boon = "0.6"
 jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"] }
 proptest = "1.0"
 tempfile = "3.0"
