@@ -45,11 +45,21 @@ one ES256 example of VC-JOSE-COSE carries a `kid` whose key the specification do
    `StatusPolicy` says what to do without one or for an unsupported type. `TimeOptions` takes an
    explicit `now` so validation is reproducible. `ValidationError` holds `JwsError` and the
    opaque `KeyResolutionError`, so it is neither `Clone` nor `PartialEq`.
-5. **`SdJwtCredentialValidator` waits for `sd_jwt_vc`.** It needs the SD-JWT parser, which
+5. **`kid` is `did:…#fragment`, nothing more.** The validators refuse a `kid` with a path or
+   DID parameters (`ValidationError::KidWithParameters`) before resolving it. `Resolver`
+   forwards `versionId` and `versionTime` to the DID method as resolution options, so with a
+   method that keeps document versions, a signer holding a rotated-out key could write
+   `did:…?versionId=1#old-key` and have the key found in the old version while the issuer or
+   holder check only compares the DID. The verifier, not the signer, decides which document
+   version a key is looked up in: always the current one. The built-in methods ignore version
+   parameters, so nothing changes for them. Historical verification against a past version is
+   not a use case anyone has asked for; it would be an opt-in validation option added later,
+   with the strict rule staying the default. (CodeRabbit security finding on #25.)
+6. **`SdJwtCredentialValidator` waits for `sd_jwt_vc`.** It needs the SD-JWT parser, which
    issue #12 brings; it lands there.
-6. **`chrono` with `now`, `serde` and `std` only.** No `clock` (no `iana-time-zone`), no
+7. **`chrono` with `now`, `serde` and `std` only.** No `clock` (no `iana-time-zone`), no
    `wasmbind`; the crate only ever needs UTC.
-7. **Tests.** The data model examples (VCDM 1.1 Examples 1 and 31 to 33, the VC-JOSE-COSE
+8. **Tests.** The data model examples (VCDM 1.1 Examples 1 and 31 to 33, the VC-JOSE-COSE
    JOSE examples, VCDM 2.0 §4.6 and §4.12) are vectors for the data types, the claim mapping and
    unverified decoding. Signatures are made in the tests with the RFC 8037 Ed25519 key behind a
    `did:key` issuer and the RFC 7515 A.3 P-256 key behind a `did:jwk` holder, so validation runs
