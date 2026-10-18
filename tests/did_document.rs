@@ -638,6 +638,20 @@ fn context_is_first_and_empties_are_omitted() {
     );
 }
 
+/// Extension properties come back as written, numbers of every precision included: a document
+/// is byte-identical after a round trip, not merely close.
+#[test]
+fn extension_numbers_round_trip_exactly() {
+    let json = r#"{"id":"did:example:1","weight":2.2222222222222227e107,"count":9007199254740993}"#;
+    let document = parse(json);
+    let again = parse(&serde_json::to_string(&document).unwrap());
+    assert_eq!(again, document);
+    assert_eq!(
+        serde_json::to_string(&again).unwrap(),
+        serde_json::to_string(&document).unwrap()
+    );
+}
+
 #[test]
 fn core_properties_serialize_in_spec_order_and_extensions_in_input_order() {
     let json = r##"{
