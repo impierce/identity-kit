@@ -738,6 +738,65 @@ fn spec_salts(text: &'static str) -> impl FnMut() -> String + Send + 'static {
 }
 
 #[test]
+fn claims_nested_beyond_the_limit_are_refused() {
+    // `depth` objects around a scalar, each with the member `a`; the claims set adds one.
+    let chain = |depth: usize| (0..depth).fold(json!(1), |inner, _| json!({ "a": inner }));
+    let claims = |depth: usize| {
+        let mut claims = Map::new();
+        claims.insert("c".to_owned(), chain(depth));
+        claims
+    };
+    let deepest = claims(SdJwtBuilder::MAX_DEPTH - 1);
+    let too_deep = claims(SdJwtBuilder::MAX_DEPTH);
+    assert!(matches!(
+        SdJwtBuilder::new(too_deep).encode(),
+        Err(SdJwtError::TooDeep { max }) if max == SdJwtBuilder::MAX_DEPTH
+    ));
+    // An array at the bottom counts as a container too.
+    let with_leaf = |leaf: Value| {
+        let mut claims = claims(SdJwtBuilder::MAX_DEPTH - 2);
+        let mut bottom = &mut claims["c"];
+        for _ in 0..SdJwtBuilder::MAX_DEPTH - 2 {
+            bottom = &mut bottom["a"];
+        }
+        *bottom = leaf;
+        claims
+    };
+    assert!(SdJwtBuilder::new(with_leaf(json!([1]))).encode().is_ok());
+    assert!(matches!(
+        SdJwtBuilder::new(with_leaf(json!([[1]]))).encode(),
+        Err(SdJwtError::TooDeep { .. })
+    ));
+
+    // At the limit, every way of concealing still processes back to the claims.
+    let bottom: Vec<&str> = std::iter::once("c")
+        .chain(std::iter::repeat_n("a", SdJwtBuilder::MAX_DEPTH - 2))
+        .collect();
+    let every_level: Vec<ClaimPath> = (1..=bottom.len())
+        .map(|len| ClaimPath::new(bottom[..len].iter().copied()))
+        .collect();
+    for conceal in [
+        Vec::new(),
+        vec![ClaimPath::new(["c"])],
+        vec![ClaimPath::new(bottom.iter().copied())],
+        every_level,
+    ] {
+        let mut builder = SdJwtBuilder::new(deepest.clone()).with_decoys(2);
+        for path in &conceal {
+            builder = builder.conceal(path.clone());
+        }
+        let encoded = builder.encode().unwrap();
+        assert_eq!(encoded.disclosures.len(), conceal.len());
+        let jwt: Jwt = unsigned_jwt(&json!({ "alg": "ES256" }), &Value::Object(encoded.payload))
+            .parse()
+            .unwrap();
+        let sd_jwt = SdJwt::new(jwt, encoded.disclosures);
+        let again = SdJwt::parse(&sd_jwt.to_string()).unwrap();
+        assert_eq!(again.process().unwrap().as_issued(), &deepest);
+    }
+}
+
+#[test]
 fn builder_reproduces_the_simple_example() {
     let mut claims = object(vector!("simple", "user_claims.json"));
     let spec_payload = object(vector!("simple", "payload.json"));

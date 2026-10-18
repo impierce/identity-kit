@@ -58,6 +58,14 @@ pub struct SdJwtBuilder {
 }
 
 impl SdJwtBuilder {
+    /// The deepest nesting of objects and arrays [`encode`](Self::encode) accepts, counting the
+    /// claims set itself: a claim value may sit inside 63 more containers.
+    ///
+    /// The parsers of this crate read at most 128 nested containers (serde_json's default),
+    /// and concealment, disclosures and the payload add a few around a claim value, so a
+    /// claims set within this limit always processes back; one beyond it might not.
+    pub const MAX_DEPTH: usize = 64;
+
     /// A builder over `claims`, nothing concealed yet.
     pub fn new(claims: Map<String, Value>) -> Self {
         Self {
@@ -116,12 +124,22 @@ impl SdJwtBuilder {
     ///
     /// [`SdJwtError::NoSuchClaim`] when a path selects nothing, [`SdJwtError::NotConcealable`]
     /// for `_sd` or `...`, [`SdJwtError::Payload`] when the claims already use `_sd` or
-    /// `_sd_alg`.
+    /// `_sd_alg`, [`SdJwtError::TooDeep`] when they nest deeper than
+    /// [`MAX_DEPTH`](Self::MAX_DEPTH).
     pub fn encode(mut self) -> Result<Encoded, SdJwtError> {
         if self.claims.contains_key(HashAlgorithm::CLAIM) {
             return Err(SdJwtError::Payload(
                 "the claims already carry `_sd_alg`".into(),
             ));
+        }
+        if self
+            .claims
+            .values()
+            .any(|value| nesting(value) >= Self::MAX_DEPTH)
+        {
+            return Err(SdJwtError::TooDeep {
+                max: Self::MAX_DEPTH,
+            });
         }
         let mut matched = vec![false; self.concealed.len()];
         let mut disclosures = Vec::new();
@@ -290,4 +308,14 @@ pub struct Encoded {
     pub payload: Map<String, Value>,
     /// The disclosures, in the order their claims were concealed.
     pub disclosures: Vec<Disclosure>,
+}
+
+/// How many containers deep `value` nests: 0 for a scalar, one more than the deepest member
+/// for an object or an array.
+fn nesting(value: &Value) -> usize {
+    match value {
+        Value::Array(items) => 1 + items.iter().map(nesting).max().unwrap_or(0),
+        Value::Object(members) => 1 + members.values().map(nesting).max().unwrap_or(0),
+        _ => 0,
+    }
 }
