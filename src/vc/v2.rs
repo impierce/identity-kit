@@ -252,13 +252,13 @@ impl CredentialV2 {
         if self.credential_subject.is_empty() {
             return Err(CredentialError::NoSubject);
         }
-        if let (Some(from), Some(until)) = (self.valid_from, self.valid_until) {
-            if until < from {
-                return Err(CredentialError::InvalidValidity {
-                    from: "validFrom",
-                    until: "validUntil",
-                });
-            }
+        if let (Some(from), Some(until)) = (self.valid_from, self.valid_until)
+            && until < from
+        {
+            return Err(CredentialError::InvalidValidity {
+                from: "validFrom",
+                until: "validUntil",
+            });
         }
         Ok(())
     }

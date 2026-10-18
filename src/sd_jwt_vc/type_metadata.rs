@@ -404,10 +404,10 @@ impl TypeMetadata {
         let mut svg_ids = std::collections::HashSet::new();
         for claim in &self.claims {
             claim.check()?;
-            if let Some(svg_id) = &claim.svg_id {
-                if !svg_ids.insert(svg_id) {
-                    return Err(TypeMetadataError::DuplicateSvgId(svg_id.clone()));
-                }
+            if let Some(svg_id) = &claim.svg_id
+                && !svg_ids.insert(svg_id)
+            {
+                return Err(TypeMetadataError::DuplicateSvgId(svg_id.clone()));
             }
         }
         Ok(())

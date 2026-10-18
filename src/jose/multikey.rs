@@ -109,14 +109,14 @@ impl Jwk {
     /// ```
     pub fn from_multikey(multikey: &str) -> Result<Self, JwkError> {
         let (codec, raw) = decode(multikey)?;
-        if let Some(expected) = codec.key_len() {
-            if raw.len() != expected {
-                return Err(JwkError::InvalidKeyLength {
-                    key: codec.key_name(),
-                    expected,
-                    actual: raw.len(),
-                });
-            }
+        if let Some(expected) = codec.key_len()
+            && raw.len() != expected
+        {
+            return Err(JwkError::InvalidKeyLength {
+                key: codec.key_name(),
+                expected,
+                actual: raw.len(),
+            });
         }
         match codec {
             KeyCodec::Ed25519 => Self::from_ed25519_public(&raw),

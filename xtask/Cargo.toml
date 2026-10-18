@@ -2,7 +2,7 @@
 name = "xtask"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 publish = false
 description = "Development tasks for identity-kit: `cargo xtask <task>`"
 license = "Apache-2.0"
