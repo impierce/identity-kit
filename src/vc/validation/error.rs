@@ -197,7 +197,7 @@ impl From<crate::resolver::DereferenceError> for KeyResolutionError {
 #[non_exhaustive]
 pub struct PresentationValidationError {
     /// What is wrong with the presentation JWT; when set, no credential was validated.
-    pub presentation: Option<ValidationError>,
+    pub presentation: Option<Box<ValidationError>>,
     /// What is wrong with each failing credential, by its position in
     /// `verifiableCredential`.
     pub credentials: BTreeMap<usize, ValidationError>,
@@ -207,7 +207,7 @@ impl PresentationValidationError {
     /// An error of the presentation itself.
     pub fn presentation(error: ValidationError) -> Self {
         Self {
-            presentation: Some(error),
+            presentation: Some(Box::new(error)),
             credentials: BTreeMap::new(),
         }
     }

@@ -786,7 +786,7 @@ async fn presentation_errors() {
     let options = presentation_options();
     let presentation_error = |error: PresentationValidationError| {
         assert!(error.credentials.is_empty());
-        error.presentation.unwrap()
+        *error.presentation.unwrap()
     };
 
     let wrong_audience = present(&holder, vec![jwt.clone()], |claims| {
