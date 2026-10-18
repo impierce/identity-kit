@@ -3,7 +3,7 @@
 #![cfg(feature = "did-key")]
 
 use identity_kit::did::{
-    Did, DidDocument, DidUrl, MethodType, ResolutionError, ResolutionOptions,
+    DEFAULT_MAX_LEN, Did, DidDocument, DidUrl, MethodType, ResolutionError, ResolutionOptions,
     VerificationRelationship,
 };
 use identity_kit::jose::Jwk;
@@ -221,6 +221,19 @@ fn version_segment() {
             "{did}"
         );
     }
+    // A version so long that `did#multikey` would not fit a DID URL.
+    let prefix = format!(
+        "did:key:{}:",
+        "1".repeat(DEFAULT_MAX_LEN - 2 * ED25519_MULTIKEY.len())
+    );
+    let long = did(&format!("{prefix}{ED25519_MULTIKEY}"));
+    assert!(long.as_str().len() <= DEFAULT_MAX_LEN);
+    assert_eq!(method.document(&long), Err(ResolutionError::InvalidDid));
+    let fits = did(&format!(
+        "did:key:{}:{ED25519_MULTIKEY}",
+        "1".repeat(DEFAULT_MAX_LEN - 2 * ED25519_MULTIKEY.len() - 10)
+    ));
+    assert!(method.document(&fits).is_ok());
 }
 
 #[test]

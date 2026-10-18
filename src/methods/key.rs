@@ -19,8 +19,9 @@ use core::fmt;
 use serde_json::Value;
 
 use crate::did::{
-    Context, Did, DidDocument, DocumentError, MethodType, ResolutionError, ResolutionOptions,
-    ResolutionResult, VerificationMaterial, VerificationMethod, VerificationRelationship,
+    Context, DEFAULT_MAX_LEN, Did, DidDocument, DocumentError, MethodType, ResolutionError,
+    ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
+    VerificationRelationship,
 };
 use crate::jose::{Jwk, JwkError};
 use crate::resolver::{DidProducer, DidResolver, Hosting, MethodCapabilities, ProduceError};
@@ -156,7 +157,9 @@ impl DidKey {
     ///
     /// - [`ResolutionError::MethodNotSupported`] when `did` is not a `did:key`.
     /// - [`ResolutionError::InvalidDid`] when the method-specific id is not a Multikey string
-    ///   (optionally preceded by a positive integer version) with a known multicodec header.
+    ///   (optionally preceded by a positive integer version) with a known multicodec header, or
+    ///   the DID is so long that the verification method id `did#multikey` would not fit
+    ///   [`DEFAULT_MAX_LEN`] bytes.
     /// - [`ResolutionError::Other`] with the method's own error names otherwise:
     ///   `unsupportedPublicKeyType` for a key type this crate cannot read,
     ///   `invalidPublicKeyLength` when the raw key has the wrong length, and `invalidPublicKey`
@@ -176,6 +179,11 @@ impl DidKey {
             }
             _ => ResolutionError::Other("invalidPublicKey".to_owned()),
         })?;
+        // The verification method id is `did#multikey`, which must fit a DID URL: a long
+        // version prefix can push it past the limit.
+        if did.as_str().len() + 1 + multikey.len() > DEFAULT_MAX_LEN {
+            return Err(ResolutionError::InvalidDid);
+        }
         self.build(did, multikey, jwk)
             .map_err(|_| ResolutionError::InvalidDidDocument)
     }

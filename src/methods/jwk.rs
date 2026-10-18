@@ -9,8 +9,8 @@
 //! [did:jwk method]: https://github.com/quartzjer/did-jwk/blob/main/spec.md
 
 use crate::did::{
-    Context, Did, DidDocument, DidError, DocumentError, MethodType, ResolutionError,
-    ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
+    Context, DEFAULT_MAX_LEN, Did, DidDocument, DidError, DocumentError, MethodType,
+    ResolutionError, ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
     VerificationRelationship,
 };
 use crate::jose::Jwk;
@@ -50,6 +50,10 @@ impl DidJwk {
     /// The fragment of the one verification method, `0`.
     pub const FRAGMENT: &'static str = "0";
 
+    /// The longest `did:jwk` whose document this method can represent: the verification
+    /// method id `did#0` must fit [`DEFAULT_MAX_LEN`] bytes.
+    pub const MAX_DID_LEN: usize = DEFAULT_MAX_LEN - 1 - Self::FRAGMENT.len();
+
     /// The `@context` of every `did:jwk` document.
     pub const CONTEXT: [&'static str; 2] = [
         Context::DID_V1,
@@ -61,13 +65,13 @@ impl DidJwk {
     ///
     /// # Errors
     ///
-    /// [`DidError::TooLong`] when the encoded key does not fit a DID of
-    /// [`DEFAULT_MAX_LEN`](crate::did::DEFAULT_MAX_LEN) bytes, as a JWK carrying an `x5c` chain
-    /// or large extension members may not; base64url is otherwise valid DID syntax.
+    /// [`DidError::TooLong`] when the encoded key exceeds [`MAX_DID_LEN`](Self::MAX_DID_LEN)
+    /// bytes, as a JWK carrying an `x5c` chain or large extension members may; base64url is
+    /// otherwise valid DID syntax.
     pub fn did(jwk: &Jwk) -> Result<Did, DidError> {
         let json = serde_json::to_vec(&jwk.public()).expect("a JWK serializes");
         let id = crate::jose::base64url::encode(&json);
-        Did::parse(&format!("did:jwk:{id}"))
+        Did::parse_with_max_len(&format!("did:jwk:{id}"), Self::MAX_DID_LEN)
     }
 
     /// The DID document `did` expands to (the method's Read operation).
@@ -76,10 +80,14 @@ impl DidJwk {
     ///
     /// - [`ResolutionError::MethodNotSupported`] when `did` is not a `did:jwk`.
     /// - [`ResolutionError::InvalidDid`] when the method-specific id is not base64url of a
-    ///   JSON Web Key, or the key carries private parameters.
+    ///   JSON Web Key, the key carries private parameters, or the DID is longer than
+    ///   [`MAX_DID_LEN`](Self::MAX_DID_LEN).
     pub fn document(did: &Did) -> Result<DidDocument, ResolutionError> {
         if did.method() != Self::METHOD {
             return Err(ResolutionError::MethodNotSupported);
+        }
+        if did.as_str().len() > Self::MAX_DID_LEN {
+            return Err(ResolutionError::InvalidDid);
         }
         let json = crate::jose::base64url::decode(did.method_specific_id())
             .map_err(|_| ResolutionError::InvalidDid)?;
