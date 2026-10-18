@@ -15,7 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["secp256k1", "software"]
+default = ["secp256k1", "software", "did-key", "did-jwk", "did-web", "reqwest"]
 # ES256K signatures and `secp256k1` keys, via `k256`.
 secp256k1 = ["dep:k256"]
 # RS256 and PS256 signatures, via `rsa`.
@@ -26,21 +26,34 @@ in-memory = ["dep:getrandom"]
 software = ["dep:getrandom"]
 # `keys::testsuite`, the behavioural suite every key store must pass.
 test-vectors = []
+# The `did:key` method (`methods::key`).
+did-key = []
+# The `did:jwk` method (`methods::jwk`).
+did-jwk = []
+# The `did:web` method (`methods::web`) over an injected `HttpClient`.
+did-web = ["dep:url"]
+# The hardened default `HttpClient` for `did:web`, via `reqwest` with `rustls` and `ring`.
+reqwest = ["did-web", "dep:reqwest", "dep:rustls", "dep:tokio"]
 
 [dependencies]
 async-trait = "0.1"
 base64 = { version = "0.22", default-features = false, features = ["std"] }
+bs58 = "0.5"
 ed25519-dalek = { version = "3.0", features = ["pkcs8"] }
 getrandom = { version = "0.4", features = ["std"], optional = true }
 indexmap = { version = "2.0", features = ["serde"] }
 jsonwebtoken = { version = "10.3", default-features = false }
 k256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"], optional = true }
 rsa = { version = "0.10.0-rc.19", default-features = false, features = ["encoding", "sha2", "std"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.11"
 thiserror = "2.0"
+tokio = { version = "1.0", features = ["net"], optional = true }
+url = { version = "2.5", optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]

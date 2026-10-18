@@ -56,8 +56,9 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 
 | Feature              | Default | Pulls in                                                      |
 | -------------------- | ------- | ------------------------------------------------------------- |
-| `did-key`, `did-jwk` | on      | `multibase`, `unsigned-varint`                                |
-| `did-web`            | on      | `reqwest` (rustls); an injected `HttpClient` works without it |
+| `did-key`, `did-jwk` | on      | nothing: `bs58` and the multicodec header are always compiled in `jose` (ADR 0003) |
+| `did-web`            | on      | `url`; the method works over any injected `HttpClient`        |
+| `reqwest`            | on      | `reqwest` with `rustls` and `ring`: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
 | `secp256k1`          | on      | `k256`                                                        |
 | `rsa`                | off     | `rsa`                                                         |
 | `in-memory`          | off     | test and development key store                                |
@@ -196,16 +197,22 @@ pub trait DidProducer: Send + Sync {
 pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); resolve, resolve_document, dereference, resolve_public_key
 ```
 
-- `methods::key`: multicodec table (`ed25519-pub 0xed`, `p256-pub 0x1200`, `secp256k1-pub 0xe7`,
-  `rsa-pub 0x1205`, `x25519-pub 0xec`), base58btc multibase (`z`), one `JsonWebKey2020` method with
-  `publicKeyJwk` and fragment equal to the method-specific id.
-- `methods::jwk`: `base64url(JWK)` as method-specific id; fragment `#0`.
-- `methods::web`: `did_from_origin(&Url)` (reject IP hosts and opaque origins; encode a non-default
-  port as `%3A<port>`), DID to document URL mapping (`https://host[:port]/.well-known/did.json` when
-  no path segments, else `https://host[:port]/<segments>/did.json`), resolver over an injected
-  `HttpClient` trait (default: HTTPS only, no redirects, size limit, no local addresses), producer
-  taking `{ origin }` and setting `@context` to `["https://www.w3.org/ns/did/v1",
-"https://w3id.org/security/suites/jws-2020/v1"]`.
+- `jose::multikey`: the multicodec table (`ed25519-pub 0xed`, `p256-pub 0x1200`, `secp256k1-pub
+  0xe7`, `rsa-pub 0x1205`, `x25519-pub 0xec`) and base58btc multibase (`z`) as
+  `Jwk::from_multikey`/`Jwk::to_multikey`, so `publicKeyMultibase` material dereferences to a JWK
+  for any method.
+- `methods::key`: did:key v0.9 Document Creation Algorithm; one `Multikey` method (default) or
+  `JsonWebKey` method, fragment equal to the method-specific id, optional X25519 key agreement
+  derived from Ed25519; the `publicKeyFormat` and `enableEncryptionKeyDerivation` resolution
+  options (ADR 0003).
+- `methods::jwk`: `base64url(JWK)` as method-specific id; fragment `#0`; relationships follow `use`.
+- `methods::web`: `did_from_url(&Url)`/`did_from_origin(&Url)` (reject IP hosts, credentials,
+  queries and fragments; encode a non-default port as `%3A<port>`), DID to document URL mapping
+  (`https://host[:port]/.well-known/did.json` when no path segments, else
+  `https://host[:port]/<segments>/did.json`), resolver over an injected `HttpClient` trait
+  (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only),
+  producer taking the document URL and setting `@context` to `["https://www.w3.org/ns/did/v1",
+  "https://w3id.org/security/suites/jws-2020/v1"]`.
 
 ## Upper layer
 

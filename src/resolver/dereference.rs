@@ -5,9 +5,9 @@ use serde_json::Value;
 use super::Resolver;
 use crate::did::{
     Did, DidDocument, DidUrl, DocumentError, MethodType, ResolutionError, ResolutionOptions,
-    Service, VerificationMethod, VerificationRelationship,
+    Service, VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
-use crate::jose::Jwk;
+use crate::jose::{Jwk, JwkError};
 
 /// The resource a DID URL names, as [`Resolver::dereference`] returns it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,14 +90,17 @@ pub enum DereferenceError {
         /// The relationship that was required.
         relationship: VerificationRelationship,
     },
-    /// The verification method has no `publicKeyJwk` and its `publicKeyMultibase` cannot be
-    /// converted to one.
-    #[error("verification method `{id}` of type `{method_type}` has no JWK")]
+    /// The verification method has no `publicKeyJwk` and its `publicKeyMultibase` is not a
+    /// Multikey this crate can decode (see [`Jwk::from_multikey`]).
+    #[error("verification method `{id}` of type `{method_type}` has no usable JWK: {source}")]
     NoJwk {
         /// The id of the verification method.
         id: DidUrl,
         /// Its `type`.
         method_type: MethodType,
+        /// Why the multibase material did not decode.
+        #[source]
+        source: Box<JwkError>,
     },
 }
 
@@ -164,22 +167,25 @@ impl Resolver {
             })
     }
 
-    /// The public key of the verification method `url` names, as a JWK.
+    /// The public key of the verification method `url` names, as a JWK: its `publicKeyJwk`,
+    /// or its `publicKeyMultibase` decoded as a Multikey.
     ///
     /// # Errors
     ///
     /// As [`resolve_verification_method`](Self::resolve_verification_method) without a
     /// relationship, plus [`DereferenceError::NoJwk`] when the method carries
-    /// `publicKeyMultibase` material.
+    /// `publicKeyMultibase` material that is not a Multikey this crate can decode.
     pub async fn resolve_public_key(&self, url: &DidUrl) -> Result<Jwk, DereferenceError> {
         let method = self.resolve_verification_method(url, None).await?;
-        method
-            .public_key_jwk()
-            .map(Jwk::public)
-            .ok_or(DereferenceError::NoJwk {
-                id: method.id,
-                method_type: method.method_type,
-            })
+        match &method.material {
+            VerificationMaterial::PublicKeyJwk(jwk) => Ok(jwk.public()),
+            VerificationMaterial::PublicKeyMultibase(multikey) => Jwk::from_multikey(multikey)
+                .map_err(|source| DereferenceError::NoJwk {
+                    id: method.id.clone(),
+                    method_type: method.method_type.clone(),
+                    source: Box::new(source),
+                }),
+        }
     }
 
     /// Resolves the DID of `url` with the resolution options its DID parameters carry, and
