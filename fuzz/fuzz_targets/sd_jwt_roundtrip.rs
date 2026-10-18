@@ -6,7 +6,9 @@
 use arbitrary::Arbitrary;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use identity_kit::sd_jwt_vc::{ClaimPath, HashAlgorithm, PathComponent, SdJwt, SdJwtBuilder};
+use identity_kit::sd_jwt_vc::{
+    ClaimPath, HashAlgorithm, PathComponent, SdJwt, SdJwtBuilder, SdJwtError,
+};
 use identity_kit::vc::Jwt;
 use libfuzzer_sys::fuzz_target;
 use serde_json::{Map, Value};
@@ -121,10 +123,14 @@ fuzz_target!(|input: Input| {
         let shown = partial.process().expect("a partial disclosure processes");
         assert!(shown.is_disclosed(path));
         assert!(shown.disclosed_paths().count() <= disclosed.len());
-        let selected = sd_jwt
-            .select(|disclosure| disclosure == &sd_jwt.disclosures()[keep])
-            .expect("selecting one disclosure");
-        let _ = selected.process();
+        // One disclosure on its own is a valid selection unless it is nested in another.
+        match sd_jwt.select(|disclosure| disclosure == &sd_jwt.disclosures()[keep]) {
+            Ok(selected) => {
+                selected.process().expect("a selection processes");
+            }
+            Err(SdJwtError::MissingParentDisclosure { .. }) => {}
+            Err(error) => panic!("selecting one disclosure: {error}"),
+        }
     }
     let none = sd_jwt.select(|_| false).expect("selecting nothing");
     let hidden = none.process().expect("a token without disclosures processes");
