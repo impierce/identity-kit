@@ -6,9 +6,11 @@
 //!
 //! 1. The SD-JWT parses as an [`SdJwtVc`]: `typ`, disclosures, claims (RFC 9901 §7.1 steps 3
 //!    to 5, SD-JWT VC §2.2).
-//! 2. The `kid` of the issuer-signed JWT is a DID URL, resolved under `assertionMethod`, and
-//!    verifies the signature; `iss` is the DID of that `kid`. (Issuers identified by an HTTPS
-//!    `iss` with JWT VC issuer metadata, and `x5c` chains, are not resolved by this crate.)
+//! 2. The `kid` of the issuer-signed JWT is a DID URL of the form `did:…#fragment` (a path or
+//!    DID parameters such as `versionId` are refused, as in the JWT validators, ADR 0004),
+//!    resolved under `assertionMethod`, and verifies the signature; `iss` is the DID of that
+//!    `kid`. (Issuers identified by an HTTPS `iss` with JWT VC issuer metadata, and `x5c`
+//!    chains, are not resolved by this crate.)
 //! 3. `nbf`, `exp` and `iat` hold at the validation time.
 //! 4. When the options require key binding (RFC 9901 §7.3): the SD-JWT+KB carries a key
 //!    binding JWT with `typ: kb+jwt`, signed by the key in `cnf`, for the expected audience
@@ -270,6 +272,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             kid: kid.to_owned(),
             source,
         })?;
+        if kid.path().is_some() || kid.query().is_some() {
+            return Err(ValidationError::KidWithParameters(kid).into());
+        }
         let key = self
             .resolver
             .resolve_key(&kid, VerificationRelationship::AssertionMethod)
@@ -510,6 +515,11 @@ mod status_list {
             let kid = DidUrl::parse(kid).map_err(|e| {
                 StatusError::Unavailable(format!("{uri}: `kid` {kid:?} is not a DID URL: {e}"))
             })?;
+            if kid.path().is_some() || kid.query().is_some() {
+                return Err(StatusError::Unavailable(format!(
+                    "{uri}: `kid` `{kid}` carries a path or DID parameters"
+                )));
+            }
             let key = self
                 .resolver
                 .resolve_key(&kid, VerificationRelationship::AssertionMethod)

@@ -397,7 +397,8 @@ async fn issuer_signature_and_binding_errors() {
         ))
     ));
 
-    // No `kid`, a `kid` that is not a DID URL, a `kid` that does not resolve.
+    // No `kid`, a `kid` that is not a DID URL, one with DID parameters, one that does not
+    // resolve.
     let no_kid = SdJwtVcBuilder::new(VCT)
         .with_issuer(issuer.did.as_str())
         .sign(&issuer.signer)
@@ -418,6 +419,21 @@ async fn issuer_signature_and_binding_errors() {
         validator.validate(bad_kid.sd_jwt(), &options()).await,
         Err(SdJwtValidationError::Validation(
             ValidationError::InvalidKid { .. }
+        ))
+    ));
+    let versioned = builder(&issuer)
+        .with_kid(format!(
+            "{}?versionId=1#{}",
+            issuer.did,
+            issuer.kid.fragment().unwrap()
+        ))
+        .sign(&issuer.signer)
+        .await
+        .unwrap();
+    assert!(matches!(
+        validator.validate(versioned.sd_jwt(), &options()).await,
+        Err(SdJwtValidationError::Validation(
+            ValidationError::KidWithParameters(_)
         ))
     ));
     let unknown = builder(&issuer)
@@ -657,6 +673,15 @@ mod status_list_check {
             .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
             .await
             .unwrap();
+        let versioned = StatusListToken::new(LIST_URI, issued_at(), StatusList::new(1, 8).unwrap())
+            .with_expires_at(expires_at())
+            .sign(&Ed25519Signer::rfc8037().with_kid(format!(
+                "{}?versionId=1#{}",
+                issuer.did,
+                issuer.kid.fragment().unwrap()
+            )))
+            .await
+            .unwrap();
         let forged = {
             let mut parts: Vec<String> = token.as_str().split('.').map(str::to_owned).collect();
             parts[2] = common::encode(&[1u8; 64]);
@@ -675,6 +700,10 @@ mod status_list_check {
         served.insert(
             "https://example.com/statuslists/4".to_owned(),
             (200, forged),
+        );
+        served.insert(
+            "https://example.com/statuslists/5".to_owned(),
+            (200, versioned.as_str().to_owned()),
         );
         let check = StatusListCheck::new(
             Served(served),
@@ -703,6 +732,7 @@ mod status_list_check {
             ("https://example.com/statuslists/2", 0),
             ("https://example.com/statuslists/3", 0),
             ("https://example.com/statuslists/4", 0),
+            ("https://example.com/statuslists/5", 0),
             ("https://example.com/nowhere", 0),
         ] {
             let bad = credential(uri, idx).sign(&issuer.signer).await.unwrap();
