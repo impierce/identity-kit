@@ -11,7 +11,7 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
-base64 = "0.22"
+base64 = "0.23"
 chrono = "0.4"
 identity-kit = { path = "..", default-features = false, features = ["secp256k1", "did-key", "did-jwk", "did-web", "vc", "sd-jwt", "domain-linkage"] }
 libfuzzer-sys = "0.4"
