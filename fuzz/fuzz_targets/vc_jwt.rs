@@ -12,13 +12,15 @@ use libfuzzer_sys::fuzz_target;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// Whether a date of `credential` is a leap second (`:60`, RFC 3339 §5.6). A `NumericDate` has
-/// none, so the JWT mapping floors it to `:59` and such a credential does not map back unchanged.
-fn has_leap_second(credential: &Credential) -> bool {
+/// Whether a date of `credential` has what a `NumericDate` cannot carry: a fraction of a second,
+/// or a leap second (`:60`, RFC 3339 §5.6), which chrono keeps as a nanosecond count of a second
+/// or more. The JWT mapping floors both to whole seconds, so such a credential does not map back
+/// unchanged.
+fn has_subsecond_precision(credential: &Credential) -> bool {
     [Some(credential.issuance_date), credential.expiration_date]
         .into_iter()
         .flatten()
-        .any(|time| time.nanosecond() >= 1_000_000_000)
+        .any(|time| time.nanosecond() != 0)
 }
 
 fn json_roundtrip<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(value: &T) {
@@ -32,7 +34,7 @@ fn exercise_claims(claims: &JwtClaims) {
     if let Ok(credential) = Credential::from_jwt_claims(claims) {
         json_roundtrip(&credential);
         if let Ok(back) = credential.to_jwt_claims()
-            && !has_leap_second(&credential)
+            && !has_subsecond_precision(&credential)
         {
             assert_eq!(Credential::from_jwt_claims(&back).as_ref(), Ok(&credential));
         }
@@ -102,7 +104,7 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(credential) = serde_json::from_slice::<Credential>(data) {
         json_roundtrip(&credential);
         if let Ok(claims) = credential.to_jwt_claims()
-            && !has_leap_second(&credential)
+            && !has_subsecond_precision(&credential)
         {
             assert_eq!(
                 Credential::from_jwt_claims(&claims).as_ref(),
