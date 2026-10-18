@@ -37,9 +37,9 @@ fn claim_path(value: &Value) -> Option<ClaimPath> {
         .iter()
         .map(|component| match component {
             Value::String(name) => Some(PathComponent::from(name.as_str())),
-            Value::Number(index) => index.as_u64().and_then(|index| {
-                usize::try_from(index).ok().map(PathComponent::from)
-            }),
+            Value::Number(index) => index
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok().map(PathComponent::from)),
             Value::Null => Some(PathComponent::from(())),
             _ => None,
         })
@@ -64,22 +64,22 @@ fuzz_target!(|data: &[u8]| {
             serde_json::from_str(&json).expect("a serialized configuration parses");
         assert_eq!(again, configuration);
     }
-    if let Ok(value) = serde_json::from_slice::<Value>(data) {
-        if let (Some(path), Some(root)) = (claim_path(&value), value.get("value")) {
-            if let Ok(selected) = path.select(root) {
-                let resolved = path.resolve(root).expect("a selectable path resolves");
-                assert_eq!(resolved.len(), selected.len());
-                for concrete in &resolved {
-                    assert!(concrete.is_concrete());
-                    assert!(path.matches(concrete));
-                    assert_eq!(concrete.select(root).map(|found| found.len()), Ok(1));
-                }
+    if let Ok(value) = serde_json::from_slice::<Value>(data)
+        && let (Some(path), Some(root)) = (claim_path(&value), value.get("value"))
+    {
+        if let Ok(selected) = path.select(root) {
+            let resolved = path.resolve(root).expect("a selectable path resolves");
+            assert_eq!(resolved.len(), selected.len());
+            for concrete in &resolved {
+                assert!(concrete.is_concrete());
+                assert!(path.matches(concrete));
+                assert_eq!(concrete.select(root).map(|found| found.len()), Ok(1));
             }
-            let _ = path.to_string();
-            let _ = path.is_concrete();
-            let _ = path.is_prefix_of(&path);
-            assert!(path.matches(&path) || !path.is_concrete());
         }
+        let _ = path.to_string();
+        let _ = path.is_concrete();
+        let _ = path.is_prefix_of(&path);
+        assert!(path.matches(&path) || !path.is_concrete());
     }
 
     let Ok(input) = std::str::from_utf8(data) else {
@@ -104,10 +104,10 @@ fuzz_target!(|data: &[u8]| {
             exercise_list(&list);
         }
     }
-    if let Ok(jwt) = Jwt::new(input) {
-        if let Ok((header, token)) = StatusListToken::decode(&jwt) {
-            let _ = header.kid;
-            exercise_list(&token.status_list);
-        }
+    if let Ok(jwt) = Jwt::new(input)
+        && let Ok((header, token)) = StatusListToken::decode(&jwt)
+    {
+        let _ = header.kid;
+        exercise_list(&token.status_list);
     }
 });

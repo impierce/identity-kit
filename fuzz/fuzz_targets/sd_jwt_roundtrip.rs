@@ -133,7 +133,9 @@ fuzz_target!(|input: Input| {
         }
     }
     let none = sd_jwt.select(|_| false).expect("selecting nothing");
-    let hidden = none.process().expect("a token without disclosures processes");
+    let hidden = none
+        .process()
+        .expect("a token without disclosures processes");
     assert_eq!(hidden.disclosed_paths().count(), 0);
     if paths.is_empty() {
         assert_eq!(hidden.as_issued(), &claims);

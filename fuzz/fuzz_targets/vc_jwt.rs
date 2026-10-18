@@ -28,18 +28,27 @@ fn exercise_claims(claims: &JwtClaims) {
     if let Ok(credential) = CredentialV2::from_jwt_claims(claims) {
         json_roundtrip(&credential);
         let back = credential.to_jwt_claims();
-        assert_eq!(CredentialV2::from_jwt_claims(&back).as_ref(), Ok(&credential));
+        assert_eq!(
+            CredentialV2::from_jwt_claims(&back).as_ref(),
+            Ok(&credential)
+        );
     }
     if let Ok(presentation) = Presentation::from_jwt_claims(claims) {
         json_roundtrip(&presentation);
         if let Ok(back) = presentation.to_jwt_claims() {
-            assert_eq!(Presentation::from_jwt_claims(&back).as_ref(), Ok(&presentation));
+            assert_eq!(
+                Presentation::from_jwt_claims(&back).as_ref(),
+                Ok(&presentation)
+            );
         }
     }
     if let Ok(presentation) = PresentationV2::from_jwt_claims(claims) {
         json_roundtrip(&presentation);
         let back = presentation.to_jwt_claims();
-        assert_eq!(PresentationV2::from_jwt_claims(&back).as_ref(), Ok(&presentation));
+        assert_eq!(
+            PresentationV2::from_jwt_claims(&back).as_ref(),
+            Ok(&presentation)
+        );
     }
 }
 
@@ -81,23 +90,35 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(credential) = serde_json::from_slice::<Credential>(data) {
         json_roundtrip(&credential);
         if let Ok(claims) = credential.to_jwt_claims() {
-            assert_eq!(Credential::from_jwt_claims(&claims).as_ref(), Ok(&credential));
+            assert_eq!(
+                Credential::from_jwt_claims(&claims).as_ref(),
+                Ok(&credential)
+            );
         }
     }
     if let Ok(credential) = serde_json::from_slice::<CredentialV2>(data) {
         json_roundtrip(&credential);
         let claims = credential.to_jwt_claims();
-        assert_eq!(CredentialV2::from_jwt_claims(&claims).as_ref(), Ok(&credential));
+        assert_eq!(
+            CredentialV2::from_jwt_claims(&claims).as_ref(),
+            Ok(&credential)
+        );
     }
     if let Ok(presentation) = serde_json::from_slice::<Presentation>(data) {
         json_roundtrip(&presentation);
         if let Ok(claims) = presentation.to_jwt_claims() {
-            assert_eq!(Presentation::from_jwt_claims(&claims).as_ref(), Ok(&presentation));
+            assert_eq!(
+                Presentation::from_jwt_claims(&claims).as_ref(),
+                Ok(&presentation)
+            );
         }
     }
     if let Ok(presentation) = serde_json::from_slice::<PresentationV2>(data) {
         json_roundtrip(&presentation);
         let claims = presentation.to_jwt_claims();
-        assert_eq!(PresentationV2::from_jwt_claims(&claims).as_ref(), Ok(&presentation));
+        assert_eq!(
+            PresentationV2::from_jwt_claims(&claims).as_ref(),
+            Ok(&presentation)
+        );
     }
 });

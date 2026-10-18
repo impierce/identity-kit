@@ -49,8 +49,14 @@ fn exercise_jwk(jwk: &Jwk) {
     let public = jwk.public();
     assert!(!public.is_private());
     assert_eq!(public.public(), public);
-    assert_eq!(public.thumbprint_sha256().is_ok(), jwk.thumbprint_sha256().is_ok());
-    assert_eq!(jwk.thumbprint_sha256().ok(), public.thumbprint_sha256().ok());
+    assert_eq!(
+        public.thumbprint_sha256().is_ok(),
+        jwk.thumbprint_sha256().is_ok()
+    );
+    assert_eq!(
+        jwk.thumbprint_sha256().ok(),
+        public.thumbprint_sha256().ok()
+    );
 
     let _ = jwk.ed25519_public_bytes();
     let _ = jwk.x25519_public_bytes();

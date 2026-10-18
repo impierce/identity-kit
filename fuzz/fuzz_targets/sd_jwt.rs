@@ -27,10 +27,16 @@ fn exercise(sd_jwt: &SdJwt) {
         assert!(path.is_concrete());
         assert_eq!(path.select(&root).map(|found| found.len()), Ok(1));
     }
-    let all = sd_jwt.select(|_| true).expect("selecting everything processes");
+    let all = sd_jwt
+        .select(|_| true)
+        .expect("selecting everything processes");
     assert_eq!(all.process().ok().as_ref(), Some(&processed));
-    let none = sd_jwt.select(|_| false).expect("selecting nothing processes");
-    let hidden = none.process().expect("a token without disclosures processes");
+    let none = sd_jwt
+        .select(|_| false)
+        .expect("selecting nothing processes");
+    let hidden = none
+        .process()
+        .expect("a token without disclosures processes");
     assert_eq!(hidden.disclosed_paths().count(), 0);
     assert!(none.disclosures().is_empty());
     let paths: Vec<_> = processed.disclosed_paths().cloned().collect();
@@ -44,7 +50,10 @@ fuzz_target!(|data: &[u8]| {
     };
     if let Ok(disclosure) = Disclosure::parse(input) {
         assert_eq!(disclosure.as_str(), input);
-        assert_eq!(Disclosure::parse(disclosure.as_str()).ok().as_ref(), Some(&disclosure));
+        assert_eq!(
+            Disclosure::parse(disclosure.as_str()).ok().as_ref(),
+            Some(&disclosure)
+        );
         assert_eq!(disclosure.is_element(), disclosure.name().is_none());
         let _ = disclosure.salt();
         let _ = disclosure.value();

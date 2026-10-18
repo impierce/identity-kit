@@ -25,7 +25,10 @@ fuzz_target!(|data: &[u8]| {
         let url = did.to_url();
         assert_eq!(url.as_str(), input);
         assert_eq!(url.did(), &did);
-        assert_eq!((url.path(), url.query(), url.fragment()), (None, None, None));
+        assert_eq!(
+            (url.path(), url.query(), url.fragment()),
+            (None, None, None)
+        );
         assert_eq!(DidUrl::parse(input).as_ref(), Ok(&url));
         assert_eq!(did.join("").as_ref(), Ok(&url));
         assert!(Uri::parse(input).is_ok_and(|uri| uri.is_did_url()));
@@ -60,7 +63,9 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(reference) = DidUrlReference::parse(input) {
         assert_eq!(reference.as_str(), input);
         assert_eq!(reference.is_relative(), input.starts_with(['/', '?', '#']));
-        let resolved = reference.resolve(&base()).expect("an accepted reference resolves");
+        let resolved = reference
+            .resolve(&base())
+            .expect("an accepted reference resolves");
         assert_eq!(DidUrl::parse(resolved.as_str()).as_ref(), Ok(&resolved));
         assert!(reference.refers_to(&resolved, &base()));
         if reference.is_relative() {

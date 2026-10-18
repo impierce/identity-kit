@@ -19,7 +19,11 @@ fn key_of(document: &DidDocument, did: &Did) -> Jwk {
         .next()
         .expect("an assertion method");
     assert_eq!(method.id.did(), did);
-    assert!(document.resolve_verification_method(&method.id, None).is_ok());
+    assert!(
+        document
+            .resolve_verification_method(&method.id, None)
+            .is_ok()
+    );
     let json = serde_json::to_string(document).expect("a document serializes");
     let again: DidDocument = serde_json::from_str(&json).expect("a serialized document parses");
     assert_eq!(&again, document);
