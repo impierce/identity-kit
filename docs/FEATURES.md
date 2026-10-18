@@ -52,9 +52,9 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                             | Status | Cargo feature | Specification                    | Issue                                                   |
 | ----------------------------------------------------------------------------------- | :----: | ------------- | -------------------------------- | ------------------------------------------------------- |
-| `DidResolver` and `DidProducer` traits, `MethodCapabilities`                        |   📋   |               | [DID Resolution][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
-| `Resolver` registry with builder, `DocumentCache` with TTL                          |   📋   |               | [DID Resolution][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
-| DID URL dereferencing and `resolve_public_key`                                      |   📋   |               | [DID Resolution §4][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
+| `DidResolver` and `DidProducer` traits, `MethodCapabilities`                        |   ✅   |               | [DID Resolution][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
+| `Resolver` registry with builder, `DocumentCache` with TTL                          |   ✅   |               | [DID Resolution][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
+| DID URL dereferencing and `resolve_public_key`                                      |   ✅   |               | [DID Resolution §4][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
 
 ### `methods`: DID methods
 
