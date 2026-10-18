@@ -51,8 +51,9 @@ fuzz_target!(|data: &[u8]| {
                 assert!(!key.is_private());
                 // The DID carries the JWK as serialized by its producer, which need not be this
                 // crate's member order, so only the key must agree.
-                let again = DidJwk::document(&DidJwk::did(&key)).expect("a produced did:jwk");
-                assert_eq!(key_of(&again, &DidJwk::did(&key)), key);
+                let produced = DidJwk::did(&key).expect("a key read from a did:jwk fits one");
+                let again = DidJwk::document(&produced).expect("a produced did:jwk resolves");
+                assert_eq!(key_of(&again, &produced), key);
             }
             if let Ok(url) = web::document_url(&did) {
                 let back = web::did_from_url(&url).expect("a document URL maps back");
@@ -76,8 +77,9 @@ fuzz_target!(|data: &[u8]| {
             let key = key_of(&document, &did);
             assert_eq!(key.to_multikey().ok(), jwk.to_multikey().ok());
         }
-        let did = DidJwk::did(&jwk);
-        let document = DidJwk::document(&did).expect("a produced did:jwk resolves");
-        assert_eq!(key_of(&document, &did), jwk.public());
+        if let Ok(did) = DidJwk::did(&jwk) {
+            let document = DidJwk::document(&did).expect("a produced did:jwk resolves");
+            assert_eq!(key_of(&document, &did), jwk.public());
+        }
     }
 });

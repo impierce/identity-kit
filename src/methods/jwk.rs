@@ -9,8 +9,9 @@
 //! [did:jwk method]: https://github.com/quartzjer/did-jwk/blob/main/spec.md
 
 use crate::did::{
-    Context, Did, DidDocument, DocumentError, MethodType, ResolutionError, ResolutionOptions,
-    ResolutionResult, VerificationMaterial, VerificationMethod, VerificationRelationship,
+    Context, Did, DidDocument, DidError, DocumentError, MethodType, ResolutionError,
+    ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
+    VerificationRelationship,
 };
 use crate::jose::Jwk;
 use crate::resolver::{DidProducer, DidResolver, Hosting, MethodCapabilities, ProduceError};
@@ -30,7 +31,7 @@ use super::check_accept;
 /// let jwk: Jwk = serde_json::from_str(
 ///     r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#,
 /// )?;
-/// let did = DidJwk::did(&jwk);
+/// let did = DidJwk::did(&jwk)?;
 /// assert!(did.as_str().starts_with("did:jwk:eyJ"));
 ///
 /// let document = DidJwk::document(&did)?;
@@ -57,10 +58,16 @@ impl DidJwk {
 
     /// The `did:jwk` of the public part of `jwk`, serialized as compact JSON in this crate's
     /// member order. Any other serialization of the same key is another, equally valid, DID.
-    pub fn did(jwk: &Jwk) -> Did {
+    ///
+    /// # Errors
+    ///
+    /// [`DidError::TooLong`] when the encoded key does not fit a DID of
+    /// [`DEFAULT_MAX_LEN`](crate::did::DEFAULT_MAX_LEN) bytes, as a JWK carrying an `x5c` chain
+    /// or large extension members may not; base64url is otherwise valid DID syntax.
+    pub fn did(jwk: &Jwk) -> Result<Did, DidError> {
         let json = serde_json::to_vec(&jwk.public()).expect("a JWK serializes");
         let id = crate::jose::base64url::encode(&json);
-        Did::parse(&format!("did:jwk:{id}")).expect("base64url is valid DID syntax")
+        Did::parse(&format!("did:jwk:{id}"))
     }
 
     /// The DID document `did` expands to (the method's Read operation).
@@ -144,6 +151,10 @@ impl DidProducer for DidJwk {
     /// The document of [`DidJwk::did`] for the one key in `keys`.
     async fn produce(&self, keys: &[Jwk], _: ()) -> Result<DidDocument, ProduceError> {
         let jwk = super::single_key(keys)?;
-        Ok(build(&Self::did(jwk), jwk.public())?)
+        let did = Self::did(jwk).map_err(|error| ProduceError::UnsupportedKey {
+            index: 0,
+            reason: error.to_string(),
+        })?;
+        Ok(build(&did, jwk.public())?)
     }
 }

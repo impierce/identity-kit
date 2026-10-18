@@ -2,7 +2,9 @@
 //! specification and its Create and Read operations.
 #![cfg(feature = "did-jwk")]
 
-use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionError, ResolutionOptions};
+use identity_kit::did::{
+    DEFAULT_MAX_LEN, Did, DidDocument, DidError, DidUrl, ResolutionError, ResolutionOptions,
+};
 use identity_kit::jose::Jwk;
 use identity_kit::methods::DidJwk;
 use identity_kit::resolver::{
@@ -113,7 +115,7 @@ fn signing_keys_have_no_key_agreement() {
         "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"
     }))
     .unwrap();
-    let signing = DidJwk::did(&jwk);
+    let signing = DidJwk::did(&jwk).unwrap();
     let document = DidJwk::document(&signing).unwrap();
     assert!(document.key_agreement.is_empty());
     assert_eq!(document.authentication.len(), 1);
@@ -141,7 +143,7 @@ async fn create_operation() {
         "y": "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
     }))
     .unwrap();
-    let created = DidJwk::did(&jwk);
+    let created = DidJwk::did(&jwk).unwrap();
     assert_eq!(
         created.as_str(),
         "did:jwk:eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
@@ -166,7 +168,25 @@ async fn create_operation() {
         "d": "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"
     }))
     .unwrap();
-    assert_eq!(DidJwk::did(&private), DidJwk::did(&private.public()));
+    assert_eq!(
+        DidJwk::did(&private).unwrap(),
+        DidJwk::did(&private.public()).unwrap()
+    );
+
+    // A key too large for a DID (an `x5c` chain, say) is an error, not a panic.
+    let mut huge = private.public();
+    huge.additional_mut()
+        .insert("x5c".to_owned(), json!(["A".repeat(DEFAULT_MAX_LEN)]));
+    assert_eq!(
+        DidJwk::did(&huge),
+        Err(DidError::TooLong {
+            max: DEFAULT_MAX_LEN
+        })
+    );
+    assert!(matches!(
+        DidJwk.produce(std::slice::from_ref(&huge), ()).await,
+        Err(ProduceError::UnsupportedKey { index: 0, .. })
+    ));
     let document = DidJwk
         .produce(std::slice::from_ref(&private), ())
         .await
