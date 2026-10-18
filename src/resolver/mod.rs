@@ -21,8 +21,9 @@
 //! method's resolver as resolution options; a path, any other query parameter and the
 //! `service`/`relativeRef` parameters are method-specific and reported as
 //! [`DereferenceError::MethodSpecific`]. [`Resolver::resolve_public_key`] goes one step further
-//! and returns the [`Jwk`](crate::jose::Jwk) of a verification method, decoding
-//! `publicKeyMultibase` material as a Multikey, which is what a JWS verifier needs.
+//! and returns the [`Jwk`](crate::jose::Jwk) of a verification method, optionally checked to be
+//! usable for a verification relationship, decoding `publicKeyMultibase` material as a Multikey,
+//! which is what a JWS verifier needs.
 //!
 //! # Examples
 //!
@@ -79,7 +80,7 @@
 //! assert_eq!(resolver.resolve_document(&did).await?.id, did);
 //!
 //! let key = DidUrl::parse("did:example:123#key-1")?;
-//! let jwk = resolver.resolve_public_key(&key).await?;
+//! let jwk = resolver.resolve_public_key(&key, None).await?;
 //! assert_eq!(jwk.crv(), Some("Ed25519"));
 //! assert!(matches!(resolver.dereference(&key).await?, Dereferenced::VerificationMethod(_)));
 //!

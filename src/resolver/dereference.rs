@@ -167,15 +167,21 @@ impl Resolver {
     }
 
     /// The public key of the verification method `url` names, as a JWK: its `publicKeyJwk`,
-    /// or its `publicKeyMultibase` decoded as a Multikey.
+    /// or its `publicKeyMultibase` decoded as a Multikey. The method must be usable for
+    /// `relationship` when one is given: `assertionMethod` for the key that signed a
+    /// credential, `authentication` for the key that signed a presentation.
     ///
     /// # Errors
     ///
-    /// As [`resolve_verification_method`](Self::resolve_verification_method) without a
-    /// relationship, plus [`DereferenceError::NoJwk`] when the method carries
-    /// `publicKeyMultibase` material that is not a Multikey this crate can decode.
-    pub async fn resolve_public_key(&self, url: &DidUrl) -> Result<Jwk, DereferenceError> {
-        let method = self.resolve_verification_method(url, None).await?;
+    /// As [`resolve_verification_method`](Self::resolve_verification_method), plus
+    /// [`DereferenceError::NoJwk`] when the method carries `publicKeyMultibase` material that
+    /// is not a Multikey this crate can decode.
+    pub async fn resolve_public_key(
+        &self,
+        url: &DidUrl,
+        relationship: Option<VerificationRelationship>,
+    ) -> Result<Jwk, DereferenceError> {
+        let method = self.resolve_verification_method(url, relationship).await?;
         match &method.material {
             VerificationMaterial::PublicKeyJwk(jwk) => Ok(jwk.public()),
             VerificationMaterial::PublicKeyMultibase(multikey) => Jwk::from_multikey(multikey)
