@@ -15,11 +15,17 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["secp256k1", "did-key", "did-jwk", "did-web", "reqwest", "vc"]
+default = ["secp256k1", "software", "did-key", "did-jwk", "did-web", "reqwest", "vc"]
 # ES256K signatures and `secp256k1` keys, via `k256`.
 secp256k1 = ["dep:k256"]
 # RS256 and PS256 signatures, via `rsa`.
 rsa = ["dep:rsa"]
+# `InMemoryKeyStore`: a key store for tests and development, with an optional deterministic seed.
+in-memory = ["dep:getrandom"]
+# `SoftwareKeyStore`: a key store over a private JWK set file.
+software = ["dep:getrandom"]
+# `keys::testsuite`, the behavioural suite every key store must pass.
+test-vectors = []
 # The `did:key` method (`methods::key`).
 did-key = []
 # The `did:jwk` method (`methods::jwk`).
@@ -37,6 +43,7 @@ base64 = { version = "0.22", default-features = false, features = ["std"] }
 bs58 = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["now", "serde", "std"], optional = true }
 ed25519-dalek = { version = "3.0", features = ["pkcs8"] }
+getrandom = { version = "0.4", features = ["std"], optional = true }
 indexmap = { version = "2.0", features = ["serde"] }
 jsonwebtoken = { version = "10.3", default-features = false }
 k256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
@@ -55,7 +62,11 @@ zeroize = { version = "1.8", features = ["derive"] }
 [dev-dependencies]
 jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"] }
 proptest = "1.0"
+tempfile = "3.0"
 tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread"] }
+
+[workspace]
+members = ["xtask"]
 
 [lints.rust]
 unsafe_code = "forbid"
