@@ -27,7 +27,7 @@ replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did
 6. **Publishable from day one.** No git or path dependencies. `cargo publish --dry-run` runs on
    every PR. Small, maintained building blocks only: RustCrypto (`ed25519-dalek`, `p256`, `k256`,
    `rsa`, `sha2`), `jsonwebtoken`, `multibase`, `unsigned-varint`, `url`, `serde_json`, `indexmap`,
-   `sd-jwt-payload`, `cryptoki`.
+   `miniz_oxide`, `getrandom`, `cryptoki`. SD-JWT itself is implemented in this crate (ADR 0005).
 7. **Developer experience.** A `prelude` per layer; docs.rs built with `all-features` and
    `doc_cfg`; `#![forbid(unsafe_code)]`; MSRV pinned; one `CHANGELOG.md`; `release-plz`.
 
@@ -44,7 +44,7 @@ identity-kit/
 │       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing
 │       ├── methods/           # key, jwk, web
 │       ├── vc/                # [vc] Jwt, Credential, Presentation, CredentialV2, EnvelopedVc, validation
-│       ├── sd_jwt_vc/         # [sd-jwt] builder, parser, Status, StatusListRef, type metadata
+│       ├── sd_jwt_vc/         # [sd-jwt] SD-JWT (RFC 9901), SD-JWT VC, status list, type metadata, validator
 │       └── domain_linkage/    # [domain-linkage] DID configuration resource builder and validator
 ├── xtask/                     # publish = false: release checks, vector regeneration, key CLI
 └── examples/                  # publish = false
@@ -65,8 +65,8 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
 | `pkcs11`             | off     | `cryptoki`                                                    |
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
-| `sd-jwt`             | on      | `sd-jwt-payload`; implies `vc`                                |
-| `domain-linkage`     | on      | implies `vc` and `did-web`                                    |
+| `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
+| `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |
 | `utoipa`             | off     | OpenAPI schemas for the public types                          |
 | `test-vectors`       | off     | re-exports conformance vectors and the key-store test suite   |
 
@@ -227,13 +227,24 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   resolving the `kid` under `assertionMethod` or `authentication`), `TimeOptions` (explicit
   `now`, leeway), issuer and holder binding to the DID of `kid`, audience and nonce,
   `SubjectHolderRelationship`, `FailFast`, a `StatusCheck` trait with a `StatusPolicy`,
-  `extract_issuer`/`extract_holder` (ADR 0004). The SD-JWT credential validator lands with
-  `sd_jwt_vc`.
-- `sd_jwt_vc` (`sd-jwt`): builder with first-class `jti`, parser, `Status`, `StatusListRef`,
-  `StatusMechanism`, type metadata, on `sd-jwt-payload`.
-- `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration`, credential builder, validator
-  implementing the DIF Well Known DID Configuration checks (`iss == sub`, exactly one `origin`,
-  `exp` present, `credentialSubject.id` matches); validation is at-least-one across linked DIDs.
+  `extract_issuer`/`extract_holder` (ADR 0004).
+- `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
+  `SdJwt` (parse, `process` per §7.1, `disclose`/`select` for presentation, `sign_key_binding`),
+  `SdJwtBuilder` concealing claims at `ClaimPath`s (recursive disclosures, decoys, pluggable
+  salts); `SdJwtVc` with `typ: dc+sd-jwt` (`vc+sd-jwt` accepted), `SdJwtVcClaims` with the
+  registered claims first-class and the non-disclosable ones enforced, `SdJwtVcBuilder`;
+  `Status`/`StatusListRef`/`StatusMechanism`, `StatusList` (ZLIB bit array) and
+  `StatusListToken` for the Token Status List; `TypeMetadata` with claim paths, `extends`
+  folding, claim validation and `Integrity` metadata; `SdJwtCredentialValidator` over
+  `KeyResolver` + `JwsVerifier` (issuer key under `assertionMethod`, `iss` bound to the DID of
+  `kid`, time claims, key binding with `KeyBindingOptions`, `SdJwtStatusCheck` with a
+  `StatusPolicy`, `StatusListCheck` over an `HttpClient`).
+- `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
+  Data Proof entries carried as data), `DomainLinkageCredentialBuilder`, `DomainLinkageValidator`
+  implementing the DIF Well Known DID Configuration checks (`iss == sub ==
+  credentialSubject.id`, one `origin` matching the requested one after normalization, `exp`
+  present, no `id`, no extra header parameters or claims, signature under `assertionMethod`);
+  validation of a configuration is at-least-one, reporting the rest as errors.
 
 ## Conformance and CI
 
@@ -245,7 +256,7 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   once ported.
 - Determinism: same inputs produce byte-identical documents and configuration resources.
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
-  `cargo tree` in that configuration must not list `sd-jwt-payload`.
+  `cargo tree` in that configuration must not list `chrono` or `miniz_oxide`.
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, clippy pedantic as warnings
   with `-D warnings` on the default lint set.
 

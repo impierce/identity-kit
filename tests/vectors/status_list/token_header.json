@@ -1,0 +1,5 @@
+{
+  "alg": "ES256",
+  "kid": "12",
+  "typ": "statuslist+jwt"
+}

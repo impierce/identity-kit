@@ -1,0 +1,32 @@
+{
+  "_sd": [
+    "0HZmnSIPz337kSWe7C34l--88gzJi-eBJ2Vz_HJwATg",
+    "1Crn03WmUeRWp4zwPvvCKXl9ZaQp-cdQV_gHdaGSWow",
+    "2r009dzvHuVrWrRXT5kJMmHnqEHHnWe0MLVZw8PATB8",
+    "6ZNISDst62ymlrOAkadjdD5ZulT5A299J78SLhM__Os",
+    "78jg77-GYBeX8IQfoELPyL0DYPdmfZo0JgViV0_lKCM",
+    "90CT8AaBPbn5X8nRXkesju1i0BqhWqZ3wqD4jF-qDGk",
+    "I00fcFUoDXCucp5yy2ujqPssDVGaWNiUliNz_awD0gc",
+    "KjAXgAA9N5WHEDtRIh4u5Mn1ZsWixhhWAiX-A4QiwgA",
+    "Lai6IU6d7GQagXR7AvGTrnXgSld3z8EIg_fv3fOZ1Wg",
+    "LezjabRqiZOXzEYmVZf8RMi9xAkd3_M1LZ8U7E4s3u4",
+    "RTz3qTmFNHbpWrrOMZS41F474kFqRv3vIPqth6PUhlM",
+    "W14XHbUffzuW4IFMjpSTb1melWxUWf4N_o2ldkkIqc8",
+    "WTpI7RcM3gxZruRpXzezSbkbOr93PVFvWx8woJ3j1cE",
+    "_ohJVIQIBsU4updNS4_w4Kb1MHqJ0L9qLGshWq6JXQs",
+    "y50czc0ISChy_bsba1dMoUuAOQ5AMmOSfGoEe81v1FU"
+  ],
+  "iss": "https://pid-issuer.bund.de.example",
+  "iat": 1683000000,
+  "exp": 1883000000,
+  "vct": "urn:eudi:pid:de:1",
+  "_sd_alg": "sha-256",
+  "cnf": {
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "TCAER19Zvu3OHF4j4W4vfSVoHIP1ILilDls7vCeGemc",
+      "y": "ZxjiWWbZMQGHVWKVQ4hbSIirsVfuecCE6t4jT9F2HZQ"
+    }
+  }
+}

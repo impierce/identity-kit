@@ -216,7 +216,12 @@ impl TimeOptions {
 
     /// Checks that `now` is within `[not_before, expires)` with the leeway, and that
     /// `issued_at` is not in the future.
-    fn check(
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::NotYetValid`], [`ValidationError::Expired`] or
+    /// [`ValidationError::IssuedInFuture`].
+    pub fn check(
         &self,
         not_before: Option<DateTime<Utc>>,
         expires: Option<DateTime<Utc>>,
@@ -242,8 +247,13 @@ impl TimeOptions {
         Ok(())
     }
 
-    /// Checks the registered time claims of `claims`.
-    fn check_claims(&self, claims: &JwtClaims) -> Result<(), ValidationError> {
+    /// Checks the registered time claims of `claims`: `nbf`, `exp` and `iat`.
+    ///
+    /// # Errors
+    ///
+    /// As [`check`](Self::check), or [`ValidationError::Credential`] for a claim out of
+    /// range.
+    pub fn check_claims(&self, claims: &JwtClaims) -> Result<(), ValidationError> {
         self.check(
             timestamp(claims.nbf, "nbf")?,
             timestamp(claims.exp, "exp")?,

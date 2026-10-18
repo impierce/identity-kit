@@ -1,0 +1,23 @@
+{
+  "exp": 1764879139,
+  "iss": "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM",
+  "nbf": 1607112739,
+  "sub": "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM",
+  "vc": {
+    "@context": [
+      "https://www.w3.org/2018/credentials/v1",
+      "https://identity.foundation/.well-known/did-configuration/v1"
+    ],
+    "credentialSubject": {
+      "id": "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM",
+      "origin": "identity.foundation"
+    },
+    "expirationDate": "2025-12-04T14:12:19-06:00",
+    "issuanceDate": "2020-12-04T14:12:19-06:00",
+    "issuer": "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM",
+    "type": [
+      "VerifiableCredential",
+      "DomainLinkageCredential"
+    ]
+  }
+}
