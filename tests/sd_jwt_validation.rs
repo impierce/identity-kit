@@ -279,6 +279,18 @@ async fn key_binding_errors() {
         validator.validate(presentation.sd_jwt(), &stale).await,
         Err(SdJwtValidationError::KeyBindingTooOld { .. })
     ));
+    // A `max_age` beyond what the clock represents bounds nothing, and never panics.
+    let unbounded = with_key_binding().with_key_binding(
+        KeyBindingOptions::new(AUDIENCE, NONCE)
+            .with_time(TimeOptions::at(now()))
+            .with_max_age(Duration::from_secs(u64::MAX)),
+    );
+    assert!(
+        validator
+            .validate(presentation.sd_jwt(), &unbounded)
+            .await
+            .is_ok()
+    );
 
     // The key binding JWT belongs to another set of disclosures.
     let kb = presentation.sd_jwt().key_binding_jwt().unwrap().clone();

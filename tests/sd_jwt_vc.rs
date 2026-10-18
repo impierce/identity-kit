@@ -336,6 +336,32 @@ fn claims_setters_and_serialization() {
     );
     assert_eq!(claims.to_map()["given_name"], "John");
     assert!(claims.check().is_ok());
+
+    // A `NumericDate` may carry a fraction (RFC 7519 §2); it is floored, as in `JwtClaims`.
+    let fractional: SdJwtVcClaims = serde_json::from_value(json!({
+        "vct": "https://credentials.example.com/identity_credential",
+        "iat": 1683000000.5, "nbf": 1683000000.25, "exp": 1883000000.999
+    }))
+    .unwrap();
+    assert_eq!(
+        (fractional.iat, fractional.nbf, fractional.exp),
+        (Some(1683000000), Some(1683000000), Some(1883000000))
+    );
+    let token: StatusListToken = serde_json::from_value(json!({
+        "sub": "https://example.com/statuslists/1",
+        "iat": 1686920170.5, "exp": 2291720170.5,
+        "status_list": {"bits": 1, "lst": "eNrbuRgAAhcBXQ"}
+    }))
+    .unwrap();
+    assert_eq!((token.iat, token.exp), (1686920170, Some(2291720170)));
+    assert!(
+        serde_json::from_value::<StatusListToken>(json!({
+            "sub": "https://example.com/statuslists/1",
+            "status_list": {"bits": 1, "lst": "eNrbuRgAAhcBXQ"}
+        }))
+        .is_err(),
+        "`iat` is required"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

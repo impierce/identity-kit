@@ -74,6 +74,8 @@ pub mod validation;
 pub use credential::Credential;
 pub use error::CredentialError;
 pub use jwt::{Jwt, JwtClaims};
+#[cfg(feature = "sd-jwt")]
+pub(crate) use jwt::{numeric_date, required_numeric_date};
 pub use model::{CONTEXT_V1, CONTEXT_V2, Party, Subject, TypedObject};
 pub use presentation::Presentation;
 pub use v2::{CredentialV2, EnvelopedVc, EnvelopedVp, PresentationV2};

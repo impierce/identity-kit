@@ -54,6 +54,11 @@ pub const CONTEXT: [&str; 2] = [
 /// Implement it over the HTTP client of the application so `did:web` resolution shares its
 /// connection pool, proxy and TLS settings. The implementation decides the security policy:
 /// [`ReqwestClient`] is the one this crate ships.
+///
+/// Every URL a client is given comes from untrusted input (a DID, a credential's status list
+/// reference), so an implementation must refuse what [`ReqwestClient`] refuses, or weigh the
+/// consequence: plain `http`, redirects, hosts that resolve to loopback, private, link-local or
+/// other non-public addresses, unbounded bodies and unbounded waits.
 #[async_trait::async_trait]
 pub trait HttpClient: Send + Sync {
     /// Fetches `url`, returning the status and the body of the final response.

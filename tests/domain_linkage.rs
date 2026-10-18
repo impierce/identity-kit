@@ -114,6 +114,18 @@ fn example_resource() {
         serde_json::from_str::<DomainLinkageConfiguration>(&configuration.to_string()).unwrap(),
         configuration
     );
+    // An entry that is neither a compact JWT nor a Linked Data Proof object is a parse error,
+    // never a credential that quietly drops out of validation.
+    for entry in [json!("not.a.jwt"), json!(42), json!(["x"])] {
+        assert!(
+            serde_json::from_value::<DomainLinkageConfiguration>(json!({
+                "@context": CONTEXT,
+                "linked_dids": [entry]
+            }))
+            .is_err(),
+            "{entry}"
+        );
+    }
 
     // `@context` and `linked_dids` only, with that context.
     assert!(
