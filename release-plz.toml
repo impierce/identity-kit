@@ -6,6 +6,11 @@
 release_always = false
 pr_labels = ["release"]
 
+[[package]]
+# Development tasks (`cargo xtask`), never released.
+name = "xtask"
+release = false
+
 [changelog]
 # Breaking changes stay in the changelog even if a parser below would skip them.
 protect_breaking_commits = true

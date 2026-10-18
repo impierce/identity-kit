@@ -15,7 +15,8 @@ Collection of primitives for SSI libraries and applications: decentralized ident
 - ✅ `Did` and `DidUrl` parsing and validation per [W3C DID Core](https://www.w3.org/TR/did-core/)
 - ✅ `DidDocument` data model and [DID Resolution](https://www.w3.org/TR/did-resolution/) types
 - ✅ JWK and compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) with EdDSA, ECDSA and RSA verification
-- 📋 `KeyStore` trait designed for remote signers, with in-memory, file-based and PKCS#11 backends
+- ✅ `KeyStore` trait designed for remote signers, with in-memory and file-based backends
+- 📋 PKCS#11 key store backend
 - ✅ `DidResolver` and `DidProducer` traits with a `Resolver` registry, document cache and DID URL dereferencing
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
 - 📋 W3C Verifiable Credentials (JWT profile), SD-JWT VC and DIF Well Known DID Configuration
