@@ -115,7 +115,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --no-default-features --features did-key,software --locked
       - run: |
-          if cargo tree -e normal --no-default-features --features did-key,software --locked --prefix none | grep -E '^(chrono|miniz_oxide) '; then
+          if cargo tree -e normal --no-default-features --features did-key,software --locked --prefix none | grep -E '^(chrono|miniz_oxide|sd-jwt-payload) '; then
             echo "::error::the lower layer pulls in a dependency of the upper layer"
             exit 1
           fi

@@ -502,6 +502,8 @@ fn type_metadata_examples_validate() {
         .with_mandatory(false),
     );
     validator.accepts(&serde_json::to_string(&built).unwrap());
+    // `vct` is a collision-resistant name, which need not be a URI.
+    validator.accepts(r#"{ "vct": "com.example.IdentityCredential" }"#);
 
     for invalid in [
         json!({ "name": "no vct" }),

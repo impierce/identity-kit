@@ -456,7 +456,10 @@ mod type_metadata {
                     "SD-JWT VC type metadata (SD-JWT VC §5): what a `vct` means, how to \
                      display it, and which claims it carries.",
                 ))
-                .property("vct", uri("The type described."))
+                .property(
+                    "vct",
+                    string("The type described: a case-sensitive collision-resistant name."),
+                )
                 .required("vct")
                 .property("name", string("A name for developers."))
                 .property("description", string("A description for developers."))
