@@ -1,0 +1,17 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Development tasks for identity-kit: `cargo xtask <task>`"
+license = "Apache-2.0"
+
+[dependencies]
+identity-kit = { path = "..", default-features = false, features = ["software", "secp256k1"] }
+lexopt = "0.3"
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["rt"] }
+
+[lints.rust]
+unsafe_code = "forbid"
