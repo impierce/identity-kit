@@ -718,6 +718,33 @@ async fn resolution_results_are_normalized() {
         .await
         .unwrap();
     assert_eq!(canonical.document.as_ref().map(|d| &d.id), Some(&doc.id));
+    // A fragment of the equivalent DID is looked up under the canonical id of the document.
+    let method = doc.verification_method.first().unwrap();
+    let fragment = method.id.fragment().unwrap();
+    let via_equivalent = url(&format!("did:example:canonical#{fragment}"));
+    assert_eq!(
+        resolver
+            .dereference(&via_equivalent)
+            .await
+            .unwrap()
+            .as_verification_method(),
+        Some(method)
+    );
+    assert_eq!(
+        resolver
+            .resolve_verification_method(&via_equivalent, None)
+            .await
+            .unwrap(),
+        *method
+    );
+    assert_eq!(
+        resolver
+            .dereference(&url("did:example:canonical#nope"))
+            .await,
+        Err(DereferenceError::NotFound(
+            doc.id.to_url().with_fragment("nope")
+        ))
+    );
 
     // Dereferencing wraps resolution errors with the DID.
     let error = resolver
@@ -774,9 +801,15 @@ async fn deactivated_dids_resolve_but_do_not_dereference() {
         Err(DereferenceError::Deactivated(gone.clone()))
     );
 
-    // A method that still returns the last document of a deactivated DID.
+    // A method that still returns the last document of a deactivated DID: `resolve` shows it
+    // with its metadata, the shortcuts refuse it.
     let key = url("did:example:123#key-0");
-    assert!(resolver.resolve_document(key.did()).await.is_ok());
+    let result = resolver.resolve(key.did()).await.unwrap();
+    assert!(result.document.is_some() && result.document_metadata.is_deactivated());
+    assert_eq!(
+        resolver.resolve_document(key.did()).await,
+        Err(ResolutionError::NotFound)
+    );
     assert_eq!(
         resolver.resolve_public_key(&key).await,
         Err(DereferenceError::Deactivated(key.did().clone()))
@@ -973,14 +1006,14 @@ async fn cache_entries_expire() {
     let example = Arc::new(ExampleResolver::serving(DID_CORE_EXAMPLE_20));
     let resolver = Resolver::builder()
         .with(Arc::clone(&example))
-        .with_cache(DocumentCache::with_capacity(Duration::from_millis(30), 8))
+        .with_cache(DocumentCache::with_capacity(Duration::from_millis(500), 8))
         .build();
     let did = did("did:example:123");
 
     assert!(resolver.resolve(&did).await.is_ok());
     assert!(resolver.resolve(&did).await.is_ok());
     assert_eq!(example.calls(), 1);
-    std::thread::sleep(Duration::from_millis(80));
+    std::thread::sleep(Duration::from_millis(1000));
     assert!(resolver.cache().unwrap().is_empty());
     assert!(resolver.resolve(&did).await.is_ok());
     assert_eq!(example.calls(), 2);
@@ -989,7 +1022,7 @@ async fn cache_entries_expire() {
 
 #[test]
 fn cache_is_bounded() {
-    let cache = DocumentCache::with_capacity(Duration::from_millis(40), 2);
+    let cache = DocumentCache::with_capacity(Duration::from_millis(500), 2);
     assert_eq!(cache.capacity(), 2);
     assert_eq!(
         DocumentCache::with_capacity(Duration::ZERO, 0).capacity(),
@@ -1019,7 +1052,7 @@ fn cache_is_bounded() {
     assert_eq!(cache.purge_expired(), 0);
 
     // Expired entries make room first, and are gone from every accessor.
-    std::thread::sleep(Duration::from_millis(80));
+    std::thread::sleep(Duration::from_millis(1000));
     assert_eq!(cache.get(&c), None);
     assert_eq!(cache.len(), 0);
     assert!(cache.is_empty());
@@ -1030,7 +1063,7 @@ fn cache_is_bounded() {
     assert_eq!(cache.purge_expired(), 1);
     assert_eq!(
         format!("{cache:?}"),
-        "DocumentCache { ttl: 40ms, capacity: 2, len: 1 }"
+        "DocumentCache { ttl: 500ms, capacity: 2, len: 1 }"
     );
 
     // An entry that can never expire.

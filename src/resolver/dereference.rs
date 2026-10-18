@@ -106,7 +106,8 @@ pub enum DereferenceError {
 
 impl Resolver {
     /// Dereferences `url`: the DID document when the URL is a bare DID, else the verification
-    /// method or service whose id is the URL.
+    /// method or service whose id is the URL. The fragment is looked up against the id of the
+    /// resolved document, which is the canonical DID when `url` names an equivalent one.
     ///
     /// The `versionId` and `versionTime` DID parameters select the version of the document and
     /// are passed to the method's resolver as resolution options. A path, any other query
@@ -125,7 +126,7 @@ impl Resolver {
         let Some(fragment) = url.fragment() else {
             return Ok(Dereferenced::Document(Box::new(document)));
         };
-        let id = url.did().to_url().with_fragment(fragment);
+        let id = document.id.to_url().with_fragment(fragment);
         if let Some(method) = document.verification_method(&id) {
             return Ok(Dereferenced::VerificationMethod(Box::new(method.clone())));
         }
@@ -153,7 +154,7 @@ impl Resolver {
         let Some(fragment) = url.fragment() else {
             return Err(DereferenceError::NotVerificationMethod(url.clone()));
         };
-        let id = url.did().to_url().with_fragment(fragment);
+        let id = document.id.to_url().with_fragment(fragment);
         document
             .resolve_verification_method(&id, relationship)
             .cloned()
