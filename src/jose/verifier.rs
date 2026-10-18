@@ -128,22 +128,21 @@ impl JwsVerifier for DefaultVerifier {
             #[cfg(feature = "rsa")]
             JwsAlgorithm::RS256 => {
                 use rsa::signature::Verifier as _;
-                let verifying_key =
-                    rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(key.rsa_public_key()?);
-                let signature = rsa::pkcs1v15::Signature::try_from(signature)
-                    .map_err(|_| VerificationError::InvalidSignature)?;
-                verifying_key
+                let public_key = key.rsa_public_key()?;
+                let signature =
+                    rsa::pkcs1v15::Signature::try_from(rsa_sized(&public_key, signature)?)
+                        .map_err(|_| VerificationError::InvalidSignature)?;
+                rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public_key)
                     .verify(signing_input, &signature)
                     .map_err(|_| VerificationError::InvalidSignature)
             }
             #[cfg(feature = "rsa")]
             JwsAlgorithm::PS256 => {
                 use rsa::signature::Verifier as _;
-                let verifying_key =
-                    rsa::pss::VerifyingKey::<sha2::Sha256>::new(key.rsa_public_key()?);
-                let signature = rsa::pss::Signature::try_from(signature)
+                let public_key = key.rsa_public_key()?;
+                let signature = rsa::pss::Signature::try_from(rsa_sized(&public_key, signature)?)
                     .map_err(|_| VerificationError::InvalidSignature)?;
-                verifying_key
+                rsa::pss::VerifyingKey::<sha2::Sha256>::new(public_key)
                     .verify(signing_input, &signature)
                     .map_err(|_| VerificationError::InvalidSignature)
             }
@@ -183,6 +182,25 @@ fn fixed_size<const N: usize>(signature: &[u8]) -> Result<&[u8; N], Verification
             expected: N,
             actual: signature.len(),
         })
+}
+
+/// `signature` as the octet string of exactly the modulus length that RFC 7518 §3.3 and §3.5
+/// require. An RSA signature is an integer, so without this check a shorter or longer encoding
+/// of the same value (a leading zero byte dropped or added) would verify as well.
+#[cfg(feature = "rsa")]
+fn rsa_sized<'a>(
+    key: &rsa::RsaPublicKey,
+    signature: &'a [u8],
+) -> Result<&'a [u8], VerificationError> {
+    use rsa::traits::PublicKeyParts as _;
+    let expected = key.size();
+    if signature.len() != expected {
+        return Err(VerificationError::InvalidSignatureLength {
+            expected,
+            actual: signature.len(),
+        });
+    }
+    Ok(signature)
 }
 
 /// `signature` as a raw `r || s` ECDSA signature of exactly `N` bytes, with a dedicated error for
