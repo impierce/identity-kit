@@ -95,9 +95,14 @@ impl Resolver {
     ///
     /// # Errors
     ///
-    /// As [`resolve`](Self::resolve); a deactivated DID is [`ResolutionError::NotFound`].
+    /// As [`resolve`](Self::resolve); a deactivated DID is [`ResolutionError::NotFound`], even
+    /// when the method still returns its last document.
     pub async fn resolve_document(&self, did: &Did) -> Result<DidDocument, ResolutionError> {
-        self.resolve(did).await?.into_document()
+        let result = self.resolve(did).await?;
+        if result.document_metadata.is_deactivated() {
+            return Err(ResolutionError::NotFound);
+        }
+        result.into_document()
     }
 }
 
