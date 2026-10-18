@@ -43,7 +43,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -90,7 +90,7 @@ jobs:
           persist-credentials: false
       # Read the MSRV from `rust-version` in Cargo.toml so it is defined in one place.
       - id: msrv
-        run: echo "version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].rust_version')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "identity-kit") | .rust_version')" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ steps.msrv.outputs.version }}

@@ -530,18 +530,29 @@ macro_rules! enveloped {
             ///
             /// `data` is placed in the URL as is; a JWT needs no encoding, other media types
             /// may.
-            pub fn new(media_type: &str, data: &str) -> Self {
-                Self {
+            ///
+            /// # Errors
+            ///
+            /// [`CredentialError::InvalidClaim`] for `id` when `media_type` or `data` holds a
+            /// character a URI cannot.
+            pub fn new(media_type: &str, data: &str) -> Result<Self, CredentialError> {
+                let id = Uri::parse(&format!("data:{media_type},{data}")).map_err(|error| {
+                    CredentialError::InvalidClaim {
+                        claim: "id",
+                        reason: format!("not a `data:` URL: {error}"),
+                    }
+                })?;
+                Ok(Self {
                     context: Context::uri(CONTEXT_V2),
-                    id: Uri::parse(&format!("data:{media_type},{data}"))
-                        .expect("a data URL of URI characters"),
+                    id,
                     types: OneOrMany::One(Self::TYPE.to_owned()),
-                }
+                })
             }
 
             /// An envelope for `jwt`.
             pub fn from_jwt(jwt: &Jwt) -> Self {
                 Self::new(Self::JWT_MEDIA_TYPE, jwt.as_str())
+                    .expect("a compact JWS is base64url and dots, all URI characters")
             }
 
             /// The media type of the `data:` URL.

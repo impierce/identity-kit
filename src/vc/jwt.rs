@@ -54,12 +54,18 @@ impl Jwt {
     ///
     /// # Errors
     ///
-    /// As [`encode_compact`].
+    /// [`JwsError::InvalidPayload`] when `additional` holds a registered claim, which would put
+    /// the member in the payload twice; otherwise as [`encode_compact`].
     pub async fn sign(
         header: &JwsHeader,
         claims: &JwtClaims,
         signer: &dyn Signer,
     ) -> Result<Self, JwsError> {
+        if let Some(name) = claims.registered_in_additional() {
+            return Err(JwsError::InvalidPayload(format!(
+                "registered claim `{name}` is set under `additional`; set its field instead"
+            )));
+        }
         let payload = serde_json::to_vec(claims).expect("a claims set serializes");
         encode_compact(header, &payload, signer).await.map(Self)
     }
@@ -159,13 +165,25 @@ pub struct JwtClaims {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aud: Option<OneOrMany<String>>,
     /// `exp`: when the token expires.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "numeric_date"
+    )]
     pub exp: Option<i64>,
     /// `nbf`: when the token becomes valid.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "numeric_date"
+    )]
     pub nbf: Option<i64>,
     /// `iat`: when the token was issued.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "numeric_date"
+    )]
     pub iat: Option<i64>,
     /// `jti`: the identifier of the token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,10 +193,59 @@ pub struct JwtClaims {
     pub additional: IndexMap<String, Value>,
 }
 
+/// Deserializes a `NumericDate` (RFC 7519 §2): a JSON number, possibly with a fraction, floored
+/// to whole seconds.
+fn numeric_date<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<i64>, D::Error> {
+    let Some(number) = Option::<serde_json::Number>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    number
+        .as_i64()
+        .or_else(|| {
+            number
+                .as_f64()
+                .filter(|seconds| (i64::MIN as f64..i64::MAX as f64).contains(seconds))
+                .map(|seconds| seconds.floor() as i64)
+        })
+        .map(Some)
+        .ok_or_else(|| D::Error::custom(format!("NumericDate {number} is out of range")))
+}
+
 impl JwtClaims {
+    /// The registered claim names of RFC 7519 §4.1, which have fields of their own.
+    pub const REGISTERED: [&'static str; 7] = ["iss", "sub", "aud", "exp", "nbf", "iat", "jti"];
+
     /// An empty claims set.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The first registered claim name found under `additional`, if any.
+    fn registered_in_additional(&self) -> Option<&str> {
+        Self::REGISTERED
+            .into_iter()
+            .find(|name| self.additional.contains_key(*name))
+    }
+
+    /// This claims set with `iss` set to `issuer`.
+    #[must_use]
+    pub fn with_iss(mut self, issuer: impl Into<String>) -> Self {
+        self.iss = Some(issuer.into());
+        self
+    }
+
+    /// This claims set with `sub` set to `subject`.
+    #[must_use]
+    pub fn with_sub(mut self, subject: impl Into<String>) -> Self {
+        self.sub = Some(subject.into());
+        self
+    }
+
+    /// This claims set with `jti` set to `id`.
+    #[must_use]
+    pub fn with_jti(mut self, id: impl Into<String>) -> Self {
+        self.jti = Some(id.into());
+        self
     }
 
     /// `time` as a `NumericDate`: whole seconds since the Unix epoch, fractions dropped.
@@ -228,6 +295,9 @@ impl JwtClaims {
     }
 
     /// This claims set with the claim `name` set to `value`.
+    ///
+    /// `name` should not be one of [`REGISTERED`](Self::REGISTERED), which have setters of their
+    /// own: [`Jwt::sign`] refuses a claims set holding a registered claim under `additional`.
     #[must_use]
     pub fn with_claim(mut self, name: impl Into<String>, value: impl Into<Value>) -> Self {
         self.additional.insert(name.into(), value.into());

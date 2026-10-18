@@ -631,6 +631,41 @@ fn jwt_type_and_claims_helpers() {
     ));
 }
 
+/// RFC 7519 §2: a `NumericDate` may carry a fraction, which the claims drop; VCDM 1.1 §6.3.1
+/// maps `nbf` to `issuanceDate`, so the two agree at whole-second precision.
+#[test]
+fn numeric_dates_are_whole_seconds() {
+    let claims: JwtClaims =
+        serde_json::from_value(json!({ "iat": 1541493724.5, "exp": 1573029723.999 })).unwrap();
+    assert_eq!(
+        (claims.iat, claims.exp),
+        (Some(1541493724), Some(1573029723))
+    );
+    assert!(serde_json::from_value::<JwtClaims>(json!({ "exp": 1e300 })).is_err());
+
+    let mut vc: Value = serde_json::from_str(EXAMPLE_1).unwrap();
+    vc["issuanceDate"] = json!("2010-01-01T19:23:24.500Z");
+    vc.as_object_mut().unwrap().remove("proof");
+    let nbf = Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap();
+    let claims = |nbf: i64| {
+        JwtClaims::new()
+            .with_claim("vc", vc.clone())
+            .with_nbf(JwtClaims::timestamp(nbf).unwrap())
+    };
+    let credential = Credential::from_jwt_claims(&claims(JwtClaims::numeric_date(nbf))).unwrap();
+    assert_eq!(
+        credential.issuance_date,
+        nbf + chrono::Duration::milliseconds(500)
+    );
+    assert_eq!(
+        Credential::from_jwt_claims(&claims(JwtClaims::numeric_date(nbf) + 1)),
+        Err(CredentialError::ClaimMismatch {
+            claim: "nbf",
+            property: "issuanceDate"
+        })
+    );
+}
+
 fn base64url(data: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)

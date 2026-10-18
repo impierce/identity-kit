@@ -199,6 +199,9 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
             kid: kid.to_owned(),
             source,
         })?;
+        if kid.path().is_some() || kid.query().is_some() {
+            return Err(ValidationError::KidWithParameters(kid));
+        }
         let key = self
             .resolver
             .resolve_key(&kid, relationship)

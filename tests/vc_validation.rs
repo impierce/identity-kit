@@ -12,7 +12,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl, Uri, VerificationRelationship};
 use identity_kit::jose::{
-    DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, SignError, Signer, VerificationError,
+    DefaultVerifier, Jwk, JwsAlgorithm, JwsError, JwsHeader, SignError, Signer, VerificationError,
 };
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
@@ -285,6 +285,9 @@ async fn validity_period_and_leeway() {
         at(now).with_time(TimeOptions::at(now).with_leeway(Duration::from_secs(60)))
     };
     assert!(validator.validate(&jwt, &leeway(early)).await.is_ok());
+    // A leeway past the range `chrono` represents saturates instead of overflowing.
+    let unbounded = at(early).with_time(TimeOptions::at(early).with_leeway(Duration::MAX));
+    assert!(validator.validate(&jwt, &unbounded).await.is_ok());
     assert!(
         validator
             .validate(&jwt, &leeway(exp + Duration::from_secs(59)))
@@ -420,10 +423,36 @@ async fn signature_and_key_errors() {
         Err(ValidationError::KeyResolution { kid, .. }) if kid.fragment() == Some("keys-1")
     ));
 
+    // A `kid` with DID parameters could select an old document version that still lists a
+    // retired key; only `did:…#fragment` keys are accepted (a path is refused the same way).
+    let versioned = DidUrl::parse(&format!(
+        "{}?versionId=1#{}",
+        issuer.did,
+        issuer.kid.fragment().unwrap()
+    ))
+    .unwrap();
+    assert!(matches!(
+        validator
+            .validate(&sign(header(JwsAlgorithm::EdDSA, &versioned)).await, &at(now()))
+            .await,
+        Err(ValidationError::KidWithParameters(kid)) if kid == versioned
+    ));
+
+    // A registered claim under `additional` would put the member in the payload twice.
+    assert!(matches!(
+        Jwt::sign(
+            &header(JwsAlgorithm::EdDSA, &issuer.kid),
+            &claims.clone().with_claim("exp", EXP),
+            &issuer.signer,
+        )
+        .await,
+        Err(JwsError::InvalidPayload(reason)) if reason.contains("`exp`")
+    ));
+
     // A token that is not a credential at all.
     let not_vc = Jwt::sign(
         &header(JwsAlgorithm::EdDSA, &issuer.kid),
-        &JwtClaims::new().with_claim("sub", "x"),
+        &JwtClaims::new().with_sub("x"),
         &issuer.signer,
     )
     .await

@@ -41,11 +41,11 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                                  | Status | Cargo feature  | Specification                                   | Issue                                                     |
 | ---------------------------------------------------------------------------------------- | :----: | -------------- | ----------------------------------------------- | --------------------------------------------------------- |
-| `KeyStore` trait: opaque `KeyId`, one algorithm per key, declared capabilities, async `sign` |   📋   |                |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
-| `KeySigner` adapter implementing `jose::Signer` over any `KeyStore`                       |   📋   |                | [RFC 7515][rfc7515]                             | [#8](https://github.com/impierce/identity-kit/issues/8)   |
-| `InMemoryKeyStore` with optional deterministic seed                                       |   📋   | `in-memory`    |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
-| `SoftwareKeyStore`: private JWK set file, permission check, `zeroize`, atomic writes       |   📋   | `software`     | [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5) | [#8](https://github.com/impierce/identity-kit/issues/8)   |
-| `keys::testsuite`: one behavioural suite every backend must pass                           |   📋   | `test-vectors` |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
+| `KeyStore` trait: opaque `KeyId`, one algorithm per key, declared capabilities, async `sign` |   ✅   |                |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
+| `KeySigner` adapter implementing `jose::Signer` over any `KeyStore`                       |   ✅   |                | [RFC 7515][rfc7515]                             | [#8](https://github.com/impierce/identity-kit/issues/8)   |
+| `InMemoryKeyStore` with optional deterministic seed                                       |   ✅   | `in-memory`    |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
+| `SoftwareKeyStore`: private JWK set file, permission check, `zeroize`, atomic writes       |   ✅   | `software`     | [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5) | [#8](https://github.com/impierce/identity-kit/issues/8)   |
+| `keys::testsuite`: one behavioural suite every backend must pass                           |   ✅   | `test-vectors` |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `Pkcs11KeyStore`, tested against SoftHSM2 in CI                                           |   📋   | `pkcs11`       | [PKCS #11 v3.1][pkcs11]                         | [#13](https://github.com/impierce/identity-kit/issues/13) |
 
 ### `resolver`: resolution and production

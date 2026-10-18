@@ -52,7 +52,8 @@ pub(super) fn merge_id(
 }
 
 /// Sets the timestamp `property` of `object` from the `NumericDate` `claim`, or checks they
-/// name the same instant when both are present.
+/// name the same second when both are present: a `NumericDate` has no fraction, so the
+/// property is compared at whole-second precision.
 pub(super) fn merge_time(
     object: &mut Map<String, Value>,
     property: &'static str,
@@ -67,7 +68,9 @@ pub(super) fn merge_time(
         reason: format!("{value} is out of range"),
     })?;
     match object.get(property) {
-        Some(existing) if parse_time(existing) == Some(time) => Ok(()),
+        Some(existing) if parse_time(existing).map(JwtClaims::numeric_date) == Some(value) => {
+            Ok(())
+        }
         Some(_) => Err(CredentialError::ClaimMismatch { claim, property }),
         None => {
             object.insert(property.to_owned(), Value::String(time.to_rfc3339()));
