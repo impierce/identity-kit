@@ -335,10 +335,10 @@ pub fn document_url(did: &Did) -> Result<Url, WebError> {
     {
         return Err(invalid("the host is not a domain name"));
     }
-    if let Some(port) = port {
-        if port.is_empty() || port.len() > 5 || !port.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(invalid("the port is not a number"));
-        }
+    if let Some(port) = port
+        && (port.is_empty() || port.len() > 5 || !port.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(invalid("the port is not a number"));
     }
     let mut path = String::new();
     let mut has_segments = false;

@@ -503,14 +503,14 @@ impl SdJwtVcBuilder {
     /// [`SdJwtError::NotConcealable`].
     pub fn check_concealed(&self) -> Result<(), SdJwtVcError> {
         for path in &self.concealed {
-            if let Some(PathComponent::Key(name)) = path.components().first() {
-                if NON_DISCLOSABLE_CLAIMS.contains(&name.as_str()) {
-                    return Err(SdJwtError::NotConcealable {
-                        path: path.clone(),
-                        reason: format!("SD-JWT VC does not allow `{name}` to be disclosed"),
-                    }
-                    .into());
+            if let Some(PathComponent::Key(name)) = path.components().first()
+                && NON_DISCLOSABLE_CLAIMS.contains(&name.as_str())
+            {
+                return Err(SdJwtError::NotConcealable {
+                    path: path.clone(),
+                    reason: format!("SD-JWT VC does not allow `{name}` to be disclosed"),
                 }
+                .into());
             }
         }
         Ok(())
@@ -629,10 +629,10 @@ impl SdJwtVc {
         }
         let processed = sd_jwt.process()?;
         for claim in &processed.disclosed {
-            if let Some(PathComponent::Key(name)) = claim.path.components().first() {
-                if NON_DISCLOSABLE_CLAIMS.contains(&name.as_str()) {
-                    return Err(SdJwtVcError::DisclosedRegisteredClaim(name.clone()));
-                }
+            if let Some(PathComponent::Key(name)) = claim.path.components().first()
+                && NON_DISCLOSABLE_CLAIMS.contains(&name.as_str())
+            {
+                return Err(SdJwtVcError::DisclosedRegisteredClaim(name.clone()));
             }
         }
         let claims: SdJwtVcClaims =

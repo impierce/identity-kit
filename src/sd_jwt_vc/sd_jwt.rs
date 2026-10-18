@@ -281,13 +281,13 @@ impl SdJwt {
             if !kept[i] {
                 continue;
             }
-            if let Some(parent) = processed.parents[i] {
-                if !kept[parent] {
-                    return Err(SdJwtError::MissingParentDisclosure {
-                        disclosure: disclosure.as_str().to_owned(),
-                        parent: self.disclosures[parent].as_str().to_owned(),
-                    });
-                }
+            if let Some(parent) = processed.parents[i]
+                && !kept[parent]
+            {
+                return Err(SdJwtError::MissingParentDisclosure {
+                    disclosure: disclosure.as_str().to_owned(),
+                    parent: self.disclosures[parent].as_str().to_owned(),
+                });
             }
         }
         let disclosures = self

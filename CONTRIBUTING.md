@@ -7,6 +7,8 @@ Thanks for your interest in contributing to `identity-kit`!
 - A stable Rust toolchain, installed via [rustup](https://rustup.rs/).
 - The minimum supported Rust version (MSRV) is set by `rust-version` in [`Cargo.toml`](Cargo.toml) and checked in CI.
   Don't use language or standard library features newer than the MSRV without raising it.
+  The policy is a rolling six months: the MSRV may be raised to any stable release that is at least six months old.
+  Raise it in its own pull request, together with the dependency updates it unlocks, and mark the pull request as a breaking change (`build!:`), since a crate built on an older toolchain stops compiling.
 - [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) to run the dependency checks locally: `cargo install --locked cargo-deny`.
 - [`cargo-hack`](https://github.com/taiki-e/cargo-hack) to check every feature on its own: `cargo install --locked cargo-hack`.
 

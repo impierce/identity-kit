@@ -30,7 +30,7 @@ replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did
    `miniz_oxide`, `getrandom`, `cryptoki`. SD-JWT itself is implemented in this crate (ADR 0005).
 7. **Developer experience.** A `prelude` per layer (`prelude` for the lower layer,
    `prelude::credentials` for the upper); docs.rs built with `all-features` and `doc_cfg`;
-   `#![forbid(unsafe_code)]`; MSRV pinned; one `CHANGELOG.md`; `release-plz`.
+   `#![forbid(unsafe_code)]`; a rolling six-month MSRV; one `CHANGELOG.md`; `release-plz`.
 
 ## Layout
 

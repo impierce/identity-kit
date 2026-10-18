@@ -238,20 +238,20 @@ impl TimeOptions {
         let earliest = now
             .checked_sub_signed(delta)
             .unwrap_or(DateTime::<Utc>::MIN_UTC);
-        if let Some(not_before) = not_before {
-            if not_before > latest {
-                return Err(ValidationError::NotYetValid { not_before, now });
-            }
+        if let Some(not_before) = not_before
+            && not_before > latest
+        {
+            return Err(ValidationError::NotYetValid { not_before, now });
         }
-        if let Some(expired_at) = expires {
-            if expired_at <= earliest {
-                return Err(ValidationError::Expired { expired_at, now });
-            }
+        if let Some(expired_at) = expires
+            && expired_at <= earliest
+        {
+            return Err(ValidationError::Expired { expired_at, now });
         }
-        if let Some(issued_at) = issued_at {
-            if issued_at > latest {
-                return Err(ValidationError::IssuedInFuture { issued_at, now });
-            }
+        if let Some(issued_at) = issued_at
+            && issued_at > latest
+        {
+            return Err(ValidationError::IssuedInFuture { issued_at, now });
         }
         Ok(())
     }

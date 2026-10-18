@@ -141,13 +141,13 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
             .ok_or(crate::vc::CredentialError::MissingClaim("iss"))?;
         check_controller(holder, &kid, "holder")?;
         options.time.check_claims(&claims)?;
-        if let Some(expected) = &options.audience {
-            if !claims.audiences().any(|aud| aud == expected) {
-                return Err(ValidationError::AudienceMismatch {
-                    expected: expected.clone(),
-                    found: claims.aud.clone(),
-                });
-            }
+        if let Some(expected) = &options.audience
+            && !claims.audiences().any(|aud| aud == expected)
+        {
+            return Err(ValidationError::AudienceMismatch {
+                expected: expected.clone(),
+                found: claims.aud.clone(),
+            });
         }
         if let Some(expected) = &options.nonce {
             let found = claims.additional.get("nonce").and_then(Value::as_str);
