@@ -13,6 +13,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::DidError;
 
 /// Default maximum input length in bytes for [`Did::parse`] and [`DidUrl::parse`]: 2 KiB.
+///
+/// [`Did::join`] keeps to it as well, so a DID URL it builds can always be parsed back with the
+/// default limit; [`DidUrl::with_fragment`] and [`DidUrl::with_did`], which cannot fail, may
+/// build a longer one.
 pub const DEFAULT_MAX_LEN: usize = 2048;
 
 /// A decentralized identifier such as `did:web:example.com`.
@@ -131,8 +135,9 @@ impl Did {
     ///
     /// # Errors
     ///
-    /// Returns [`DidError::InvalidPath`] when `relative` does not start with `/`, `?` or `#`, and
-    /// the respective [`DidError`] when a component is not valid per RFC 3986.
+    /// Returns [`DidError::InvalidPath`] when `relative` does not start with `/`, `?` or `#`,
+    /// the respective [`DidError`] when a component is not valid per RFC 3986, and
+    /// [`DidError::TooLong`] when the DID URL would exceed [`DEFAULT_MAX_LEN`] bytes.
     ///
     /// # Examples
     ///
@@ -160,6 +165,7 @@ impl Did {
         let mut url = String::with_capacity(self.0.len() + relative.len());
         url.push_str(&self.0);
         url.push_str(relative);
+        check_len(&url, DEFAULT_MAX_LEN)?;
         let (query_start, fragment_start) = scan_url_suffix(&url, self.0.len())?;
         Ok(DidUrl {
             url,

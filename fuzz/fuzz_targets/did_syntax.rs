@@ -2,7 +2,7 @@
 //! panic on arbitrary input, and whatever they accept survives a round trip through its string.
 #![no_main]
 
-use identity_kit::did::{Did, DidUrl, DidUrlReference, Uri};
+use identity_kit::did::{Did, DidError, DidUrl, DidUrlReference, Uri};
 use libfuzzer_sys::fuzz_target;
 
 fn base() -> Did {
@@ -43,9 +43,14 @@ fuzz_target!(|data: &[u8]| {
             Ok(DidUrlReference::Absolute(url.clone()))
         );
 
+        // `with_fragment` and `with_did` cannot fail, so their result may exceed the default
+        // limit by the few bytes they add; it still parses back without one.
         let fragment = url.with_fragment("key-1");
         assert_eq!(fragment.fragment(), Some("key-1"));
-        assert_eq!(DidUrl::parse(fragment.as_str()).as_ref(), Ok(&fragment));
+        assert_eq!(
+            DidUrl::parse_with_max_len(fragment.as_str(), usize::MAX).as_ref(),
+            Ok(&fragment)
+        );
         let bare = url.without_fragment();
         assert_eq!(bare.fragment(), None);
         assert_eq!(bare.did(), url.did());
@@ -57,20 +62,30 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(moved.path(), url.path());
         assert_eq!(moved.query(), url.query());
         assert_eq!(moved.fragment(), url.fragment());
-        assert_eq!(DidUrl::parse(moved.as_str()).as_ref(), Ok(&moved));
+        assert_eq!(
+            DidUrl::parse_with_max_len(moved.as_str(), usize::MAX).as_ref(),
+            Ok(&moved)
+        );
     }
 
     if let Ok(reference) = DidUrlReference::parse(input) {
         assert_eq!(reference.as_str(), input);
         assert_eq!(reference.is_relative(), input.starts_with(['/', '?', '#']));
-        let resolved = reference
-            .resolve(&base())
-            .expect("an accepted reference resolves");
-        assert_eq!(DidUrl::parse(resolved.as_str()).as_ref(), Ok(&resolved));
-        assert!(reference.refers_to(&resolved, &base()));
-        if reference.is_relative() {
-            assert_eq!(resolved.did(), &base());
-            assert_eq!(base().join(input).as_ref(), Ok(&resolved));
+        match reference.resolve(&base()) {
+            Ok(resolved) => {
+                assert_eq!(DidUrl::parse(resolved.as_str()).as_ref(), Ok(&resolved));
+                assert!(reference.refers_to(&resolved, &base()));
+                if reference.is_relative() {
+                    assert_eq!(resolved.did(), &base());
+                    assert_eq!(base().join(input).as_ref(), Ok(&resolved));
+                }
+            }
+            // A reference within the limit on its own may not fit it together with the base.
+            Err(DidError::TooLong { max }) => {
+                assert!(reference.is_relative());
+                assert!(base().as_str().len() + input.len() > max);
+            }
+            Err(error) => panic!("an accepted reference resolves: {error}"),
         }
     }
 
