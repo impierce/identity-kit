@@ -142,6 +142,12 @@ fn did_to_url_mapping_examples() {
         ),
     ] {
         assert_eq!(document_url(&did(did_str)).unwrap().as_str(), url_str);
+        // The document URL maps back to the DID, and so does the location it was built from.
+        assert_eq!(
+            did_from_url(&url(url_str)).unwrap(),
+            did(did_str),
+            "{url_str}"
+        );
         let location = url_str.strip_suffix("/did.json").unwrap();
         let location = location.strip_suffix("/.well-known").unwrap_or(location);
         assert_eq!(
@@ -176,6 +182,15 @@ fn url_to_did() {
     assert_eq!(
         did_from_url(&url("https://example.com/a%20b/c~d/e!f/g%zz")).unwrap(),
         did("did:web:example.com:a%20b:c%7Ed:e%21f:g%25zz")
+    );
+    // Only the file name at the end is dropped: `.well-known` elsewhere is a path segment.
+    assert_eq!(
+        did_from_url(&url("https://example.com/.well-known/x/did.json")).unwrap(),
+        did("did:web:example.com:.well-known:x")
+    );
+    assert_eq!(
+        did_from_url(&url("https://example.com/did.json/x")).unwrap(),
+        did("did:web:example.com:did.json:x")
     );
     assert_eq!(
         did_from_origin(&url("https://example.com")).unwrap(),

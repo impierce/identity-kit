@@ -163,13 +163,21 @@ pub enum WebError {
     },
 }
 
+/// The directory of the document of a DID without path segments.
+const WELL_KNOWN: &str = ".well-known";
+
+/// The file name of the document.
+const DOCUMENT_FILE: &str = "did.json";
+
 /// The `did:web` whose document lives under `url`: `https://example.com` gives
 /// `did:web:example.com`, `https://example.com:8443/user/alice` gives
 /// `did:web:example.com%3A8443:user:alice`.
 ///
 /// The URL must be `https`, name a domain (not an IP address) and carry no credentials, query
-/// or fragment. A trailing slash is ignored; path segments become `:`-separated id segments,
-/// percent-encoded where the DID syntax requires it.
+/// or fragment. A trailing slash is ignored, as is the document file name that
+/// [`document_url`] appends (`/.well-known/did.json` or `/did.json`), so a document URL maps
+/// back to its DID; other path segments become `:`-separated id segments, percent-encoded where
+/// the DID syntax requires it.
 ///
 /// # Errors
 ///
@@ -183,6 +191,8 @@ pub enum WebError {
 ///
 /// let did = did_from_url(&Url::parse("https://example.com:3000/user/alice/")?)?;
 /// assert_eq!(did.as_str(), "did:web:example.com%3A3000:user:alice");
+/// let did = did_from_url(&Url::parse("https://example.com/.well-known/did.json")?)?;
+/// assert_eq!(did.as_str(), "did:web:example.com");
 /// assert!(did_from_url(&Url::parse("https://192.0.2.1/")?).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -221,6 +231,12 @@ pub fn did_from_url(url: &Url) -> Result<Did, WebError> {
         .unwrap_or_default();
     if segments.last() == Some(&"") {
         segments.pop();
+    }
+    if segments.last() == Some(&DOCUMENT_FILE) {
+        segments.pop();
+        if segments.as_slice() == [WELL_KNOWN] {
+            segments.clear();
+        }
     }
     for segment in segments {
         if segment.is_empty() {
@@ -330,10 +346,11 @@ pub fn document_url(did: &Did) -> Result<Url, WebError> {
         path.push_str(segment);
     }
     if !has_segments {
-        path.push_str("/.well-known");
+        path.push('/');
+        path.push_str(WELL_KNOWN);
     }
     let port = port.map(|port| format!(":{port}")).unwrap_or_default();
-    let url = Url::parse(&format!("https://{host}{port}{path}/did.json"))
+    let url = Url::parse(&format!("https://{host}{port}{path}/{DOCUMENT_FILE}"))
         .map_err(|_| invalid("the DID does not map to a URL"))?;
     match url.host() {
         Some(Host::Domain(_)) => Ok(url),
