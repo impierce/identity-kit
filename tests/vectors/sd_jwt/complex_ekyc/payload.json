@@ -1,0 +1,35 @@
+{
+  "_sd": [
+    "-aSznId9mWM8ocuQolCllsxVggq1-vHW4OtnhUtVmWw",
+    "IKbrYNn3vA7WEFrysvbdBJjDDU_EvQIr0W18vTRpUSg",
+    "otkxuT14nBiwzNJ3MPaOitOl9pVnXOaEHal_xkyNfKI"
+  ],
+  "iss": "https://issuer.example.com",
+  "iat": 1683000000,
+  "exp": 1883000000,
+  "verified_claims": {
+    "verification": {
+      "_sd": [
+        "7h4UE9qScvDKodXVCuoKfKBJpVBfXMF_TmAGVaZe3Sc",
+        "vTwe3raHIFYgFA3xaUD2aMxFz5oDo8iBu05qKlOg9Lw"
+      ],
+      "trust_framework": "de_aml",
+      "evidence": [
+        {
+          "...": "tYJ0TDucyZZCRMbROG4qRO5vkPSFRxFhUELc18CSl3k"
+        }
+      ]
+    },
+    "claims": {
+      "_sd": [
+        "RiOiCn6_w5ZHaadkQMrcQJf0Jte5RwurRs54231DTlo",
+        "S_498bbpKzB6Eanftss0xc7cOaoneRr3pKr7NdRmsMo",
+        "WNA-UNK7F_zhsAb9syWO6IIQ1uHlTmOU8r8CvJ0cIMk",
+        "Wxh_sV3iRH9bgrTBJi-aYHNCLt-vjhX1sd-igOf_9lk",
+        "_O-wJiH3enSB4ROHntToQT8JmLtz-mhO2f1c89XoerQ",
+        "hvDXhwmGcJQsBCA2OtjuLAcwAMpDsaU0nkovcKOqWNE"
+      ]
+    }
+  },
+  "_sd_alg": "sha-256"
+}

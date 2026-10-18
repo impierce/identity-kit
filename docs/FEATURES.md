@@ -78,16 +78,16 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                              | Status | Cargo feature | Specification                                  | Issue                                                     |
 | -------------------------------------------------------------------- | :----: | ------------- | ---------------------------------------------- | --------------------------------------------------------- |
-| Builder with first-class `jti`, parser, `SdJwtCredentialValidator`   |   📋   | `sd-jwt`      | [RFC 9901][rfc9901], [SD-JWT VC][sd-jwt-vc]    | [#12](https://github.com/impierce/identity-kit/issues/12) |
-| `Status`, `StatusListRef`, `StatusMechanism`                         |   📋   | `sd-jwt`      | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
-| Type metadata                                                        |   📋   | `sd-jwt`      | [SD-JWT VC §6][sd-jwt-vc]                      | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| Builder with first-class `jti`, parser, `SdJwtCredentialValidator`   |   ✅   | `sd-jwt`      | [RFC 9901][rfc9901], [SD-JWT VC][sd-jwt-vc]    | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `Status`, `StatusListRef`, `StatusMechanism`                         |   ✅   | `sd-jwt`      | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| Type metadata                                                        |   ✅   | `sd-jwt`      | [SD-JWT VC §6][sd-jwt-vc]                      | [#12](https://github.com/impierce/identity-kit/issues/12) |
 
 ### `domain_linkage`: DID configuration
 
 | Feature                                                                              | Status | Cargo feature    | Specification                              | Issue                                                     |
 | ------------------------------------------------------------------------------------ | :----: | ---------------- | ------------------------------------------ | --------------------------------------------------------- |
-| `DomainLinkageConfiguration` and credential builder                                  |   📋   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
-| Validator: `iss == sub`, single `origin`, `exp` present, subject matches, at-least-one across DIDs |   📋   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `DomainLinkageConfiguration` and credential builder                                  |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| Validator: `iss == sub`, single `origin`, `exp` present, subject matches, at-least-one across DIDs |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
 
 ## Tooling and integration
 
@@ -95,7 +95,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | ------------------------------------------------------------------------------ | :----: | ------------- | -------------------------------------------- | --------------------------------------------------------- |
 | OpenAPI schemas for the public types                                           |   📋   | `utoipa`      | [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) | [#14](https://github.com/impierce/identity-kit/issues/14) |
 | Re-exported conformance vectors                                                |   📋   | `test-vectors` |                                             | [#14](https://github.com/impierce/identity-kit/issues/14) |
-| CI proof of the layer boundary (`cargo tree` without `sd-jwt-payload`)         |   📋   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
+| CI proof of the layer boundary (`--no-default-features --features did-key,software` builds) |   📋   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
 | `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo-semver-checks`  |   📋   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
 
 ## Out of scope
