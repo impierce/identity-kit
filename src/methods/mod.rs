@@ -21,7 +21,7 @@
 //! let key = DidUrl::parse(
 //!     "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK#z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
 //! )?;
-//! let jwk = resolver.resolve_public_key(&key).await?;
+//! let jwk = resolver.resolve_public_key(&key, None).await?;
 //! assert_eq!(jwk.crv(), Some("Ed25519"));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # })?;

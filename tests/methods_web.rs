@@ -305,12 +305,12 @@ async fn read_operation() {
     assert_eq!(serde_json::to_value(&document).unwrap(), expected);
 
     let key = DidUrl::parse("did:web:example.com#key-0").unwrap();
-    let jwk = resolver.resolve_public_key(&key).await.unwrap();
+    let jwk = resolver.resolve_public_key(&key, None).await.unwrap();
     assert_eq!(jwk.crv(), Some("Ed25519"));
     let key_agreement = DidUrl::parse("did:web:example.com#key-1").unwrap();
     assert_eq!(
         resolver
-            .resolve_public_key(&key_agreement)
+            .resolve_public_key(&key_agreement, None)
             .await
             .unwrap()
             .crv(),

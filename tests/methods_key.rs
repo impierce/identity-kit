@@ -84,7 +84,7 @@ async fn ed25519_with_x25519_vector() {
     assert_eq!(x25519.method_type, MethodType::MULTIKEY);
     assert_eq!(
         resolver
-            .resolve_public_key(&key_agreement)
+            .resolve_public_key(&key_agreement, None)
             .await
             .unwrap()
             .crv(),
@@ -197,7 +197,7 @@ async fn every_key_type_of_the_test_vectors() {
             );
         }
         assert!(document.key_agreement.is_empty());
-        let jwk = resolver.resolve_public_key(&method.id).await.unwrap();
+        let jwk = resolver.resolve_public_key(&method.id, None).await.unwrap();
         assert_eq!((jwk.kty(), jwk.crv()), (*kty, *crv), "{multikey}");
         assert_eq!(DidKey::did(&jwk).unwrap(), did);
     }

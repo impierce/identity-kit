@@ -64,7 +64,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `in-memory`          | off     | test and development key store                                |
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
 | `pkcs11`             | off     | `cryptoki`                                                    |
-| `vc`                 | on      | W3C VC/VP JWT profile and validators                          |
+| `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
 | `sd-jwt`             | on      | `sd-jwt-payload`; implies `vc`                                |
 | `domain-linkage`     | on      | implies `vc` and `did-web`                                    |
 | `utoipa`             | off     | OpenAPI schemas for the public types                          |
@@ -216,12 +216,19 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 
 ## Upper layer
 
-- `vc` (`vc`): `Jwt` newtype; `Credential`/`Presentation` for the VCDM 1.1 JWT profile with builders
-  and `to_jwt_claims` (`iss`/`sub`/`jti`/`nbf`/`exp`/`iat` mapping); `CredentialV2`, `EnvelopedVc`
-  for VCDM 2.0 enveloped credentials; `chrono` timestamps; `vc::validation` with
-  `JwtCredentialValidator`, `JwtPresentationValidator`, `SdJwtCredentialValidator` over
-  `JwsVerifier` + `VerificationMaterialResolver`, clock-skew leeway options, issuer and holder
-  binding, `FailFast`, a `StatusCheck` hook, `extract_holder`/`extract_issuer`.
+- `vc` (`vc`): `Jwt` newtype and `JwtClaims` (RFC 7519 registered claims plus the rest);
+  `Credential`/`Presentation` for the VCDM 1.1 JWT profile, built with `new` and `with_*`
+  setters, checked on deserialization, with `to_jwt_claims`/`from_jwt_claims`
+  (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree);
+  `CredentialV2`/`PresentationV2` as VC-JOSE-COSE JWT payloads (`typ: vc+jwt`/`vp+jwt`) and
+  `EnvelopedVc`/`EnvelopedVp` over `data:` URLs; `chrono::DateTime<Utc>` timestamps serialized
+  RFC 3339; `vc::validation` with `JwtCredentialValidator` (1.1 and 2.0) and
+  `JwtPresentationValidator` over `JwsVerifier` + `KeyResolver` (implemented by `Resolver`,
+  resolving the `kid` under `assertionMethod` or `authentication`), `TimeOptions` (explicit
+  `now`, leeway), issuer and holder binding to the DID of `kid`, audience and nonce,
+  `SubjectHolderRelationship`, `FailFast`, a `StatusCheck` trait with a `StatusPolicy`,
+  `extract_issuer`/`extract_holder` (ADR 0004). The SD-JWT credential validator lands with
+  `sd_jwt_vc`.
 - `sd_jwt_vc` (`sd-jwt`): builder with first-class `jti`, parser, `Status`, `StatusListRef`,
   `StatusMechanism`, type metadata, on `sd-jwt-payload`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration`, credential builder, validator

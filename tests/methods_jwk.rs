@@ -87,12 +87,12 @@ async fn p256_example() {
 
     let resolver = resolver();
     let key = DidUrl::parse(&format!("{P256_DID}#0")).unwrap();
-    let jwk = resolver.resolve_public_key(&key).await.unwrap();
+    let jwk = resolver.resolve_public_key(&key, None).await.unwrap();
     assert_eq!(jwk.x(), Some("acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0"));
     assert!(jwk.p256_public_bytes().is_ok());
     let missing = DidUrl::parse(&format!("{P256_DID}#1")).unwrap();
     assert_eq!(
-        resolver.resolve_public_key(&missing).await,
+        resolver.resolve_public_key(&missing, None).await,
         Err(DereferenceError::NotFound(missing))
     );
 }

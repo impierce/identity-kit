@@ -428,7 +428,7 @@ async fn did_resolution_service_endpoint_example_is_method_specific() {
         Err(DereferenceError::MethodSpecific(input.clone()))
     );
     assert_eq!(
-        resolver.resolve_public_key(&input).await,
+        resolver.resolve_public_key(&input, None).await,
         Err(DereferenceError::MethodSpecific(input))
     );
 }
@@ -439,30 +439,32 @@ async fn did_core_example_20_public_keys() {
     let (_, resolver) = resolver_for(ExampleResolver::new().with_document(doc.clone()));
 
     for method in &doc.verification_method {
-        let jwk = resolver.resolve_public_key(&method.id).await.unwrap();
+        let jwk = resolver.resolve_public_key(&method.id, None).await.unwrap();
         assert_eq!(&jwk, method.public_key_jwk().unwrap());
         assert!(!jwk.is_private());
     }
     let ed25519 = resolver
-        .resolve_public_key(&url("did:example:123#key-0"))
+        .resolve_public_key(&url("did:example:123#key-0"), None)
         .await
         .unwrap();
     assert_eq!((ed25519.kty(), ed25519.crv()), ("OKP", Some("Ed25519")));
     let rsa = resolver
-        .resolve_public_key(&url("did:example:123#key-7"))
+        .resolve_public_key(&url("did:example:123#key-7"), None)
         .await
         .unwrap();
     assert_eq!((rsa.kty(), rsa.e()), ("RSA", Some("AQAB")));
 
     assert_eq!(
-        resolver.resolve_public_key(&url("did:example:123")).await,
+        resolver
+            .resolve_public_key(&url("did:example:123"), None)
+            .await,
         Err(DereferenceError::NotVerificationMethod(url(
             "did:example:123"
         )))
     );
     assert_eq!(
         resolver
-            .resolve_public_key(&url("did:example:123#key-3"))
+            .resolve_public_key(&url("did:example:123#key-3"), None)
             .await,
         Err(DereferenceError::NotFound(url("did:example:123#key-3")))
     );
@@ -473,7 +475,7 @@ async fn multibase_material_decodes_as_multikey() {
     let (_, resolver) = resolver_for(ExampleResolver::serving(RESOLUTION_EXAMPLE));
     let id = url("did:example:123456789abcdefghi#keys-1");
     // The example's `z6MkmM42…` is the Multikey of an Ed25519 key.
-    let jwk = resolver.resolve_public_key(&id).await.unwrap();
+    let jwk = resolver.resolve_public_key(&id, None).await.unwrap();
     assert_eq!((jwk.kty(), jwk.crv()), ("OKP", Some("Ed25519")));
     assert_eq!(
         jwk.to_multikey().unwrap(),
@@ -487,7 +489,7 @@ async fn multibase_material_decodes_as_multikey() {
     );
     let (_, resolver) = resolver_for(ExampleResolver::serving(&bls));
     assert_eq!(
-        resolver.resolve_public_key(&id).await,
+        resolver.resolve_public_key(&id, None).await,
         Err(DereferenceError::NoJwk {
             id: id.clone(),
             method_type: MethodType::MULTIKEY,
@@ -496,7 +498,7 @@ async fn multibase_material_decodes_as_multikey() {
     );
     let service = url("did:example:123456789abcdefghi#messages");
     assert_eq!(
-        resolver.resolve_public_key(&service).await,
+        resolver.resolve_public_key(&service, None).await,
         Err(DereferenceError::NotVerificationMethod(service.clone()))
     );
     assert_eq!(
@@ -582,7 +584,7 @@ async fn did_parameters_select_the_version() {
     );
     assert!(
         resolver
-            .resolve_public_key(&url("did:example:123?versionId=2#key-4"))
+            .resolve_public_key(&url("did:example:123?versionId=2#key-4"), None)
             .await
             .is_ok()
     );
@@ -811,7 +813,7 @@ async fn deactivated_dids_resolve_but_do_not_dereference() {
         Err(ResolutionError::NotFound)
     );
     assert_eq!(
-        resolver.resolve_public_key(&key).await,
+        resolver.resolve_public_key(&key, None).await,
         Err(DereferenceError::Deactivated(key.did().clone()))
     );
     assert_eq!(
@@ -950,7 +952,7 @@ async fn cache_serves_repeated_resolutions_without_options() {
     assert_eq!(first, second);
     assert!(
         resolver
-            .resolve_public_key(&url("did:example:123#key-0"))
+            .resolve_public_key(&url("did:example:123#key-0"), None)
             .await
             .is_ok()
     );
@@ -1091,7 +1093,7 @@ async fn concurrent_resolutions_share_one_resolver() {
                 let key = url("did:example:123#key-0");
                 let document = resolver.resolve_document(&did).await.unwrap();
                 assert_eq!(document.id, did);
-                let jwk = resolver.resolve_public_key(&key).await.unwrap();
+                let jwk = resolver.resolve_public_key(&key, None).await.unwrap();
                 assert_eq!(jwk.crv(), Some("Ed25519"));
                 assert!(matches!(
                     resolver.dereference(&key).await,
@@ -1154,7 +1156,10 @@ async fn producer_makes_documents_the_resolver_serves() {
     // A produced document resolves through the registry like any other.
     let (_, resolver) = resolver_for(ExampleResolver::new().with_document(document));
     let key = url("did:example:123#key-0");
-    assert_eq!(resolver.resolve_public_key(&key).await.unwrap(), ed25519);
+    assert_eq!(
+        resolver.resolve_public_key(&key, None).await.unwrap(),
+        ed25519
+    );
     assert!(
         resolver
             .resolve_verification_method(&key, Some(VerificationRelationship::AssertionMethod))
