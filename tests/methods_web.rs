@@ -290,6 +290,28 @@ fn did_to_url_rejections() {
             "did:web:example.com:.",
             "a path segment is empty, `.` or `..`",
         ),
+        // The URL parser reads `%2E` as `.` in a path segment and collapses the dot segments,
+        // so these would name a document outside the path the DID spells.
+        (
+            "did:web:example.com:a:%2E%2E:b",
+            "a path segment is empty, `.` or `..`",
+        ),
+        (
+            "did:web:example.com:a:.%2e:b",
+            "a path segment is empty, `.` or `..`",
+        ),
+        (
+            "did:web:example.com:a:%2E.:b",
+            "a path segment is empty, `.` or `..`",
+        ),
+        (
+            "did:web:example.com:%2E",
+            "a path segment is empty, `.` or `..`",
+        ),
+        (
+            "did:web:%2E%2E-2Edid:web:%2E%2E",
+            "a path segment is empty, `.` or `..`",
+        ),
     ] {
         assert_eq!(
             document_url(&did(bad)),

@@ -28,8 +28,9 @@ replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did
    every PR. Small, maintained building blocks only: RustCrypto (`ed25519-dalek`, `p256`, `k256`,
    `rsa`, `sha2`), `jsonwebtoken`, `multibase`, `unsigned-varint`, `url`, `serde_json`, `indexmap`,
    `miniz_oxide`, `getrandom`, `cryptoki`. SD-JWT itself is implemented in this crate (ADR 0005).
-7. **Developer experience.** A `prelude` per layer; docs.rs built with `all-features` and
-   `doc_cfg`; `#![forbid(unsafe_code)]`; MSRV pinned; one `CHANGELOG.md`; `release-plz`.
+7. **Developer experience.** A `prelude` per layer (`prelude` for the lower layer,
+   `prelude::credentials` for the upper); docs.rs built with `all-features` and `doc_cfg`;
+   `#![forbid(unsafe_code)]`; MSRV pinned; one `CHANGELOG.md`; `release-plz`.
 
 ## Layout
 
@@ -67,8 +68,8 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
 | `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |
-| `utoipa`             | off     | OpenAPI schemas for the public types                          |
-| `test-vectors`       | off     | re-exports conformance vectors and the key-store test suite   |
+| `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |
+| `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |
 
 ## `did` module
 
@@ -256,7 +257,7 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   once ported.
 - Determinism: same inputs produce byte-identical documents and configuration resources.
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
-  `cargo tree` in that configuration must not list `chrono` or `miniz_oxide`.
+  `cargo tree` in that configuration must not list `chrono`, `miniz_oxide` or `sd-jwt-payload`.
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, clippy pedantic as warnings
   with `-D warnings` on the default lint set.
 - Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID

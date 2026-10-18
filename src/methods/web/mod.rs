@@ -299,7 +299,7 @@ fn encode_segment(segment: &str) -> String {
 /// # Errors
 ///
 /// [`WebError::InvalidDid`] when `did` is not a `did:web`, names an IP address, has a
-/// malformed port, or has an empty, `.` or `..` path segment.
+/// malformed port, or has an empty, `.` or `..` path segment, percent-encoded or not.
 ///
 /// # Examples
 ///
@@ -343,7 +343,7 @@ pub fn document_url(did: &Did) -> Result<Url, WebError> {
     let mut path = String::new();
     let mut has_segments = false;
     for segment in segments {
-        if matches!(segment, "" | "." | "..") {
+        if is_dot_segment(segment) {
             return Err(invalid("a path segment is empty, `.` or `..`"));
         }
         has_segments = true;
@@ -361,6 +361,29 @@ pub fn document_url(did: &Did) -> Result<Url, WebError> {
         Some(Host::Domain(_)) => Ok(url),
         _ => Err(invalid("the host is an IP address")),
     }
+}
+
+/// Whether `segment` is empty, or is `.` or `..` as the URL parser reads it: a segment of `.` and
+/// `%2E` in any combination and case is a dot segment, which the parser collapses into the path
+/// before it, so `did:web:example.com:a:%2E%2E:b` would name `https://example.com/b/did.json`.
+fn is_dot_segment(segment: &str) -> bool {
+    let mut dots = 0;
+    let mut i = 0;
+    let bytes = segment.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'.' {
+            i += 1;
+        } else if bytes[i..]
+            .get(..3)
+            .is_some_and(|b| b.eq_ignore_ascii_case(b"%2e"))
+        {
+            i += 3;
+        } else {
+            return false;
+        }
+        dots += 1;
+    }
+    dots <= 2
 }
 
 /// Decodes the percent-encoded octets of a DID segment, which the DID syntax has checked to be
