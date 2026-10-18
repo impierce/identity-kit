@@ -135,7 +135,7 @@ impl SdJwtBuilder {
         if self
             .claims
             .values()
-            .any(|value| nesting(value) >= Self::MAX_DEPTH)
+            .any(|value| nests_deeper_than(value, Self::MAX_DEPTH - 1))
         {
             return Err(SdJwtError::TooDeep {
                 max: Self::MAX_DEPTH,
@@ -310,12 +310,20 @@ pub struct Encoded {
     pub disclosures: Vec<Disclosure>,
 }
 
-/// How many containers deep `value` nests: 0 for a scalar, one more than the deepest member
-/// for an object or an array.
-fn nesting(value: &Value) -> usize {
+/// Whether `value` nests more than `limit` containers deep, descending no further than that:
+/// a value built in memory may nest far deeper than any parser of this crate reads, and the
+/// walk must not be what overflows the stack on it.
+fn nests_deeper_than(value: &Value, limit: usize) -> bool {
     match value {
-        Value::Array(items) => 1 + items.iter().map(nesting).max().unwrap_or(0),
-        Value::Object(members) => 1 + members.values().map(nesting).max().unwrap_or(0),
-        _ => 0,
+        Value::Array(items) => {
+            limit == 0 || items.iter().any(|item| nests_deeper_than(item, limit - 1))
+        }
+        Value::Object(members) => {
+            limit == 0
+                || members
+                    .values()
+                    .any(|member| nests_deeper_than(member, limit - 1))
+        }
+        _ => false,
     }
 }
