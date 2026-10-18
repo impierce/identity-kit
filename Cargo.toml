@@ -72,6 +72,7 @@ tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread"] }
 
 [workspace]
 members = ["xtask"]
+exclude = ["fuzz"]
 
 [lints.rust]
 unsafe_code = "forbid"

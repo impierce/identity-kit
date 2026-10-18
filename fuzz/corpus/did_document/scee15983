@@ -1,0 +1,1 @@
+{"id": "did:example:1", "verificationMethod": [{"id": "#k", "type": "Multikey", "controller": "did:example:1", "publicKeyMultibase": "z"}]}

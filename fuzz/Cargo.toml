@@ -1,0 +1,84 @@
+[package]
+name = "identity-kit-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "cargo-fuzz targets for identity-kit: `cargo fuzz run <target>` from this directory"
+license = "Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1.4", features = ["derive"] }
+base64 = "0.22"
+identity-kit = { path = "..", default-features = false, features = ["secp256k1", "did-key", "did-jwk", "did-web", "vc", "sd-jwt", "domain-linkage"] }
+libfuzzer-sys = "0.4"
+serde = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+url = "2.5"
+
+# Every binary is a fuzz target; the Fuzz workflow discovers them from this manifest.
+
+[[bin]]
+name = "did_syntax"
+path = "fuzz_targets/did_syntax.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "did_document"
+path = "fuzz_targets/did_document.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "did_methods"
+path = "fuzz_targets/did_methods.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jose"
+path = "fuzz_targets/jose.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vc_jwt"
+path = "fuzz_targets/vc_jwt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sd_jwt"
+path = "fuzz_targets/sd_jwt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sd_jwt_roundtrip"
+path = "fuzz_targets/sd_jwt_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sd_jwt_vc_metadata"
+path = "fuzz_targets/sd_jwt_vc_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+# A workspace of its own: the fuzz targets build on nightly with sanitizers and never join
+# the library's workspace, which `exclude`s this directory.
+[workspace]
