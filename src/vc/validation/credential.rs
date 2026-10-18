@@ -161,7 +161,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         Ok(decoded)
     }
 
-    /// Validates a VCDM 2.0 credential JWT.
+    /// Validates a VCDM 2.0 credential JWT, whose `typ` is `vc+jwt` when present.
     ///
     /// # Errors
     ///
@@ -283,8 +283,10 @@ pub(super) fn decode(jws: &CompactJws) -> Result<DecodedCredential, ValidationEr
     })
 }
 
-/// Decodes a VCDM 2.0 credential JWT.
+/// Decodes a VCDM 2.0 credential JWT: `typ` is `vc+jwt` when present (VC-JOSE-COSE §3.1.1),
+/// so a token typed for another purpose is never read as a credential.
 fn decode_v2(jws: &CompactJws) -> Result<DecodedCredentialV2, ValidationError> {
+    check_typ(jws.header(), CredentialV2::JWT_TYP)?;
     let claims: JwtClaims = serde_json::from_slice(jws.payload())
         .map_err(|e| ValidationError::Payload(e.to_string()))?;
     let credential = CredentialV2::from_jwt_claims(&claims)?;
