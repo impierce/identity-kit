@@ -5,7 +5,8 @@
 //! [`Jwk`] and a [`JwsAlgorithm`] and hands signing input to a [`JwsVerifier`] or a [`Signer`]:
 //!
 //! - [`Jwk`] is a JSON Web Key (RFC 7517), kept as the JSON it arrived as, with RFC 7638
-//!   thumbprints and raw public key accessors for Ed25519, P-256 and secp256k1.
+//!   thumbprints, raw public key accessors for Ed25519, X25519, P-256 and secp256k1, and
+//!   conversion to and from a Multikey string ([`Jwk::from_multikey`], [`Jwk::to_multikey`]).
 //! - [`JwsAlgorithm`] names the asymmetric algorithms this crate speaks and converts to and from
 //!   [`jsonwebtoken::Algorithm`].
 //! - [`JwsVerifier`] verifies a signature over a signing input; [`DefaultVerifier`] does so with
@@ -22,14 +23,16 @@
 //! - `rsa`: RS256 and PS256, via `rsa`.
 
 mod algorithm;
-mod base64url;
+pub(crate) mod base64url;
 mod compact;
 mod error;
 mod jwk;
+mod multikey;
 mod verifier;
 
 pub use algorithm::{JwsAlgorithm, UnknownAlgorithm};
 pub use compact::{CompactJws, JwsHeader, Signer, encode_compact};
 pub use error::{JwkError, JwsError, SignError, VerificationError};
 pub use jwk::{Jwk, KeyType};
+pub use multikey::KeyCodec;
 pub use verifier::{DefaultVerifier, JwsVerifier};

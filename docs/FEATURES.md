@@ -60,9 +60,9 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                                                | Status | Cargo feature | Specification                                                      | Issue                                                     |
 | ------------------------------------------------------------------------------------------------------ | :----: | ------------- | ------------------------------------------------------------------ | --------------------------------------------------------- |
-| `did:key`: Ed25519, P-256, secp256k1, RSA and X25519 multicodec keys, base58btc multibase              |   📋   | `did-key`     | [did:key][did-key], [multicodec][multicodec], [multibase][multibase] | [#10](https://github.com/impierce/identity-kit/issues/10) |
-| `did:jwk`: base64url JWK as method-specific id                                                         |   📋   | `did-jwk`     | [did:jwk][did-jwk]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
-| `did:web`: origin mapping, resolver over an injected `HttpClient`, hardened default client, producer   |   📋   | `did-web`     | [did:web][did-web]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
+| `did:key`: Ed25519, P-256, secp256k1, RSA and X25519 multicodec keys, base58btc multibase              |   ✅   | `did-key`     | [did:key][did-key], [multicodec][multicodec], [multibase][multibase] | [#10](https://github.com/impierce/identity-kit/issues/10) |
+| `did:jwk`: base64url JWK as method-specific id                                                         |   ✅   | `did-jwk`     | [did:jwk][did-jwk]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
+| `did:web`: origin mapping, resolver over an injected `HttpClient`, hardened default client, producer   |   ✅   | `did-web`, `reqwest` | [did:web][did-web]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
 
 ## Upper layer
 

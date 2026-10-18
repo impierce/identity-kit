@@ -173,6 +173,26 @@ impl Jwk {
         Ok(jwk)
     }
 
+    /// An `OKP` key with `crv` `X25519` from the 32-byte public key of RFC 7748, for key
+    /// agreement (RFC 8037 §3).
+    ///
+    /// # Errors
+    ///
+    /// [`JwkError::InvalidKeyLength`] when `public` is not 32 bytes.
+    pub fn from_x25519_public(public: &[u8]) -> Result<Self, JwkError> {
+        if public.len() != 32 {
+            return Err(JwkError::InvalidKeyLength {
+                key: "X25519",
+                expected: 32,
+                actual: public.len(),
+            });
+        }
+        let mut jwk = Self::with_kty("OKP");
+        jwk.crv = Some("X25519".to_owned());
+        jwk.x = Some(base64url::encode(public));
+        Ok(jwk)
+    }
+
     /// An `EC` key with `crv` `P-256` from a SEC1-encoded point, compressed or uncompressed.
     ///
     /// # Errors
@@ -518,6 +538,25 @@ impl Jwk {
         })
     }
 
+    /// The 32-byte X25519 public key of an `OKP` key with `crv` `X25519`.
+    ///
+    /// # Errors
+    ///
+    /// [`JwkError::UnexpectedKeyType`] for any other key, [`JwkError::MissingMember`] or
+    /// [`JwkError::InvalidBase64Url`] for a broken `x`, and [`JwkError::InvalidKeyLength`] when
+    /// `x` is not 32 bytes.
+    pub fn x25519_public_bytes(&self) -> Result<[u8; 32], JwkError> {
+        self.expect("X25519", "OKP", Some("X25519"))?;
+        let x = decode_member("x", self.x())?;
+        x.as_slice()
+            .try_into()
+            .map_err(|_| JwkError::InvalidKeyLength {
+                key: "X25519",
+                expected: 32,
+                actual: x.len(),
+            })
+    }
+
     /// The uncompressed SEC1 point (`0x04 || x || y`, 65 bytes) of an `EC` key with `crv`
     /// `P-256`.
     ///
@@ -660,7 +699,12 @@ impl Jwk {
     }
 
     /// Checks that this is a `kty` key on curve `crv`.
-    fn expect(&self, expected: &'static str, kty: &str, crv: Option<&str>) -> Result<(), JwkError> {
+    pub(super) fn expect(
+        &self,
+        expected: &'static str,
+        kty: &str,
+        crv: Option<&str>,
+    ) -> Result<(), JwkError> {
         if self.kty == kty && (crv.is_none() || self.crv() == crv) {
             Ok(())
         } else {
@@ -672,7 +716,7 @@ impl Jwk {
         }
     }
 
-    fn unsupported(&self) -> JwkError {
+    pub(super) fn unsupported(&self) -> JwkError {
         JwkError::UnsupportedKeyType {
             kty: self.kty.clone(),
             crv: self.crv.clone(),

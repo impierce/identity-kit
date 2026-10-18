@@ -13,7 +13,7 @@ use identity_kit::did::{
     ResolutionOptions, ResolutionResult, Service, VerificationMaterial, VerificationMethod,
     VerificationRelationship,
 };
-use identity_kit::jose::Jwk;
+use identity_kit::jose::{Jwk, JwkError};
 use identity_kit::resolver::{
     DereferenceError, Dereferenced, DidProducer, DidResolver, DocumentCache, Hosting,
     MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
@@ -469,14 +469,29 @@ async fn did_core_example_20_public_keys() {
 }
 
 #[tokio::test]
-async fn multibase_material_has_no_jwk() {
+async fn multibase_material_decodes_as_multikey() {
     let (_, resolver) = resolver_for(ExampleResolver::serving(RESOLUTION_EXAMPLE));
     let id = url("did:example:123456789abcdefghi#keys-1");
+    // The example's `z6MkmM42…` is the Multikey of an Ed25519 key.
+    let jwk = resolver.resolve_public_key(&id).await.unwrap();
+    assert_eq!((jwk.kty(), jwk.crv()), ("OKP", Some("Ed25519")));
+    assert_eq!(
+        jwk.to_multikey().unwrap(),
+        "z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu"
+    );
+
+    // A Multikey of a type this crate cannot read (BLS12-381 G2, multicodec 0xeb) is an error.
+    let bls = RESOLUTION_EXAMPLE.replace(
+        "z6MkmM42vxfqZQsv4ehtTjFFxQ4sQKS2w6WR7emozFAn5cxu",
+        "zUC7EK3ZakmukHhuncwkbySmomv3FmrkmS36E4Ks5rsb6VQSRpoCrx6Hb8e2Nk6UvJFSdyw9NK1scFXJp21gNNYFjVWNgaqyGnkyhtagagCpQb5B7tagJu3HDbjQ8h5ypoHjwBb",
+    );
+    let (_, resolver) = resolver_for(ExampleResolver::serving(&bls));
     assert_eq!(
         resolver.resolve_public_key(&id).await,
         Err(DereferenceError::NoJwk {
             id: id.clone(),
             method_type: MethodType::MULTIKEY,
+            source: Box::new(JwkError::UnsupportedMulticodec(0xeb)),
         })
     );
     let service = url("did:example:123456789abcdefghi#messages");
@@ -1241,8 +1256,9 @@ fn capabilities_and_error_messages() {
             DereferenceError::NoJwk {
                 id: id.clone(),
                 method_type: MethodType::MULTIKEY,
+                source: Box::new(JwkError::UnsupportedMulticodec(0xeb)),
             },
-            "verification method `did:example:123#key-1` of type `Multikey` has no JWK",
+            "verification method `did:example:123#key-1` of type `Multikey` has no usable JWK: unsupported multicodec 0xeb",
         ),
     ] {
         assert_eq!(error.to_string(), message);

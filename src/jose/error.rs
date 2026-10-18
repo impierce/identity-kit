@@ -43,6 +43,23 @@ pub enum JwkError {
         /// What is wrong with it.
         reason: String,
     },
+    /// The key material has the wrong length for its type: a 31-byte Ed25519 key, say.
+    #[error("invalid {key} key: expected {expected} bytes, found {actual}")]
+    InvalidKeyLength {
+        /// The key type, such as `Ed25519`.
+        key: &'static str,
+        /// The length the key type requires.
+        expected: usize,
+        /// The length found.
+        actual: usize,
+    },
+    /// A Multikey (`publicKeyMultibase`) value is not base58btc multibase with a complete
+    /// multicodec header.
+    #[error("invalid Multikey: {0}")]
+    InvalidMultikey(String),
+    /// A Multikey value carries a public key type this crate cannot read.
+    #[error("unsupported multicodec 0x{0:x}")]
+    UnsupportedMulticodec(u64),
     /// The encoded key is valid but not of the [`KeyType`] that was expected.
     #[error("key is not a {expected:?} key")]
     KeyMismatch {
