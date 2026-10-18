@@ -7,9 +7,11 @@ release_always = false
 pr_labels = ["release"]
 
 [[package]]
-# Development tasks (`cargo xtask`), never released.
+# Development tasks (`cargo xtask`), never released nor published; `publish = false` must match
+# `xtask/Cargo.toml` or `release-plz release` refuses to run.
 name = "xtask"
 release = false
+publish = false
 
 [changelog]
 # Breaking changes stay in the changelog even if a parser below would skip them.
