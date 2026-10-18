@@ -363,6 +363,35 @@ impl DidUrl {
         }
     }
 
+    /// A copy of this URL with its DID replaced by `did`, keeping path, query and fragment.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use identity_kit::did::{Did, DidUrl};
+    ///
+    /// let url = DidUrl::parse("did:example:123/path?versionId=1#key-1")?;
+    /// let moved = url.with_did(Did::parse("did:web:example.com")?);
+    /// assert_eq!(moved.as_str(), "did:web:example.com/path?versionId=1#key-1");
+    /// assert_eq!(moved.fragment(), Some("key-1"));
+    /// # Ok::<(), identity_kit::did::DidError>(())
+    /// ```
+    #[must_use]
+    pub fn with_did(&self, did: Did) -> Self {
+        let old_len = self.did.0.len();
+        let suffix = &self.url[old_len..];
+        let mut url = String::with_capacity(did.0.len() + suffix.len());
+        url.push_str(&did.0);
+        url.push_str(suffix);
+        let shift = |offset: usize| offset - old_len + did.0.len();
+        Self {
+            url,
+            query_start: self.query_start.map(shift),
+            fragment_start: self.fragment_start.map(shift),
+            did,
+        }
+    }
+
     /// A copy of this URL without a fragment.
     #[must_use]
     pub fn without_fragment(&self) -> Self {
@@ -487,7 +516,7 @@ fn validate_did(s: &str, max_len: usize) -> Result<(), DidError> {
     Ok(())
 }
 
-fn check_len(s: &str, max_len: usize) -> Result<(), DidError> {
+pub(super) fn check_len(s: &str, max_len: usize) -> Result<(), DidError> {
     if s.len() > max_len {
         return Err(DidError::TooLong { max: max_len });
     }
@@ -550,7 +579,10 @@ fn scan_did(s: &str) -> Result<usize, DidError> {
 /// Scans `path-abempty [ "?" query ] [ "#" fragment ]` from `start` to the end of `s`.
 ///
 /// Returns the byte offsets of the `?` and the `#`, if present.
-fn scan_url_suffix(s: &str, start: usize) -> Result<(Option<usize>, Option<usize>), DidError> {
+pub(super) fn scan_url_suffix(
+    s: &str,
+    start: usize,
+) -> Result<(Option<usize>, Option<usize>), DidError> {
     let bytes = s.as_bytes();
     let mut i = start;
 
