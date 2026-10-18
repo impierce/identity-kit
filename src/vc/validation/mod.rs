@@ -13,8 +13,8 @@
 //!
 //! 1. The token is a compact JWS whose header has a `kid` that is a DID URL of the form
 //!    `did:…#fragment`: a path or DID parameters such as `versionId` are refused, so the signer
-//!    cannot pick the document version its key is looked up in (ADR 0004). For the VCDM 1.1
-//!    profile, `typ` is `JWT` when present.
+//!    cannot pick the document version its key is looked up in (ADR 0004). When `typ` is
+//!    present it names the profile: `JWT` for VCDM 1.1, `vc+jwt` for VCDM 2.0.
 //! 2. The payload is a claims set that maps to a [`Credential`](crate::vc::Credential) (or a
 //!    [`CredentialV2`](crate::vc::CredentialV2)), with its registered claims agreeing with the
 //!    credential.
