@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use identity_kit::did::{DEFAULT_MAX_LEN, Did, DidError, DidUrl};
+use identity_kit::did::{DEFAULT_MAX_LEN, Did, DidError, DidUrl, DidUrlReference};
 use proptest::prelude::*;
 use serde::de::IntoDeserializer;
 use serde::de::value::{Error as ValueError, StrDeserializer};
@@ -222,6 +222,29 @@ fn overlong_input_is_rejected() {
     assert_eq!(over_limit.parse::<Did>(), Err(too_long.clone()));
     assert_eq!(Did::try_from(over_limit.clone()), Err(too_long.clone()));
     assert_eq!(DidUrl::try_from(over_limit), Err(too_long));
+}
+
+#[test]
+fn join_keeps_to_the_limit() {
+    let did = Did::parse("did:example:123").unwrap();
+    let too_long = DidError::TooLong {
+        max: DEFAULT_MAX_LEN,
+    };
+    // A reference that fits the limit on its own, but not together with the DID.
+    let query = format!("?{}", "a".repeat(DEFAULT_MAX_LEN - 1));
+    let reference = DidUrlReference::parse(&query).unwrap();
+    assert_eq!(did.join(&query), Err(too_long.clone()));
+    assert_eq!(reference.resolve(&did), Err(too_long));
+    assert!(!reference.refers_to(&did.to_url(), &did));
+    // At the limit, the URL parses back.
+    let fits = format!("?{}", "a".repeat(DEFAULT_MAX_LEN - did.as_str().len() - 1));
+    let url = did.join(&fits).unwrap();
+    assert_eq!(url.as_str().len(), DEFAULT_MAX_LEN);
+    assert_eq!(DidUrl::parse(url.as_str()).as_ref(), Ok(&url));
+    assert_eq!(
+        DidUrlReference::parse(&fits).unwrap().resolve(&did),
+        Ok(url)
+    );
 }
 
 #[test]

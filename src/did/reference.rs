@@ -80,8 +80,8 @@ impl DidUrlReference {
     ///
     /// # Errors
     ///
-    /// Only a [`DidError`] that cannot happen for a reference this type accepted; the signature
-    /// stays fallible so a future base other than a bare DID can report one.
+    /// [`DidError::TooLong`] when `base` and a relative reference together exceed
+    /// [`DEFAULT_MAX_LEN`] bytes, the limit [`Did::join`] keeps to.
     pub fn resolve(&self, base: &Did) -> Result<DidUrl, DidError> {
         match self {
             Self::Absolute(url) => Ok(url.clone()),

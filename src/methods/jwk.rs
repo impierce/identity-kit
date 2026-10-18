@@ -9,8 +9,9 @@
 //! [did:jwk method]: https://github.com/quartzjer/did-jwk/blob/main/spec.md
 
 use crate::did::{
-    Context, Did, DidDocument, DocumentError, MethodType, ResolutionError, ResolutionOptions,
-    ResolutionResult, VerificationMaterial, VerificationMethod, VerificationRelationship,
+    Context, DEFAULT_MAX_LEN, Did, DidDocument, DidError, DocumentError, MethodType,
+    ResolutionError, ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
+    VerificationRelationship,
 };
 use crate::jose::Jwk;
 use crate::resolver::{DidProducer, DidResolver, Hosting, MethodCapabilities, ProduceError};
@@ -30,7 +31,7 @@ use super::check_accept;
 /// let jwk: Jwk = serde_json::from_str(
 ///     r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#,
 /// )?;
-/// let did = DidJwk::did(&jwk);
+/// let did = DidJwk::did(&jwk)?;
 /// assert!(did.as_str().starts_with("did:jwk:eyJ"));
 ///
 /// let document = DidJwk::document(&did)?;
@@ -49,6 +50,10 @@ impl DidJwk {
     /// The fragment of the one verification method, `0`.
     pub const FRAGMENT: &'static str = "0";
 
+    /// The longest `did:jwk` whose document this method can represent: the verification
+    /// method id `did#0` must fit [`DEFAULT_MAX_LEN`] bytes.
+    pub const MAX_DID_LEN: usize = DEFAULT_MAX_LEN - 1 - Self::FRAGMENT.len();
+
     /// The `@context` of every `did:jwk` document.
     pub const CONTEXT: [&'static str; 2] = [
         Context::DID_V1,
@@ -57,10 +62,16 @@ impl DidJwk {
 
     /// The `did:jwk` of the public part of `jwk`, serialized as compact JSON in this crate's
     /// member order. Any other serialization of the same key is another, equally valid, DID.
-    pub fn did(jwk: &Jwk) -> Did {
+    ///
+    /// # Errors
+    ///
+    /// [`DidError::TooLong`] when the encoded key exceeds [`MAX_DID_LEN`](Self::MAX_DID_LEN)
+    /// bytes, as a JWK carrying an `x5c` chain or large extension members may; base64url is
+    /// otherwise valid DID syntax.
+    pub fn did(jwk: &Jwk) -> Result<Did, DidError> {
         let json = serde_json::to_vec(&jwk.public()).expect("a JWK serializes");
         let id = crate::jose::base64url::encode(&json);
-        Did::parse(&format!("did:jwk:{id}")).expect("base64url is valid DID syntax")
+        Did::parse_with_max_len(&format!("did:jwk:{id}"), Self::MAX_DID_LEN)
     }
 
     /// The DID document `did` expands to (the method's Read operation).
@@ -69,10 +80,14 @@ impl DidJwk {
     ///
     /// - [`ResolutionError::MethodNotSupported`] when `did` is not a `did:jwk`.
     /// - [`ResolutionError::InvalidDid`] when the method-specific id is not base64url of a
-    ///   JSON Web Key, or the key carries private parameters.
+    ///   JSON Web Key, the key carries private parameters, or the DID is longer than
+    ///   [`MAX_DID_LEN`](Self::MAX_DID_LEN).
     pub fn document(did: &Did) -> Result<DidDocument, ResolutionError> {
         if did.method() != Self::METHOD {
             return Err(ResolutionError::MethodNotSupported);
+        }
+        if did.as_str().len() > Self::MAX_DID_LEN {
+            return Err(ResolutionError::InvalidDid);
         }
         let json = crate::jose::base64url::decode(did.method_specific_id())
             .map_err(|_| ResolutionError::InvalidDid)?;
@@ -144,6 +159,10 @@ impl DidProducer for DidJwk {
     /// The document of [`DidJwk::did`] for the one key in `keys`.
     async fn produce(&self, keys: &[Jwk], _: ()) -> Result<DidDocument, ProduceError> {
         let jwk = super::single_key(keys)?;
-        Ok(build(&Self::did(jwk), jwk.public())?)
+        let did = Self::did(jwk).map_err(|error| ProduceError::UnsupportedKey {
+            index: 0,
+            reason: error.to_string(),
+        })?;
+        Ok(build(&did, jwk.public())?)
     }
 }

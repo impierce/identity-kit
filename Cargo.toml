@@ -57,7 +57,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 rsa = { version = "0.10.0-rc.19", default-features = false, features = ["encoding", "sha2", "std"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
 sha2 = "0.11"
 thiserror = "2.0"
 tokio = { version = "1.0", features = ["net"], optional = true }
@@ -72,6 +72,7 @@ tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread"] }
 
 [workspace]
 members = ["xtask"]
+exclude = ["fuzz"]
 
 [lints.rust]
 unsafe_code = "forbid"

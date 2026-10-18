@@ -24,6 +24,17 @@ cargo deny check
 CI also measures test coverage and reports it on the pull request via [Codecov](https://codecov.io/gh/impierce/identity-kit).
 To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and run `cargo llvm-cov --all-features --open`.
 
+### Fuzzing
+
+The parsers are fuzzed with [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) from the [`fuzz/`](fuzz/) crate, a workspace of its own that builds on nightly.
+Each target feeds arbitrary input to one surface and asserts that nothing panics and that whatever parses round-trips; CI runs every target for a minute on pull requests that touch `src/` or `fuzz/` and for ten minutes nightly.
+[`fuzz/README.md`](fuzz/README.md) describes the targets, the committed seeds, the generated corpus and how to run, replay and extend them.
+
+```sh
+cargo install --locked cargo-fuzz
+fuzz/run.sh sd_jwt 600      # one target, ten minutes
+```
+
 ## Pull requests
 
 Pull requests are squash-merged, so the **pull request title** becomes the commit message on `main`.

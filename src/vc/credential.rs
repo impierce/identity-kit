@@ -260,7 +260,9 @@ impl Credential {
     /// The JWT claims set of the credential (VCDM 1.1 §6.3.1 "JWT Encoding"): `iss` is the
     /// issuer, `jti` the id, `nbf` the issuance date, `exp` the expiration date, `sub` the id of
     /// the subject, and the credential without those properties is the `vc` claim. An issuer
-    /// object stays in `vc`, as `iss` carries only its `id`.
+    /// object stays in `vc`, as `iss` carries only its `id`. A `NumericDate` counts whole
+    /// seconds, so a fraction of a second or a leap second in a date is dropped from `nbf` and
+    /// `exp`.
     ///
     /// # Errors
     ///

@@ -3,12 +3,12 @@
 #![cfg(feature = "did-key")]
 
 use identity_kit::did::{
-    Did, DidDocument, DidUrl, MethodType, ResolutionError, ResolutionOptions,
+    DEFAULT_MAX_LEN, Did, DidDocument, DidUrl, MethodType, ResolutionError, ResolutionOptions,
     VerificationRelationship,
 };
 use identity_kit::jose::Jwk;
 use identity_kit::methods::DidKey;
-use identity_kit::methods::key::KeyFormat;
+use identity_kit::methods::key::{DidKeyError, KeyFormat};
 use identity_kit::resolver::{DidProducer, DidResolver, Hosting, ProduceError, Resolver};
 use serde_json::{Value, json};
 
@@ -221,6 +221,19 @@ fn version_segment() {
             "{did}"
         );
     }
+    // A version so long that `did#multikey` would not fit a DID URL.
+    let prefix = format!(
+        "did:key:{}:",
+        "1".repeat(DEFAULT_MAX_LEN - 2 * ED25519_MULTIKEY.len())
+    );
+    let long = did(&format!("{prefix}{ED25519_MULTIKEY}"));
+    assert!(long.as_str().len() <= DEFAULT_MAX_LEN);
+    assert_eq!(method.document(&long), Err(ResolutionError::InvalidDid));
+    let fits = did(&format!(
+        "did:key:{}:{ED25519_MULTIKEY}",
+        "1".repeat(DEFAULT_MAX_LEN - 2 * ED25519_MULTIKEY.len() - 10)
+    ));
+    assert!(method.document(&fits).is_ok());
 }
 
 #[test]
@@ -257,6 +270,64 @@ fn errors_of_the_document_creation_algorithm() {
     ] {
         assert_eq!(method.document(&did(did_str)), Err(error), "{did_str}");
     }
+}
+
+#[tokio::test]
+async fn rsa_key_too_long_for_a_did() {
+    use base64::Engine as _;
+    let method = DidKey::new();
+    let rsa = |modulus_bytes: usize| -> Jwk {
+        serde_json::from_value(json!({
+            "kty": "RSA",
+            "n": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(vec![0xff; modulus_bytes]),
+            "e": "AQAB",
+        }))
+        .unwrap()
+    };
+    // `did#multikey` repeats the Multikey string, so the DID gets about half the DID URL limit.
+    assert_eq!(DidKey::MAX_DID_LEN, 8 + (DEFAULT_MAX_LEN - 9) / 2);
+
+    // The largest modulus that fits, found by growing one until its DID is too long.
+    let mut bytes = 700;
+    let (fits, too_long) = loop {
+        let next = rsa(bytes + 1);
+        if DidKey::did(&next).is_err() {
+            break (rsa(bytes), next);
+        }
+        bytes += 1;
+    };
+    let longest = DidKey::did(&fits).unwrap();
+    assert!(longest.as_str().len() <= DidKey::MAX_DID_LEN);
+    let document = method.document(&longest).unwrap();
+    let id = &document.verification_method[0].id;
+    assert!(id.as_str().len() <= DEFAULT_MAX_LEN);
+    assert_eq!(DidUrl::parse(id.as_str()).as_ref(), Ok(id));
+    assert_eq!(
+        method
+            .produce(std::slice::from_ref(&fits), ())
+            .await
+            .unwrap(),
+        document
+    );
+
+    // One byte more is an error, not a panic, from both construction paths.
+    assert_eq!(
+        DidKey::did(&too_long),
+        Err(DidKeyError::TooLong {
+            max: DidKey::MAX_DID_LEN
+        })
+    );
+    assert!(matches!(
+        method.produce(std::slice::from_ref(&too_long), ()).await,
+        Err(ProduceError::UnsupportedKey { index: 0, .. })
+    ));
+    // The bare DID still parses, but its document would not fit a DID URL.
+    let bare = did(&format!("did:key:{}", too_long.to_multikey().unwrap()));
+    assert_eq!(method.document(&bare), Err(ResolutionError::InvalidDid));
+    // An unsupported key type is the other error.
+    let p384: Jwk =
+        serde_json::from_value(json!({"kty": "EC", "crv": "P-384", "x": "", "y": ""})).unwrap();
+    assert!(matches!(DidKey::did(&p384), Err(DidKeyError::Key(_))));
 }
 
 #[tokio::test]

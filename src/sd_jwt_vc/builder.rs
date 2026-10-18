@@ -58,6 +58,14 @@ pub struct SdJwtBuilder {
 }
 
 impl SdJwtBuilder {
+    /// The deepest nesting of objects and arrays [`encode`](Self::encode) accepts, counting the
+    /// claims set itself: a claim value may sit inside 63 more containers.
+    ///
+    /// The parsers of this crate read at most 128 nested containers (serde_json's default),
+    /// and concealment, disclosures and the payload add a few around a claim value, so a
+    /// claims set within this limit always processes back; one beyond it might not.
+    pub const MAX_DEPTH: usize = 64;
+
     /// A builder over `claims`, nothing concealed yet.
     pub fn new(claims: Map<String, Value>) -> Self {
         Self {
@@ -116,12 +124,22 @@ impl SdJwtBuilder {
     ///
     /// [`SdJwtError::NoSuchClaim`] when a path selects nothing, [`SdJwtError::NotConcealable`]
     /// for `_sd` or `...`, [`SdJwtError::Payload`] when the claims already use `_sd` or
-    /// `_sd_alg`.
+    /// `_sd_alg`, [`SdJwtError::TooDeep`] when they nest deeper than
+    /// [`MAX_DEPTH`](Self::MAX_DEPTH).
     pub fn encode(mut self) -> Result<Encoded, SdJwtError> {
         if self.claims.contains_key(HashAlgorithm::CLAIM) {
             return Err(SdJwtError::Payload(
                 "the claims already carry `_sd_alg`".into(),
             ));
+        }
+        if self
+            .claims
+            .values()
+            .any(|value| nests_deeper_than(value, Self::MAX_DEPTH - 1))
+        {
+            return Err(SdJwtError::TooDeep {
+                max: Self::MAX_DEPTH,
+            });
         }
         let mut matched = vec![false; self.concealed.len()];
         let mut disclosures = Vec::new();
@@ -290,4 +308,22 @@ pub struct Encoded {
     pub payload: Map<String, Value>,
     /// The disclosures, in the order their claims were concealed.
     pub disclosures: Vec<Disclosure>,
+}
+
+/// Whether `value` nests more than `limit` containers deep, descending no further than that:
+/// a value built in memory may nest far deeper than any parser of this crate reads, and the
+/// walk must not be what overflows the stack on it.
+fn nests_deeper_than(value: &Value, limit: usize) -> bool {
+    match value {
+        Value::Array(items) => {
+            limit == 0 || items.iter().any(|item| nests_deeper_than(item, limit - 1))
+        }
+        Value::Object(members) => {
+            limit == 0
+                || members
+                    .values()
+                    .any(|member| nests_deeper_than(member, limit - 1))
+        }
+        _ => false,
+    }
 }

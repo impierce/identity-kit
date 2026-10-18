@@ -627,7 +627,7 @@ fn examples_with_public_key_base58_are_rejected() {
 fn context_is_first_and_empties_are_omitted() {
     let json = r#"{"service":[],"id":"did:example:1","controller":[],"foo":1,"verificationMethod":[],"@context":"https://www.w3.org/ns/did/v1","authentication":[]}"#;
     let document = parse(json);
-    assert_eq!(document.controller, Some(OneOrMany::Many(Vec::new())));
+    assert_eq!(document.controller, None);
     assert_eq!(
         serde_json::to_string(&document).unwrap(),
         r#"{"@context":"https://www.w3.org/ns/did/v1","id":"did:example:1","foo":1}"#
@@ -635,6 +635,20 @@ fn context_is_first_and_empties_are_omitted() {
     assert_eq!(
         serde_json::to_string(&DidDocument::new(did("did:example:1"))).unwrap(),
         r#"{"id":"did:example:1"}"#
+    );
+}
+
+/// Extension properties come back as written, numbers of every precision included: a document
+/// is byte-identical after a round trip, not merely close.
+#[test]
+fn extension_numbers_round_trip_exactly() {
+    let json = r#"{"id":"did:example:1","weight":2.2222222222222227e107,"count":9007199254740993}"#;
+    let document = parse(json);
+    let again = parse(&serde_json::to_string(&document).unwrap());
+    assert_eq!(again, document);
+    assert_eq!(
+        serde_json::to_string(&again).unwrap(),
+        serde_json::to_string(&document).unwrap()
     );
 }
 

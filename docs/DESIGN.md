@@ -259,6 +259,11 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   `cargo tree` in that configuration must not list `chrono` or `miniz_oxide`.
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, clippy pedantic as warnings
   with `-D warnings` on the default lint set.
+- Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID
+  methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata), seeded from the
+  specification vectors (`fuzz/seeds/`, one named file per example; the generated corpus is
+  cached in CI, not committed), asserting no panics and serialization round trips; a minute per
+  target on pull requests, ten minutes nightly. `fuzz/README.md` is the guide.
 
 ## References
 

@@ -123,7 +123,7 @@ fn holder() -> Holder {
         "kty": "EC", "crv": "P-256", "x": RFC7515_A3_X, "y": RFC7515_A3_Y
     }))
     .unwrap();
-    let did = DidJwk::did(&jwk);
+    let did = DidJwk::did(&jwk).unwrap();
     let kid = did.join("#0").unwrap();
     Holder { did, kid, signer }
 }
@@ -507,7 +507,7 @@ async fn key_must_be_usable_for_the_relationship() {
         "kty": "OKP", "crv": "Ed25519", "x": RFC8037_X, "use": "enc"
     }))
     .unwrap();
-    let did = DidJwk::did(&enc);
+    let did = DidJwk::did(&enc).unwrap();
     let kid = did.join("#0").unwrap();
     let credential = credential(&did, &holder().did);
     let jwt = Jwt::sign(

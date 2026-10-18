@@ -19,8 +19,9 @@ use core::fmt;
 use serde_json::Value;
 
 use crate::did::{
-    Context, Did, DidDocument, DocumentError, MethodType, ResolutionError, ResolutionOptions,
-    ResolutionResult, VerificationMaterial, VerificationMethod, VerificationRelationship,
+    Context, DEFAULT_MAX_LEN, Did, DidDocument, DocumentError, MethodType, ResolutionError,
+    ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
+    VerificationRelationship,
 };
 use crate::jose::{Jwk, JwkError};
 use crate::resolver::{DidProducer, DidResolver, Hosting, MethodCapabilities, ProduceError};
@@ -102,6 +103,10 @@ impl DidKey {
     /// The method name, `key`.
     pub const METHOD: &'static str = "key";
 
+    /// The longest `did:key` this method can produce: the verification method id
+    /// `did#multikey` repeats the Multikey string, and must fit [`DEFAULT_MAX_LEN`] bytes.
+    pub const MAX_DID_LEN: usize = "did:key:".len() + (DEFAULT_MAX_LEN - "did:key:".len() - 1) / 2;
+
     /// The `@context` of every `did:key` document.
     pub const CONTEXT: [&'static str; 1] = ["https://www.w3.org/ns/did/v1.1"];
 
@@ -143,10 +148,18 @@ impl DidKey {
     ///
     /// # Errors
     ///
-    /// The errors of [`Jwk::to_multikey`]: an unsupported key type or undecodable material.
-    pub fn did(jwk: &Jwk) -> Result<Did, JwkError> {
+    /// - [`DidKeyError::Key`] with the errors of [`Jwk::to_multikey`]: an unsupported key type
+    ///   or undecodable material.
+    /// - [`DidKeyError::TooLong`] when the Multikey string is so long that the DID exceeds
+    ///   [`MAX_DID_LEN`](Self::MAX_DID_LEN) bytes, as a very large RSA key is; base58btc is
+    ///   otherwise valid DID syntax.
+    pub fn did(jwk: &Jwk) -> Result<Did, DidKeyError> {
         let multikey = jwk.to_multikey()?;
-        Ok(Did::parse(&format!("did:key:{multikey}")).expect("base58btc is valid DID syntax"))
+        Did::parse_with_max_len(&format!("did:key:{multikey}"), Self::MAX_DID_LEN).map_err(|_| {
+            DidKeyError::TooLong {
+                max: Self::MAX_DID_LEN,
+            }
+        })
     }
 
     /// The DID document `did` expands to with this method's options (the method's Read
@@ -156,7 +169,9 @@ impl DidKey {
     ///
     /// - [`ResolutionError::MethodNotSupported`] when `did` is not a `did:key`.
     /// - [`ResolutionError::InvalidDid`] when the method-specific id is not a Multikey string
-    ///   (optionally preceded by a positive integer version) with a known multicodec header.
+    ///   (optionally preceded by a positive integer version) with a known multicodec header, or
+    ///   the DID is so long that the verification method id `did#multikey` would not fit
+    ///   [`DEFAULT_MAX_LEN`] bytes.
     /// - [`ResolutionError::Other`] with the method's own error names otherwise:
     ///   `unsupportedPublicKeyType` for a key type this crate cannot read,
     ///   `invalidPublicKeyLength` when the raw key has the wrong length, and `invalidPublicKey`
@@ -176,6 +191,11 @@ impl DidKey {
             }
             _ => ResolutionError::Other("invalidPublicKey".to_owned()),
         })?;
+        // The verification method id is `did#multikey`, which must fit a DID URL: a long
+        // version prefix can push it past the limit.
+        if did.as_str().len() + 1 + multikey.len() > DEFAULT_MAX_LEN {
+            return Err(ResolutionError::InvalidDid);
+        }
         self.build(did, multikey, jwk)
             .map_err(|_| ResolutionError::InvalidDidDocument)
     }
@@ -253,6 +273,21 @@ impl Default for DidKey {
     }
 }
 
+/// Why a key has no `did:key`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum DidKeyError {
+    /// The key has no Multikey form: an unsupported key type or undecodable material.
+    #[error(transparent)]
+    Key(#[from] JwkError),
+    /// The Multikey string is so long that the DID would exceed `max` bytes.
+    #[error("the did:key would exceed the maximum length of {max} bytes")]
+    TooLong {
+        /// The maximum number of bytes, [`DidKey::MAX_DID_LEN`].
+        max: usize,
+    },
+}
+
 /// The Multikey string of a `did:key`, after the optional version segment, which must be a
 /// positive integer.
 fn multikey_of(did: &Did) -> Option<&str> {
@@ -306,14 +341,11 @@ impl DidProducer for DidKey {
     /// The document of [`DidKey::did`] for the one key in `keys`, with this method's options.
     async fn produce(&self, keys: &[Jwk], _: ()) -> Result<DidDocument, ProduceError> {
         let jwk = super::single_key(keys)?;
-        let multikey = jwk
-            .to_multikey()
-            .map_err(|error| ProduceError::UnsupportedKey {
-                index: 0,
-                reason: error.to_string(),
-            })?;
-        let did =
-            Did::parse(&format!("did:key:{multikey}")).expect("base58btc is valid DID syntax");
-        Ok(self.build(&did, &multikey, jwk.public())?)
+        let did = Self::did(jwk).map_err(|error| ProduceError::UnsupportedKey {
+            index: 0,
+            reason: error.to_string(),
+        })?;
+        let multikey = multikey_of(&did).expect("a produced did:key carries its Multikey");
+        Ok(self.build(&did, multikey, jwk.public())?)
     }
 }

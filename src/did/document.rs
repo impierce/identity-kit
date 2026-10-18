@@ -822,7 +822,8 @@ pub struct DidDocument {
     /// Other identifiers of the subject.
     #[serde(rename = "alsoKnownAs", default, skip_serializing_if = "Vec::is_empty")]
     pub also_known_as: Vec<Uri>,
-    /// The DIDs whose controllers may change this document; omitted when `None` or empty.
+    /// The DIDs whose controllers may change this document; omitted when `None` or empty, and
+    /// `None` when read as an empty set.
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub controller: Option<OneOrMany<Did>>,
     /// Verification methods that relationships may reference.
@@ -878,10 +879,14 @@ impl Serialize for DidDocument {
 }
 
 impl<'de> Deserialize<'de> for DidDocument {
-    /// Reads the document and rejects duplicate verification method or service ids.
+    /// Reads the document and rejects duplicate verification method or service ids. An empty
+    /// `controller` set reads as no controller, which is how it is written.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let document = Self::deserialize(deserializer)?;
+        let mut document = Self::deserialize(deserializer)?;
         document.check_unique_ids().map_err(de::Error::custom)?;
+        if is_none_or_empty(&document.controller) {
+            document.controller = None;
+        }
         Ok(document)
     }
 }

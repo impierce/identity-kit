@@ -1,0 +1,2 @@
+did:web:example.com%3A3000:user:alice
+{"kty":"EC","crv":"secp256k1","x":"Hb9oJvPjmZ-EWt3zaTz7XQe-vqX-GhXEzHO6OzkEbJA","y":"8nfUA2sGxk4FuU8L-tAq5Ck7l7pnRJXJz4KmD2zBzpc"}

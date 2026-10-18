@@ -77,6 +77,13 @@ pub enum SdJwtError {
         /// Why.
         reason: String,
     },
+    /// The claims to issue nest deeper than [`SdJwtBuilder::MAX_DEPTH`](super::SdJwtBuilder::MAX_DEPTH)
+    /// containers, which no parser of this crate would read back.
+    #[error("the claims nest deeper than {max} containers")]
+    TooDeep {
+        /// The deepest nesting the builder accepts.
+        max: usize,
+    },
     /// The key binding JWT is present where an SD-JWT without key binding was expected, or
     /// missing.
     #[error("{0}")]
