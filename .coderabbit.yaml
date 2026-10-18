@@ -7,4 +7,4 @@ reviews:
     # Specification test vectors are verbatim copies of the specifications' examples (W3C, IETF,
     # DIF); they are not code to review and would push pull requests over the file limit.
     - "!tests/vectors/**"
-    - "!fuzz/corpus/**"
+    - "!fuzz/seeds/**"
