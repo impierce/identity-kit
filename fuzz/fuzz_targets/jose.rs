@@ -1,5 +1,5 @@
-//! JOSE (RFC 7515, RFC 7517, RFC 7638, Multikey): compact JWS decoding, JWK deserialization and
-//! the key encodings never panic, and signature verification with any key only errors.
+//! JOSE (RFC 7515, RFC 7517, RFC 7638, Multikey): compact JWS decoding, JWK deserialization,
+//! the key encodings and signature verification with any key never panic.
 //!
 //! The input is a compact JWS on the first line, followed by a JWK as JSON; either part may be
 //! absent.
@@ -36,8 +36,9 @@ fn exercise_jws(token: &str, keys: &[&Jwk]) {
     let _ = jws.payload();
     let _ = jws.signature();
     for key in keys {
-        // A signature forged from fuzz input never verifies, and never panics either.
-        assert!(jws.verify(&DefaultVerifier, key).is_err());
+        // Verification never panics; it succeeds only for a genuine signature, which the input
+        // may carry when it is a specification vector next to its key.
+        let _ = jws.verify(&DefaultVerifier, key);
     }
 }
 

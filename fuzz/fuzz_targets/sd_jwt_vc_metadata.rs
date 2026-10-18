@@ -14,6 +14,8 @@ use identity_kit::vc::Jwt;
 use libfuzzer_sys::fuzz_target;
 use serde_json::Value;
 
+/// The decompression limit for a list read straight from the input; a deserialized list may
+/// be as large as `StatusList::MAX_BYTES`.
 const MAX_LIST_BYTES: usize = 1 << 16;
 
 fn exercise_list(list: &StatusList) {
@@ -21,7 +23,7 @@ fn exercise_list(list: &StatusList) {
     let bits = u8::try_from(json["bits"].as_u64().expect("`bits` is a number")).expect("1 to 8");
     let again: StatusList = serde_json::from_value(json).expect("a serialized list parses");
     assert_eq!(&again, list);
-    let again = StatusList::from_lst(bits, &list.to_lst(), MAX_LIST_BYTES)
+    let again = StatusList::from_lst(bits, &list.to_lst(), StatusList::MAX_BYTES)
         .expect("a compressed list decompresses");
     assert_eq!(&again, list);
     for index in 0..u64::try_from(list.len()).unwrap_or(u64::MAX).min(1024) {
