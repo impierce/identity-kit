@@ -627,7 +627,7 @@ fn examples_with_public_key_base58_are_rejected() {
 fn context_is_first_and_empties_are_omitted() {
     let json = r#"{"service":[],"id":"did:example:1","controller":[],"foo":1,"verificationMethod":[],"@context":"https://www.w3.org/ns/did/v1","authentication":[]}"#;
     let document = parse(json);
-    assert_eq!(document.controller, Some(OneOrMany::Many(Vec::new())));
+    assert_eq!(document.controller, None);
     assert_eq!(
         serde_json::to_string(&document).unwrap(),
         r#"{"@context":"https://www.w3.org/ns/did/v1","id":"did:example:1","foo":1}"#
