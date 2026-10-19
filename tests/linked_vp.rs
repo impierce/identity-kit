@@ -905,6 +905,41 @@ async fn invalid_service_entries_are_reported() {
     assert_eq!(client.http().fetched(), [EXAMPLE_URL]);
 }
 
+#[tokio::test]
+async fn urls_past_the_limit_are_reported_without_fetching() {
+    let third = "https://holder.example/third.jwt";
+    let document: DidDocument = serde_json::from_value(json!({
+        "id": EXAMPLE_DID,
+        "service": [
+            { "id": "did:example:123#map", "type": SERVICE_TYPE, "serviceEndpoint": { "origins": [EXAMPLE_URL] } },
+            { "id": "did:example:123#vps", "type": SERVICE_TYPE, "serviceEndpoint": [EXAMPLE_URL, PUBLISHED_URL, third] }
+        ]
+    }))
+    .unwrap();
+    let web = Web::default().serving(EXAMPLE_URL, 200, vector("jwt"));
+    let client = client(web, example_validator());
+    assert_eq!(client.max_urls(), 32);
+    let client = client.with_max_urls(2);
+    let reports = client.validate_document(&document, &options()).await;
+    assert_eq!(reports.len(), 4);
+    assert!(matches!(
+        reports[0].result,
+        Err(LinkedVpError::InvalidService { .. })
+    ));
+    assert!(reports[1].result.is_ok());
+    assert!(matches!(
+        reports[2].result,
+        Err(LinkedVpError::HttpStatus { status: 404, .. })
+    ));
+    assert_eq!(reports[3].url.as_ref(), Some(&url(third)));
+    assert!(matches!(
+        reports[3].result,
+        Err(LinkedVpError::TooManyUrls(2))
+    ));
+    // The invalid entry does not count, and the URL past the limit is never requested.
+    assert_eq!(client.http().fetched(), [EXAMPLE_URL, PUBLISHED_URL]);
+}
+
 // Fetching.
 
 #[tokio::test]

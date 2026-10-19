@@ -9,21 +9,25 @@ mod common;
 
 use std::collections::HashMap;
 use std::error::Error as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone as _, Utc};
-use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri};
+use identity_kit::did::{
+    Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri, VerificationRelationship,
+};
 use identity_kit::domain_linkage::{
     CONTEXT, CREDENTIAL_TYPE, DomainLinkageClient, DomainLinkageConfiguration,
     DomainLinkageCredentialBuilder, DomainLinkageError, DomainLinkageValidator, LinkedDid,
     SERVICE_TYPE, configuration_url, fetch_configuration, normalize_origin, service, services,
 };
-use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
+use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
 use identity_kit::methods::web::{DidWeb, HttpClient, HttpError, HttpResponse};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
-    CredentialValidationOptions, TimeOptions, ValidationError, decode_credential,
+    CredentialValidationOptions, KeyResolutionError, KeyResolver, TimeOptions, ValidationError,
+    decode_credential,
 };
 use identity_kit::vc::{Credential, Jwt, JwtClaims, Subject};
 use serde_json::{Value, json};
@@ -1179,4 +1183,112 @@ async fn origins_of_a_did_web_are_reported_one_by_one() {
             .await,
         Err(DomainLinkageError::Resolution(error)) if *error.kind() == ResolutionErrorKind::NotFound
     ));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The credential limit
+// ---------------------------------------------------------------------------------------------
+
+/// The `did:key` resolver, counting the keys it resolves.
+struct Counting {
+    resolver: Resolver,
+    calls: AtomicUsize,
+}
+
+impl Counting {
+    fn new() -> Self {
+        Self {
+            resolver: Resolver::builder().with(DidKey::default()).build(),
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl KeyResolver for Counting {
+    async fn resolve_key(
+        &self,
+        url: &DidUrl,
+        relationship: VerificationRelationship,
+    ) -> Result<Jwk, KeyResolutionError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.resolver.resolve_key(url, relationship).await
+    }
+}
+
+#[tokio::test]
+async fn credentials_past_the_limit_are_not_validated() {
+    let controller = controller();
+    let valid = builder_for(&controller)
+        .sign(&controller.kid, &controller.signer)
+        .await
+        .unwrap();
+    // Names the controller as issuer, but is signed by another key: fails after resolving.
+    let forged = builder_for(&controller)
+        .sign(
+            &controller.kid,
+            &Ed25519Signer {
+                key: ed25519_dalek::SigningKey::from_bytes(&[7; 32]),
+                kid: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let validator = DomainLinkageValidator::new(Counting::new(), DefaultVerifier);
+    assert_eq!(validator.max_credentials(), 32);
+    let validator = validator.with_max_credentials(2);
+
+    // Every entry counts towards the limit of `validate_configuration`.
+    let configuration = DomainLinkageConfiguration::new()
+        .with_credential(forged.clone())
+        .with_credential(valid.clone())
+        .with_credential(valid.clone());
+    let report = validator
+        .validate_configuration(&configuration, &example_com(), &at(now()))
+        .await
+        .unwrap();
+    assert_eq!(report.linked.len(), 1);
+    assert_eq!(report.linked[0].0, 1);
+    assert!(matches!(
+        report.failed.get(&0),
+        Some(DomainLinkageError::Validation(ValidationError::Signature(
+            _
+        )))
+    ));
+    assert!(matches!(
+        report.failed.get(&2),
+        Some(DomainLinkageError::TooManyCredentials(2))
+    ));
+    assert_eq!(validator.credential_validator().resolver().calls(), 2);
+
+    // A DID repeated past the limit: only the first entries naming it are validated, and the
+    // other DID's entry neither counts nor is resolved.
+    let repeated = DomainLinkageConfiguration::new()
+        .with_credential(example_jwt())
+        .with_credential(forged.clone())
+        .with_credential(forged.clone())
+        .with_credential(forged)
+        .with_credential(valid);
+    let error = validator
+        .validate_linkage(&repeated, &controller.did, &example_com(), &at(now()))
+        .await
+        .unwrap_err();
+    let DomainLinkageError::NoValidCredential(errors) = error else {
+        panic!("expected NoValidCredential, got {error:?}");
+    };
+    assert_eq!(errors.keys().copied().collect::<Vec<_>>(), [1, 2, 3, 4]);
+    assert!(matches!(
+        errors[&3],
+        DomainLinkageError::TooManyCredentials(2)
+    ));
+    assert!(matches!(
+        errors[&4],
+        DomainLinkageError::TooManyCredentials(2)
+    ));
+    assert_eq!(validator.credential_validator().resolver().calls(), 4);
 }

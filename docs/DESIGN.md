@@ -254,7 +254,8 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   implementing the DIF Well Known DID Configuration checks (`iss == sub ==
   credentialSubject.id`, one `origin` matching the requested one after normalization, `exp`
   present, no `id`, no extra header parameters or claims, signature under `assertionMethod`);
-  validation of a configuration is at-least-one, reporting the rest as errors.
+  validation of a configuration is at-least-one, reporting the rest as errors, and validates at
+  most `max_credentials` (32 by default) entries of one configuration.
   `fetch_configuration` gets the resource over the injected `methods::web::HttpClient` (HTTPS
   only; `404`/`410` is `NotPublished`, a state rather than a failure), `service`/`services`
   build and read `LinkedDomains` entries, and `DomainLinkageClient` fetches and validates per
@@ -267,7 +268,8 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   `kid` checked against the linking DID before any key is resolved, key under
   `authentication`, `AlwaysSubject` by default, the specification's `vp+ld+jwt`/`vc+ld+jwt`
   `typ` values accepted through `additional_typ`), `LinkedVpClient` fetching over an
-  `HttpClient` (HTTPS only) with one report per URL. JSON-LD presentations are reported as
+  `HttpClient` (HTTPS only) with one report per URL, fetching at most `max_urls` (32 by
+  default) URLs per document. JSON-LD presentations are reported as
   unsupported; hashlinks are passed through unverified.
 
 ## Conformance and CI

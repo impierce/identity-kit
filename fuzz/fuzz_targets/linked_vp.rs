@@ -1,6 +1,7 @@
 //! DIF Linked Verifiable Presentation: arbitrary DID documents yield only well-formed linked
-//! presentation services, arbitrary response bodies and tokens never panic the fetcher, decoder
-//! or validator, and a built presentation maps to JWT claims and back unchanged.
+//! presentation services and one report per URL, no more fetched than the limit, arbitrary
+//! response bodies and tokens never panic the fetcher, decoder or validator, and a built
+//! presentation maps to JWT claims and back unchanged.
 #![no_main]
 
 use std::future::Future;
@@ -67,10 +68,12 @@ struct Built<'a> {
     expiration: Option<i64>,
 }
 
-fn exercise_document(document: &DidDocument) {
+fn exercise_document(document: &DidDocument, body: &[u8]) {
+    let mut expected_reports = 0;
     for linked in services(document) {
         match linked {
             Ok(linked) => {
+                expected_reports += linked.urls.len();
                 assert!(linked.service.has_type(SERVICE_TYPE));
                 assert!(!matches!(
                     linked.service.service_endpoint,
@@ -89,10 +92,31 @@ fn exercise_document(document: &DidDocument) {
             }
             Err(LinkedVpError::InvalidService { id, .. }) => {
                 assert!(document.service.iter().any(|service| service.id == id));
+                expected_reports += 1;
             }
             Err(other) => panic!("services reports only invalid services, not {other:?}"),
         }
     }
+    // One report per URL and per invalid entry, the limit included; nothing validates without
+    // a key.
+    let client = LinkedVpClient::new(
+        Body(body.to_vec()),
+        LinkedVpValidator::new(NoKeys, DefaultVerifier),
+    )
+    .with_max_urls(2);
+    let reports = ready(client.validate_document(document, &LinkedVpValidationOptions::new()));
+    assert_eq!(reports.len(), expected_reports);
+    assert!(reports.iter().all(|report| report.result.is_err()));
+    assert!(
+        reports
+            .iter()
+            .filter(|report| !matches!(
+                report.result,
+                Err(LinkedVpError::InvalidService { .. } | LinkedVpError::TooManyUrls(2))
+            ))
+            .count()
+            <= 2
+    );
 }
 
 fn exercise_body(data: &[u8]) {
@@ -149,7 +173,9 @@ fn exercise_builder(built: &Built<'_>) {
         };
         builder = builder.with_credential(credential);
     }
-    let claims = builder.jwt_claims().expect("a built presentation maps to claims");
+    let claims = builder
+        .jwt_claims()
+        .expect("a built presentation maps to claims");
     assert_eq!(claims.iss.as_deref(), Some(holder.as_str()));
     assert_eq!(claims.sub, claims.iss);
     assert_eq!(claims.iat, Some(built.issued_at));
@@ -164,7 +190,7 @@ fn exercise_builder(built: &Built<'_>) {
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(document) = serde_json::from_slice::<DidDocument>(data) {
-        exercise_document(&document);
+        exercise_document(&document, data);
     }
     exercise_body(data);
     if let Ok(built) = Built::arbitrary(&mut Unstructured::new(data)) {

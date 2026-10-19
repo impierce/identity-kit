@@ -92,6 +92,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `LinkedDomains` service entries: `service` builds one, `services` reads the origin string, `{"origins": [...]}` and array forms from a document, invalid entries reported | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
 | `fetch_configuration` over an `HttpClient` (HTTPS only): "not published" (`404`/`410`) told apart from failures, which keep their cause | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
 | `DomainLinkageClient`: fetches and validates an origin, one DID at an origin, or every origin of a DID document or resolved DID (at most `max_origins`, 32 by default, fetched), reporting per origin | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
+| `DomainLinkageValidator` validates at most `max_credentials` (32 by default) entries of a configuration; the rest report `TooManyCredentials` without resolving their issuer | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#45](https://github.com/impierce/identity-kit/issues/45) |
 
 ### `linked_vp`: linked presentations
 
@@ -101,6 +102,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `LinkedPresentationBuilder`: a VCDM 1.1 presentation JWT signed by the holder, `iss == sub == holder`, optional `exp`, no `aud` or `nonce` | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 | `LinkedVpValidator`: holder and `iss` are the linking DID, key under `authentication`, credentials' subject is the holder, the specification's `typ` values accepted | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 | `LinkedVpClient`: fetches over an `HttpClient` (HTTPS only), reports per URL; JSON-LD presentations, IPFS and hashlink verification unsupported | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
+| `LinkedVpClient` fetches at most `max_urls` (32 by default) URLs of a document; the rest report `TooManyUrls` without being fetched | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#45](https://github.com/impierce/identity-kit/issues/45) |
 
 ## Tooling and integration
 

@@ -394,6 +394,10 @@ pub enum LinkedVpError {
     /// The DID did not resolve.
     #[error("resolving the DID failed: {0}")]
     Resolution(#[from] ResolutionError),
+    /// The URL was not fetched: the DID document lists more URLs than the client's limit,
+    /// given here.
+    #[error("the DID document lists more than {0} presentation URLs")]
+    TooManyUrls(usize),
 }
 
 /// Options of [`LinkedVpValidator`]. The audience and nonce are fixed: a linked presentation
@@ -586,17 +590,42 @@ pub struct LinkedPresentationReport {
 /// The URLs come from the document, so the client fetches whatever its controller names:
 /// `http` must enforce the protections `ReqwestClient` (feature `reqwest`) does (HTTPS only,
 /// no redirects, no non-public addresses after name resolution, a body limit and a timeout),
-/// or fetching becomes a request forgery primitive.
+/// or fetching becomes a request forgery primitive. A DID document can also list any number of
+/// URLs, so [`validate_document`](Self::validate_document) fetches at most
+/// [`max_urls`](Self::max_urls) of them.
 #[derive(Debug)]
 pub struct LinkedVpClient<C, R, V = DefaultVerifier> {
     http: C,
     validator: LinkedVpValidator<R, V>,
+    max_urls: usize,
+}
+
+impl<C, R, V> LinkedVpClient<C, R, V> {
+    /// The most URLs [`new`](Self::new) fetches for one DID document: 32.
+    pub const DEFAULT_MAX_URLS: usize = 32;
 }
 
 impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
-    /// A client fetching with `http` and validating with `validator`.
+    /// A client fetching with `http` and validating with `validator`, fetching at most
+    /// [`DEFAULT_MAX_URLS`](Self::DEFAULT_MAX_URLS) URLs of a DID document.
     pub fn new(http: C, validator: LinkedVpValidator<R, V>) -> Self {
-        Self { http, validator }
+        Self {
+            http,
+            validator,
+            max_urls: Self::DEFAULT_MAX_URLS,
+        }
+    }
+
+    /// This client fetching at most `max_urls` URLs of a DID document.
+    #[must_use]
+    pub fn with_max_urls(mut self, max_urls: usize) -> Self {
+        self.max_urls = max_urls;
+        self
+    }
+
+    /// The most URLs [`validate_document`](Self::validate_document) fetches for one document.
+    pub fn max_urls(&self) -> usize {
+        self.max_urls
     }
 
     /// The HTTP client.
@@ -664,13 +693,15 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
     }
 
     /// Fetches and validates every presentation `document` links, one report per URL in
-    /// document order, and one for each invalid service entry.
+    /// document order, and one for each invalid service entry. URLs past the first
+    /// [`max_urls`](Self::max_urls) are not fetched and report [`LinkedVpError::TooManyUrls`].
     pub async fn validate_document(
         &self,
         document: &DidDocument,
         options: &LinkedVpValidationOptions,
     ) -> Vec<LinkedPresentationReport> {
         let mut reports = Vec::new();
+        let mut fetched = 0;
         for service in document
             .service
             .iter()
@@ -688,7 +719,12 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
                 }
             };
             for url in linked.urls {
-                let result = self.validate_url(&url, &document.id, options).await;
+                let result = if fetched < self.max_urls {
+                    fetched += 1;
+                    self.validate_url(&url, &document.id, options).await
+                } else {
+                    Err(LinkedVpError::TooManyUrls(self.max_urls))
+                };
                 reports.push(LinkedPresentationReport {
                     service: service.id.clone(),
                     url: Some(url),

@@ -1,6 +1,7 @@
 //! DIF Well Known DID Configuration: arbitrary DID documents yield only well-formed
-//! `LinkedDomains` services whose origins rebuild into the same service, arbitrary response
-//! bodies and statuses are classified without panicking, and nothing validates without a key.
+//! `LinkedDomains` services whose origins rebuild into the same service and one report per
+//! origin, no more fetched than the limit, arbitrary response bodies and statuses are classified
+//! without panicking, and nothing validates without a key.
 #![no_main]
 
 use std::future::Future;
@@ -103,13 +104,29 @@ fn exercise_document(document: &DidDocument, body: &[u8]) {
             Err(other) => panic!("services reports only invalid services, not {other:?}"),
         }
     }
-    let reports =
-        ready(client(200, body).validate_document(document, &CredentialValidationOptions::new()));
+    // One report per origin and per invalid entry, the limit included; nothing validates
+    // without a key.
+    let reports = ready(
+        client(200, body)
+            .with_max_origins(2)
+            .validate_document(document, &CredentialValidationOptions::new()),
+    );
     assert_eq!(reports.len(), expected_reports);
     assert!(
         reports.iter().all(|report| report.result.is_err()),
         "nothing validates without a key"
     );
+    let fetched = reports
+        .iter()
+        .filter(|report| {
+            !matches!(
+                report.result,
+                Err(DomainLinkageError::InvalidService { .. }
+                    | DomainLinkageError::TooManyOrigins(2))
+            )
+        })
+        .count();
+    assert!(fetched <= 2, "at most two origins are fetched");
 }
 
 fn exercise_body(data: &[u8]) {
