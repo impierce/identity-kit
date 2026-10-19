@@ -104,6 +104,11 @@ fn well_known_location() {
         normalize_origin(""),
         Err(DomainLinkageError::InvalidOrigin(_))
     ));
+    // A host the WHATWG URL parser accepts but RFC 3986 does not.
+    assert!(matches!(
+        normalize_origin("`example.com"),
+        Err(DomainLinkageError::InvalidOrigin(_))
+    ));
 }
 
 #[test]
@@ -759,12 +764,14 @@ fn service_endpoint_forms() {
         { "id": "did:example:123#number", "type": "LinkedDomains",
           "serviceEndpoint": { "origins": ["https://example.com", 42] } },
         { "id": "did:example:123#mailto", "type": "LinkedDomains",
-          "serviceEndpoint": "mailto:someone@example.com" }
+          "serviceEndpoint": "mailto:someone@example.com" },
+        { "id": "did:example:123#backtick", "type": "LinkedDomains",
+          "serviceEndpoint": { "origins": ["`example.com"] } }
       ]
     }))
     .unwrap();
     let found = origins_of(&document);
-    assert_eq!(found.len(), 6, "the other service type is ignored");
+    assert_eq!(found.len(), 7, "the other service type is ignored");
     assert_eq!(
         found[0].as_ref().unwrap(),
         &(
@@ -784,7 +791,7 @@ fn service_endpoint_forms() {
     );
     for (result, id) in found[2..]
         .iter()
-        .zip(["#map", "#empty", "#number", "#mailto"])
+        .zip(["#map", "#empty", "#number", "#mailto", "#backtick"])
     {
         assert!(
             matches!(result, Err(DomainLinkageError::InvalidService { id: found, .. }) if found.as_str().ends_with(id)),
