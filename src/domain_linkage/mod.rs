@@ -142,7 +142,8 @@ pub fn configuration_url(origin: &Url) -> Result<Url, DomainLinkageError> {
 ///
 /// # Errors
 ///
-/// [`DomainLinkageError::InvalidOrigin`] when `origin` has no host.
+/// [`DomainLinkageError::InvalidOrigin`] when `origin` has no host, or one that is not an
+/// RFC 3986 host.
 pub fn normalize_origin(origin: &str) -> Result<String, DomainLinkageError> {
     let with_scheme = if has_scheme(origin) {
         origin.to_owned()
@@ -162,7 +163,11 @@ pub fn normalize_origin(origin: &str) -> Result<String, DomainLinkageError> {
             "{origin:?} is not a domain origin"
         )));
     }
-    Ok(normalized.ascii_serialization())
+    let normalized = normalized.ascii_serialization();
+    // The WHATWG URL parser accepts host characters RFC 3986 does not, such as `` ` ``.
+    Uri::parse(&normalized)
+        .map_err(|e| DomainLinkageError::InvalidOrigin(format!("{origin:?}: {e}")))?;
+    Ok(normalized)
 }
 
 /// Whether `s` starts with a URI scheme (RFC 3986 §3.1) rather than a `host:port`.
