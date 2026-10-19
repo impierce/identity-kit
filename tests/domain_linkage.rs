@@ -1136,9 +1136,40 @@ async fn origins_of_a_did_web_are_reported_one_by_one() {
 
     // A DID document read elsewhere gives the same reports without resolving.
     let document: DidDocument = serde_json::from_value(web_document(&controller)).unwrap();
+    assert_eq!(client.max_origins(), 32);
     assert_eq!(
         client.validate_document(&document, &at(now())).await.len(),
         4
+    );
+
+    // Origins past the limit are reported without being fetched; the invalid entry is still
+    // reported as such.
+    let limited = DomainLinkageClient::new(
+        Arc::clone(&web),
+        DomainLinkageValidator::new(
+            Resolver::builder()
+                .with(DidWeb::new(Arc::clone(&web)))
+                .build(),
+            DefaultVerifier,
+        ),
+    )
+    .with_max_origins(2);
+    let before = web.fetched().len();
+    let reports = limited.validate_document(&document, &at(now())).await;
+    assert_eq!(reports.len(), 4);
+    assert!(reports[0].result.is_ok());
+    assert!(reports[1].result.as_ref().unwrap_err().is_not_published());
+    assert!(matches!(
+        &reports[2].result,
+        Err(DomainLinkageError::TooManyOrigins(2))
+    ));
+    assert!(matches!(
+        &reports[3].result,
+        Err(DomainLinkageError::InvalidService { .. })
+    ));
+    assert!(
+        !web.fetched()[before..].contains(&EXAMPLE_RESOURCE_URL.to_owned()),
+        "the origin past the limit is not fetched"
     );
 
     // A DID that does not resolve is an error of its own.

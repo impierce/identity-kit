@@ -654,6 +654,10 @@ pub enum DomainLinkageError {
     /// The DID did not resolve.
     #[error("resolving the DID failed: {0}")]
     Resolution(#[from] ResolutionError),
+    /// The origin was not fetched: the DID document lists more origins than the client's
+    /// limit, given here.
+    #[error("the DID document lists more than {0} origins")]
+    TooManyOrigins(usize),
 }
 
 impl DomainLinkageError {
@@ -887,17 +891,43 @@ pub struct LinkedDomainReport {
 /// `http`, and the `did:web` client of the resolver, must enforce the protections
 /// `ReqwestClient` (feature `reqwest`) does (HTTPS only, no redirects, no non-public
 /// addresses after name resolution, a body limit and a timeout), or fetching becomes a
-/// request forgery primitive.
+/// request forgery primitive. A DID document can also list any number of origins, so
+/// [`validate_document`](Self::validate_document) fetches at most
+/// [`max_origins`](Self::max_origins) of them.
 #[derive(Debug)]
 pub struct DomainLinkageClient<C, R, V = DefaultVerifier> {
     http: C,
     validator: DomainLinkageValidator<R, V>,
+    max_origins: usize,
+}
+
+impl<C, R, V> DomainLinkageClient<C, R, V> {
+    /// The most origins [`new`](Self::new) fetches for one DID document: 32.
+    pub const DEFAULT_MAX_ORIGINS: usize = 32;
 }
 
 impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> DomainLinkageClient<C, R, V> {
-    /// A client fetching with `http` and validating with `validator`.
+    /// A client fetching with `http` and validating with `validator`, fetching at most
+    /// [`DEFAULT_MAX_ORIGINS`](Self::DEFAULT_MAX_ORIGINS) origins of a DID document.
     pub fn new(http: C, validator: DomainLinkageValidator<R, V>) -> Self {
-        Self { http, validator }
+        Self {
+            http,
+            validator,
+            max_origins: Self::DEFAULT_MAX_ORIGINS,
+        }
+    }
+
+    /// This client fetching at most `max_origins` origins of a DID document.
+    #[must_use]
+    pub fn with_max_origins(mut self, max_origins: usize) -> Self {
+        self.max_origins = max_origins;
+        self
+    }
+
+    /// The most origins [`validate_document`](Self::validate_document) fetches for one
+    /// document.
+    pub fn max_origins(&self) -> usize {
+        self.max_origins
     }
 
     /// The HTTP client.
@@ -961,13 +991,15 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> DomainLinkageClient<C, R, V>
 
     /// Validates the linkage of the DID of `document` to every origin of its `LinkedDomains`
     /// services: one report per origin in document order, and one for each invalid service
-    /// entry.
+    /// entry. Origins past the first [`max_origins`](Self::max_origins) are not fetched and
+    /// report [`DomainLinkageError::TooManyOrigins`].
     pub async fn validate_document(
         &self,
         document: &DidDocument,
         options: &CredentialValidationOptions,
     ) -> Vec<LinkedDomainReport> {
         let mut reports = Vec::new();
+        let mut fetched = 0;
         for service in document
             .service
             .iter()
@@ -985,7 +1017,12 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> DomainLinkageClient<C, R, V>
                 }
             };
             for origin in linked.origins {
-                let result = self.validate_linkage(&document.id, &origin, options).await;
+                let result = if fetched < self.max_origins {
+                    fetched += 1;
+                    self.validate_linkage(&document.id, &origin, options).await
+                } else {
+                    Err(DomainLinkageError::TooManyOrigins(self.max_origins))
+                };
                 reports.push(LinkedDomainReport {
                     service: service.id.clone(),
                     origin: Some(origin),
