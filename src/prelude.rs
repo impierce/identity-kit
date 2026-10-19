@@ -46,7 +46,8 @@ pub use crate::resolver::{
 };
 
 /// The upper layer's prelude: credentials and presentations as JWTs (feature `vc`), SD-JWT
-/// VCs (feature `sd-jwt`) and domain linkage (feature `domain-linkage`).
+/// VCs (feature `sd-jwt`), domain linkage (feature `domain-linkage`) and linked presentations
+/// (feature `linked-vp`).
 ///
 /// It does not repeat the lower layer; import both.
 ///
@@ -67,6 +68,12 @@ pub mod credentials {
     pub use crate::domain_linkage::{
         DomainLinkageConfiguration, DomainLinkageCredentialBuilder, DomainLinkageError,
         DomainLinkageReport, DomainLinkageValidator, LinkedDid,
+    };
+    #[cfg(feature = "linked-vp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "linked-vp")))]
+    pub use crate::linked_vp::{
+        LinkedPresentationBuilder, LinkedPresentationReport, LinkedVpClient, LinkedVpError,
+        LinkedVpService, LinkedVpValidationOptions, LinkedVpValidator,
     };
     #[cfg(feature = "sd-jwt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]

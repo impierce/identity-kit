@@ -22,6 +22,7 @@ Collection of primitives for SSI libraries and applications: decentralized ident
 - ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
 - ✅ SD-JWT (RFC 9901) and SD-JWT VC: issuing with selective disclosure, presenting with key binding, validating over any DID method, the Token Status List and type metadata
 - ✅ DIF Well Known DID Configuration: the DID configuration resource, its domain linkage credentials and their validation against an origin
+- ✅ DIF Linked Verifiable Presentation: `LinkedVerifiablePresentation` services, presentations signed for publishing, and fetching and validating what a DID document links
 
 ✅ implemented, 📋 planned. The full checklist, with Cargo features, tracking issues and links to every specification, is in [`docs/FEATURES.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/FEATURES.md).
 The architecture is described in [`docs/DESIGN.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/DESIGN.md).
@@ -43,6 +44,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `resolver`) i
 | `vc`             |   ✅    | Verifiable credentials and presentations as JWTs (`vc`); pulls in `chrono`               |
 | `sd-jwt`         |   ✅    | SD-JWT and SD-JWT VC (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide`                 |
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
+| `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
 | `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |
 | `test-vectors`   |         | `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the specification vectors |
 

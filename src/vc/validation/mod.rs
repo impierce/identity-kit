@@ -14,7 +14,8 @@
 //! 1. The token is a compact JWS whose header has a `kid` that is a DID URL of the form
 //!    `did:…#fragment`: a path or DID parameters such as `versionId` are refused, so the signer
 //!    cannot pick the document version its key is looked up in (ADR 0004). When `typ` is
-//!    present it names the profile: `JWT` for VCDM 1.1, `vc+jwt` for VCDM 2.0.
+//!    present it names the profile: `JWT` for VCDM 1.1, `vc+jwt` for VCDM 2.0, or one of the
+//!    values the options add (`CredentialValidationOptions::additional_typ`).
 //! 2. The payload is a claims set that maps to a [`Credential`](crate::vc::Credential) (or a
 //!    [`CredentialV2`](crate::vc::CredentialV2)), with its registered claims agreeing with the
 //!    credential.
@@ -37,6 +38,7 @@
 //! to validate it; [`extract_issuer`] and [`extract_holder`] read just the signer's DID.
 
 use core::time::Duration;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
@@ -55,6 +57,8 @@ pub use credential::{
     decode_credential_v2,
 };
 pub use error::{KeyResolutionError, PresentationValidationError, StatusError, ValidationError};
+#[cfg(feature = "linked-vp")]
+pub(crate) use presentation::decode_presentation_with;
 pub use presentation::{DecodedPresentation, JwtPresentationValidator, decode_presentation};
 
 /// Finds the public key a JWT was signed with, given the DID URL in its `kid`.
@@ -296,6 +300,9 @@ pub struct CredentialValidationOptions {
     pub time: TimeOptions,
     /// What to do about `credentialStatus`.
     pub status: StatusPolicy,
+    /// Header `typ` values accepted besides the profile's own (`JWT` for VCDM 1.1, `vc+jwt`
+    /// for VCDM 2.0); none by default. A token without `typ` is always accepted.
+    pub additional_typ: BTreeSet<String>,
 }
 
 impl CredentialValidationOptions {
@@ -317,6 +324,13 @@ impl CredentialValidationOptions {
         self.status = status;
         self
     }
+
+    /// These options also accepting a credential whose header `typ` is `typ`.
+    #[must_use]
+    pub fn with_additional_typ(mut self, typ: impl Into<String>) -> Self {
+        self.additional_typ.insert(typ.into());
+        self
+    }
 }
 
 /// Options of [`JwtPresentationValidator`].
@@ -335,6 +349,10 @@ pub struct PresentationValidationOptions {
     pub credentials: CredentialValidationOptions,
     /// Whether to stop at the first failing credential.
     pub fail_fast: FailFast,
+    /// Header `typ` values accepted for the presentation JWT besides the profile's own (`JWT`
+    /// for VCDM 1.1); none by default. A token without `typ` is always accepted. The
+    /// credentials' own are [`CredentialValidationOptions::additional_typ`].
+    pub additional_typ: BTreeSet<String>,
 }
 
 impl PresentationValidationOptions {
@@ -384,6 +402,13 @@ impl PresentationValidationOptions {
     #[must_use]
     pub fn with_fail_fast(mut self, fail_fast: FailFast) -> Self {
         self.fail_fast = fail_fast;
+        self
+    }
+
+    /// These options also accepting a presentation whose header `typ` is `typ`.
+    #[must_use]
+    pub fn with_additional_typ(mut self, typ: impl Into<String>) -> Self {
+        self.additional_typ.insert(typ.into());
         self
     }
 }

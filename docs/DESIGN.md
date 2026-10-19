@@ -8,8 +8,9 @@ replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did
 ## Principles
 
 1. **One crate, two layers, hard boundary.** Lower layer: `did`, `jose`, `keys`, `resolver`,
-   `methods`. Upper layer: `vc`, `sd_jwt_vc`, `domain_linkage`. Lower modules never import upper
-   ones. The upper modules are feature-gated so CI can prove the boundary (see Conformance).
+   `methods`. Upper layer: `vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`. Lower modules
+   never import upper ones. The upper modules are feature-gated so CI can prove the boundary
+   (see Conformance).
 2. **Traits, not enums, for extension points.** A DID method implements `DidResolver` and/or
    `DidProducer` and declares `MethodCapabilities`. A key backend implements `KeyStore` and declares
    `KeyStoreCapabilities`. Adding either is a new module behind a feature plus registration; no
@@ -46,7 +47,8 @@ identity-kit/
 │       ├── methods/           # key, jwk, web
 │       ├── vc/                # [vc] Jwt, Credential, Presentation, CredentialV2, EnvelopedVc, validation
 │       ├── sd_jwt_vc/         # [sd-jwt] SD-JWT (RFC 9901), SD-JWT VC, status list, type metadata, validator
-│       └── domain_linkage/    # [domain-linkage] DID configuration resource builder and validator
+│       ├── domain_linkage/    # [domain-linkage] DID configuration resource builder and validator
+│       └── linked_vp/         # [linked-vp] linked presentation services, builder, fetcher and validator
 ├── xtask/                     # publish = false: release checks, vector regeneration, key CLI
 └── examples/                  # publish = false
 ```
@@ -68,6 +70,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
 | `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |
+| `linked-vp`          | on      | implies `vc` and `did-web` (for `url` and `HttpClient`)       |
 | `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |
 | `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |
 
@@ -252,6 +255,15 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   credentialSubject.id`, one `origin` matching the requested one after normalization, `exp`
   present, no `id`, no extra header parameters or claims, signature under `assertionMethod`);
   validation of a configuration is at-least-one, reporting the rest as errors.
+- `linked_vp` (`linked-vp`): DIF Linked Verifiable Presentation v1.0.0. `service`/`services`
+  for `LinkedVerifiablePresentation` entries (a map endpoint or a non-URL is an error, never
+  skipped), `LinkedPresentationBuilder` (VCDM 1.1 JWT, `iss == sub == holder`, optional `exp`,
+  no `aud`/`nonce`), `LinkedVpValidator` over `JwtPresentationValidator` (holder and the DID of
+  `kid` checked against the linking DID before any key is resolved, key under
+  `authentication`, `AlwaysSubject` by default, the specification's `vp+ld+jwt`/`vc+ld+jwt`
+  `typ` values accepted through `additional_typ`), `LinkedVpClient` fetching over an
+  `HttpClient` (HTTPS only) with one report per URL. JSON-LD presentations are reported as
+  unsupported; hashlinks are passed through unverified.
 
 ## Conformance and CI
 
@@ -259,7 +271,7 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 - JOSE: RFC 7515/7517/7638 vectors; cross-verification against `jsonwebtoken` where it supports the
   algorithm and against `k256` for ES256K.
 - Key stores: `keys::testsuite` against every backend; PKCS#11 against SoftHSM2 in CI.
-- Credentials: DIF DID configuration examples; SD-JWT VC draft examples; the `openid4vc` test suite
+- Credentials: DIF DID configuration and Linked Verifiable Presentation examples; SD-JWT VC draft examples; the `openid4vc` test suite
   once ported.
 - Determinism: same inputs produce byte-identical documents and configuration resources.
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
@@ -267,10 +279,11 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, clippy pedantic as warnings
   with `-D warnings` on the default lint set.
 - Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID
-  methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata), seeded from the
-  specification vectors (`fuzz/seeds/`, one named file per example; the generated corpus is
-  cached in CI, not committed), asserting no panics and serialization round trips; a minute per
-  target on pull requests, ten minutes nightly. `fuzz/README.md` is the guide.
+  methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata, linked presentations),
+  seeded from the specification vectors (`fuzz/seeds/`, one named file per example; the
+  generated corpus is cached in CI, not committed), asserting no panics and serialization round
+  trips; a minute per target on pull requests, ten minutes nightly. `fuzz/README.md` is the
+  guide.
 
 ## References
 
@@ -281,4 +294,5 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 - did:jwk: https://github.com/quartzjer/did-jwk/blob/main/spec.md
 - did:web: https://w3c-ccg.github.io/did-method-web/
 - DIF Well Known DID Configuration: https://identity.foundation/.well-known/resources/did-configuration/
+- DIF Linked Verifiable Presentation v1.0.0: https://identity.foundation/linked-vp/spec/v1.0.0/
 - RFC 3986 (URI, percent-encoding), RFC 7515 (JWS), RFC 7517 (JWK), RFC 7638 (JWK thumbprint)

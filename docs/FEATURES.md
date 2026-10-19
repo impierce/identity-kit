@@ -73,6 +73,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `Credential` and `Presentation` builders for the VCDM 1.1 JWT profile, `to_jwt_claims` mapping              |   ✅   | `vc`          | [VCDM 1.1 §6.3.1][vcdm11-jwt]                  | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `CredentialV2` and `EnvelopedVc` for VCDM 2.0 enveloped credentials                                         |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `JwtCredentialValidator`, `JwtPresentationValidator`: issuer and holder binding, clock-skew leeway, `FailFast`, `StatusCheck` hook |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VCDM 2.0][vcdm20]         | [#11](https://github.com/impierce/identity-kit/issues/11) |
+| Additional accepted header `typ` values per validation (`additional_typ`)                                   |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 
 ### `sd_jwt_vc`: SD-JWT verifiable credentials
 
@@ -88,6 +89,15 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | ------------------------------------------------------------------------------------ | :----: | ---------------- | ------------------------------------------ | --------------------------------------------------------- |
 | `DomainLinkageConfiguration` and credential builder                                  |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | Validator: `iss == sub`, single `origin`, `exp` present, subject matches, at-least-one across DIDs |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
+
+### `linked_vp`: linked presentations
+
+| Feature                                                                                                   | Status | Cargo feature | Specification                    | Issue                                                     |
+| --------------------------------------------------------------------------------------------------------- | :----: | ------------- | -------------------------------- | --------------------------------------------------------- |
+| `LinkedVerifiablePresentation` service entries: `service` builds one, `services` reads them from a document, invalid entries reported | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
+| `LinkedPresentationBuilder`: a VCDM 1.1 presentation JWT signed by the holder, `iss == sub == holder`, optional `exp`, no `aud` or `nonce` | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
+| `LinkedVpValidator`: holder and `iss` are the linking DID, key under `authentication`, credentials' subject is the holder, the specification's `typ` values accepted | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
+| `LinkedVpClient`: fetches over an `HttpClient` (HTTPS only), reports per URL; JSON-LD presentations, IPFS and hashlink verification unsupported | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 
 ## Tooling and integration
 
@@ -114,13 +124,14 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [DID Core 1.0][did-core]                     | W3C         | `did`, `methods`                          |
 | [DID Resolution][did-resolution]             | W3C         | `did`, `resolver`                         |
 | [Controlled Identifiers 1.0][cid]            | W3C         | `did` (verification material types)       |
-| [VC Data Model 1.1][vcdm11]                  | W3C         | `vc`                                      |
+| [VC Data Model 1.1][vcdm11]                  | W3C         | `vc`, `linked_vp`                         |
 | [VC Data Model 2.0][vcdm20]                  | W3C         | `vc`                                      |
 | [Securing VCs using JOSE and COSE][vc-jose-cose] | W3C     | `vc` (enveloped credentials)              |
 | [did:key][did-key]                           | W3C CCG     | `methods::key`                            |
-| [did:web][did-web]                           | W3C CCG     | `methods::web`, `domain_linkage`          |
+| [did:web][did-web]                           | W3C CCG     | `methods::web`, `domain_linkage`, `linked_vp` |
 | [did:jwk][did-jwk]                           | Community   | `methods::jwk`                            |
 | [Well Known DID Configuration][did-config]   | DIF         | `domain_linkage`                          |
+| [Linked Verifiable Presentation][linked-vp]  | DIF         | `linked_vp`                               |
 | [RFC 3986: URI generic syntax][rfc3986]      | IETF        | `did`                                     |
 | [RFC 7515: JWS][rfc7515]                     | IETF        | `jose`, `keys`                            |
 | [RFC 7517: JWK][rfc7517]                     | IETF        | `jose`, `keys::software`                  |
@@ -146,6 +157,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [did-web]: https://w3c-ccg.github.io/did-method-web/
 [did-jwk]: https://github.com/quartzjer/did-jwk/blob/main/spec.md
 [did-config]: https://identity.foundation/.well-known/resources/did-configuration/
+[linked-vp]: https://identity.foundation/linked-vp/spec/v1.0.0/
 [rfc3986]: https://www.rfc-editor.org/rfc/rfc3986
 [rfc7515]: https://www.rfc-editor.org/rfc/rfc7515
 [rfc7517]: https://www.rfc-editor.org/rfc/rfc7517

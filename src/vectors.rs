@@ -1,6 +1,7 @@
 //! The specification vectors the tests of this crate run against (feature `test-vectors`), so
 //! that a crate building on this one can test against the same examples: RFC 9901 (SD-JWT),
-//! SD-JWT VC, the Token Status List, and the DIF Well Known DID Configuration.
+//! SD-JWT VC, the Token Status List, the DIF Well Known DID Configuration and DIF Linked
+//! Verifiable Presentation.
 //!
 //! Every constant is the text of the specification's example exactly as published, with a
 //! trailing newline; a compact token is one line, call `trim` before parsing it. The JOSE,
@@ -264,5 +265,33 @@ pub mod did_configuration {
         HEADER = "did_configuration/header.json";
         /// The payload of that JWT.
         PAYLOAD = "did_configuration/payload.json";
+    }
+}
+
+/// DIF Linked Verifiable Presentation v1.0.0: the example DID documents and presentations.
+pub mod linked_vp {
+    vectors! {
+        /// The example DID document with an HTTPS and an IPFS `LinkedVerifiablePresentation`
+        /// service.
+        DID_DOCUMENT = "linked_vp/did_document.json";
+        /// The same document with hashlink-protected URLs (Security Considerations).
+        DID_DOCUMENT_HASHLINKS = "linked_vp/did_document_hashlinks.json";
+        /// The example presentation in the JSON Web Token form, one credential JWT inside.
+        JWT = "linked_vp/jwt.txt";
+        /// The header of that JWT, `typ` the literal `'vp+ld+jwt'`.
+        HEADER = "linked_vp/header.json";
+        /// The header of the credential JWT inside, `typ` the literal `'vc+ld+jwt'`.
+        CREDENTIAL_HEADER = "linked_vp/credential_header.json";
+        /// The example presentation in the JSON-LD form.
+        JSON_LD = "linked_vp/presentation.jsonld";
+        /// The presentation the specification repository's generator wrote with the
+        /// presentation members at the top level of the payload rather than in `vp`, which
+        /// the specification's "decoded JWT payload" example shows.
+        FLAT_JWT = "linked_vp/flat_jwt.txt";
+        /// The verification method that signed [`JWT`] and [`FLAT_JWT`], from the
+        /// specification repository's generator
+        /// (`resources/linked-vp/generate-config/keys/did-key-ed25519.json`, public part).
+        /// The example DID document shows another key, which verifies neither.
+        VERIFICATION_METHOD = "linked_vp/verification_method.json";
     }
 }

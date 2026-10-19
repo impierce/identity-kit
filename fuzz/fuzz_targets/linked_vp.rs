@@ -1,0 +1,173 @@
+//! DIF Linked Verifiable Presentation: arbitrary DID documents yield only well-formed linked
+//! presentation services, arbitrary response bodies and tokens never panic the fetcher, decoder
+//! or validator, and a built presentation maps to JWT claims and back unchanged.
+#![no_main]
+
+use std::future::Future;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
+
+use arbitrary::{Arbitrary, Unstructured};
+use chrono::DateTime;
+use identity_kit::did::{Did, DidDocument, DidUrl, ServiceEndpoint, Uri, VerificationRelationship};
+use identity_kit::jose::{DefaultVerifier, Jwk};
+use identity_kit::linked_vp::{
+    LinkedPresentationBuilder, LinkedVpClient, LinkedVpError, LinkedVpValidationOptions,
+    LinkedVpValidator, SERVICE_TYPE, decode, service, services,
+};
+use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
+use identity_kit::vc::validation::{KeyResolutionError, KeyResolver};
+use identity_kit::vc::{Jwt, Presentation};
+use libfuzzer_sys::fuzz_target;
+use url::Url;
+
+/// Runs a future that never waits: every stub here answers at once.
+fn ready<F: Future>(future: F) -> F::Output {
+    let mut future = pin!(future);
+    match future
+        .as_mut()
+        .poll(&mut Context::from_waker(Waker::noop()))
+    {
+        Poll::Ready(output) => output,
+        Poll::Pending => panic!("a stub future is never pending"),
+    }
+}
+
+/// Serves the fuzz input at every URL.
+struct Body(Vec<u8>);
+
+#[async_trait::async_trait]
+impl HttpClient for Body {
+    async fn get(&self, _: &Url) -> Result<HttpResponse, HttpError> {
+        Ok(HttpResponse::new(200, self.0.clone()))
+    }
+}
+
+/// Knows no key, so validation stops at the signature after every check that needs none.
+#[derive(Debug)]
+struct NoKeys;
+
+#[async_trait::async_trait]
+impl KeyResolver for NoKeys {
+    async fn resolve_key(
+        &self,
+        _: &DidUrl,
+        _: VerificationRelationship,
+    ) -> Result<Jwk, KeyResolutionError> {
+        Err(KeyResolutionError::msg("no keys"))
+    }
+}
+
+#[derive(Debug, Arbitrary)]
+struct Built<'a> {
+    holder: &'a str,
+    id: Option<&'a str>,
+    credentials: Vec<&'a str>,
+    issued_at: i64,
+    expiration: Option<i64>,
+}
+
+fn exercise_document(document: &DidDocument) {
+    for linked in services(document) {
+        match linked {
+            Ok(linked) => {
+                assert!(linked.service.has_type(SERVICE_TYPE));
+                assert!(!matches!(
+                    linked.service.service_endpoint,
+                    ServiceEndpoint::Map(_)
+                ));
+                let uris: Vec<&Uri> = linked.service.service_endpoint.uris().collect();
+                assert_eq!(linked.urls.len(), uris.len());
+                assert!(!linked.urls.is_empty());
+                for (url, uri) in linked.urls.iter().zip(uris) {
+                    assert_eq!(Url::parse(uri.as_str()).as_ref(), Ok(url));
+                }
+                if let Ok(rebuilt) = service(linked.id().clone(), linked.urls.clone()) {
+                    assert!(rebuilt.has_type(SERVICE_TYPE));
+                    assert_eq!(&rebuilt.id, linked.id());
+                }
+            }
+            Err(LinkedVpError::InvalidService { id, .. }) => {
+                assert!(document.service.iter().any(|service| service.id == id));
+            }
+            Err(other) => panic!("services reports only invalid services, not {other:?}"),
+        }
+    }
+}
+
+fn exercise_body(data: &[u8]) {
+    let client = LinkedVpClient::new(
+        Body(data.to_vec()),
+        LinkedVpValidator::new(NoKeys, DefaultVerifier),
+    );
+    let url = Url::parse("https://holder.example/vp.jwt").expect("a URL");
+    match ready(client.fetch(&url)) {
+        Ok(jwt) => {
+            let body = std::str::from_utf8(data).expect("a fetched token is UTF-8");
+            assert_eq!(jwt.as_str(), body.trim());
+            exercise_token(&jwt);
+        }
+        Err(LinkedVpError::UnsupportedFormat(_) | LinkedVpError::InvalidBody { .. }) => {}
+        Err(other) => panic!("a served body is a token or a body error, not {other:?}"),
+    }
+}
+
+fn exercise_token(jwt: &Jwt) {
+    if let Ok(decoded) = decode(jwt) {
+        assert_eq!(
+            decoded.credentials.len(),
+            decoded.presentation.verifiable_credential.len()
+        );
+    }
+    let validator = LinkedVpValidator::new(NoKeys, DefaultVerifier);
+    let did = Did::parse("did:example:123").expect("a DID");
+    let result = ready(validator.validate(jwt, &did, &LinkedVpValidationOptions::new()));
+    assert!(result.is_err(), "nothing validates without a key");
+}
+
+fn exercise_builder(built: &Built<'_>) {
+    let Ok(holder) = Did::parse(built.holder) else {
+        return;
+    };
+    let Some(issued_at) = DateTime::from_timestamp(built.issued_at, 0) else {
+        return;
+    };
+    let mut builder = LinkedPresentationBuilder::new(holder.clone()).with_issued_at(issued_at);
+    if let Some(id) = built.id {
+        let Ok(id) = Uri::parse(id) else { return };
+        builder = builder.with_id(id);
+    }
+    if let Some(expiration) = built.expiration {
+        let Some(expiration) = DateTime::from_timestamp(expiration, 0) else {
+            return;
+        };
+        builder = builder.with_expiration(expiration);
+    }
+    for credential in &built.credentials {
+        let Ok(credential) = Jwt::new(*credential) else {
+            return;
+        };
+        builder = builder.with_credential(credential);
+    }
+    let claims = builder.jwt_claims().expect("a built presentation maps to claims");
+    assert_eq!(claims.iss.as_deref(), Some(holder.as_str()));
+    assert_eq!(claims.sub, claims.iss);
+    assert_eq!(claims.iat, Some(built.issued_at));
+    assert_eq!(claims.nbf, claims.iat);
+    assert_eq!(claims.exp, built.expiration);
+    assert!(claims.aud.is_none());
+    assert_eq!(
+        Presentation::from_jwt_claims(&claims).as_ref(),
+        Ok(&builder.presentation())
+    );
+}
+
+fuzz_target!(|data: &[u8]| {
+    if let Ok(document) = serde_json::from_slice::<DidDocument>(data) {
+        exercise_document(&document);
+    }
+    exercise_body(data);
+    if let Ok(built) = Built::arbitrary(&mut Unstructured::new(data)) {
+        exercise_builder(&built);
+    }
+});
