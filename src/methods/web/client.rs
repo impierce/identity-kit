@@ -303,17 +303,7 @@ mod local {
                 return Ok(None);
             }
             debug_assert!(addresses.iter().all(|ip| !is_public(*ip)));
-            let mut target = url.clone();
-            if url.scheme() == "https" {
-                // The port the URL names, or the `https` default it implies. Both changes are
-                // valid for any URL with a host.
-                target
-                    .set_port(Some(port))
-                    .expect("a URL with a host takes a port");
-                target
-                    .set_scheme("http")
-                    .expect("an `https` URL can be `http`");
-            }
+            let target = plain_http(url, port);
             let mut builder = reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -334,6 +324,21 @@ mod local {
                 .map_err(HttpError::new)?;
             read(response, self.max_body).await.map(Some)
         }
+    }
+
+    /// `url` with the `http` scheme on `port`, the port the URL names or the `https` default it
+    /// implies.
+    pub(super) fn plain_http(url: &Url, port: u16) -> Url {
+        let mut target = url.clone();
+        // Scheme first: `set_port` drops a port equal to the current scheme's default, so 443
+        // set while the URL is still `https` would leave `http` on port 80.
+        target
+            .set_scheme("http")
+            .expect("an `http` or `https` URL can be `http`");
+        target
+            .set_port(Some(port))
+            .expect("a URL with a host takes a port");
+        target
     }
 }
 
@@ -394,6 +399,53 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "reqwest-local-network")]
+    #[test]
+    fn plain_http_keeps_the_port() {
+        for (url, port, expected) in [
+            // No port: the `https` default, 443, which `http` must name explicitly.
+            (
+                "https://localhost/.well-known/did.json",
+                443,
+                "http://localhost:443/.well-known/did.json",
+            ),
+            (
+                "https://issuer/user/alice/did.json",
+                443,
+                "http://issuer:443/user/alice/did.json",
+            ),
+            (
+                "https://127.0.0.1/did.json",
+                443,
+                "http://127.0.0.1:443/did.json",
+            ),
+            ("https://[::1]/did.json", 443, "http://[::1]:443/did.json"),
+            // An explicit port is kept, including 80.
+            (
+                "https://localhost:8443/did.json",
+                8443,
+                "http://localhost:8443/did.json",
+            ),
+            (
+                "https://localhost:80/did.json",
+                80,
+                "http://localhost/did.json",
+            ),
+            // A plain `http` URL is unchanged.
+            (
+                "http://localhost:8080/did.json",
+                8080,
+                "http://localhost:8080/did.json",
+            ),
+            ("http://localhost/did.json", 80, "http://localhost/did.json"),
+        ] {
+            let url = url::Url::parse(url).unwrap();
+            let rewritten = local::plain_http(&url, port);
+            assert_eq!(rewritten.as_str(), expected, "{url}");
+            assert_eq!(rewritten.port_or_known_default(), Some(port), "{url}");
+        }
+    }
 
     #[test]
     fn public_addresses() {
