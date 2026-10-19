@@ -53,8 +53,8 @@ fuzz_target!(|data: &[u8]| {
             if let Ok(document) = DidJwk::document(&did) {
                 let key = key_of(&document, &did);
                 assert!(!key.is_private());
-                // The DID carries the JWK as serialized by its producer, which need not be this
-                // crate's member order, so only the key must agree.
+                // The DID carries the JWK as serialized by its producer, which need not be the
+                // canonical (JCS) form this crate creates, so only the key must agree.
                 let produced = DidJwk::did(&key).expect("a key read from a did:jwk fits one");
                 let again = DidJwk::document(&produced).expect("a produced did:jwk resolves");
                 assert_eq!(key_of(&again, &produced), key);
@@ -83,7 +83,10 @@ fuzz_target!(|data: &[u8]| {
         }
         if let Ok(did) = DidJwk::did(&jwk) {
             let document = DidJwk::document(&did).expect("a produced did:jwk resolves");
-            assert_eq!(key_of(&document, &did), jwk.public());
+            let key = key_of(&document, &did);
+            assert_eq!(key, jwk.public());
+            // The canonical form survives a round trip through the document.
+            assert_eq!(DidJwk::did(&key).as_ref(), Ok(&did));
         }
     }
 });

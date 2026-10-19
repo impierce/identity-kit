@@ -6,6 +6,19 @@
 //! member (all five when it is absent, no `keyAgreement` for `sig`, only `keyAgreement` for
 //! `enc`). The method cannot update or deactivate.
 //!
+//! # Canonical form
+//!
+//! The method does not fix how the JWK is serialized, so one key has many valid `did:jwk`s. The
+//! specification names the JSON Canonicalization Scheme ([RFC 8785]) as helpful when the DID is
+//! not stored in its serialized form, and [`DidJwk::did`] uses it: members sorted, no
+//! whitespace. The result is the DID every other JCS implementation derives for the same key,
+//! including the specification's P-256 example. Resolution accepts any serialization, so a DID
+//! created another way still resolves; it is just not the one [`DidJwk::did`] produces. An
+//! application holding DIDs created another way, such as this crate's before 0.2, should keep
+//! those strings rather than derive them again.
+//!
+//! [RFC 8785]: https://www.rfc-editor.org/rfc/rfc8785
+//!
 //! [did:jwk method]: https://github.com/quartzjer/did-jwk/blob/main/spec.md
 
 use crate::did::{
@@ -60,17 +73,47 @@ impl DidJwk {
         "https://w3id.org/security/suites/jws-2020/v1",
     ];
 
-    /// The `did:jwk` of the public part of `jwk`, serialized as compact JSON in this crate's
-    /// member order. Any other serialization of the same key is another, equally valid, DID.
+    /// The `did:jwk` of the public part of `jwk`: `base64url` of its JSON Canonicalization
+    /// Scheme form ([RFC 8785]), so members are sorted, and extension members too, recursively.
+    /// Private parameters never reach the DID.
+    ///
+    /// Any other serialization of the same key is another valid DID, which
+    /// [`document`](Self::document) resolves but this function never produces; see the
+    /// [module documentation](self#canonical-form).
     ///
     /// # Errors
     ///
     /// [`DidError::TooLong`] when the encoded key exceeds [`MAX_DID_LEN`](Self::MAX_DID_LEN)
     /// bytes, as a JWK carrying an `x5c` chain or large extension members may; base64url is
     /// otherwise valid DID syntax.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use identity_kit::jose::Jwk;
+    /// use identity_kit::methods::DidJwk;
+    ///
+    /// // The key of the did:jwk specification's P-256 example, members in any order: its DID
+    /// // is the specification's, which is in JCS order.
+    /// let jwk: Jwk = serde_json::from_str(
+    ///     r#"{
+    ///       "kty": "EC",
+    ///       "crv": "P-256",
+    ///       "x": "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0",
+    ///       "y": "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
+    ///     }"#,
+    /// )?;
+    /// assert_eq!(
+    ///     DidJwk::did(&jwk)?.as_str(),
+    ///     "did:jwk:eyJjcnYiOiJQLTI1NiIsImt0eSI6IkVDIiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// [RFC 8785]: https://www.rfc-editor.org/rfc/rfc8785
     pub fn did(jwk: &Jwk) -> Result<Did, DidError> {
-        let json = serde_json::to_vec(&jwk.public()).expect("a JWK serializes");
-        let id = crate::jose::base64url::encode(&json);
+        let value = serde_json::to_value(jwk.public()).expect("a JWK serializes");
+        let id = crate::jose::base64url::encode(super::jcs::to_string(&value).as_bytes());
         Did::parse_with_max_len(&format!("did:jwk:{id}"), Self::MAX_DID_LEN)
     }
 

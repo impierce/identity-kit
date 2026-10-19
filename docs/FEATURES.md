@@ -61,7 +61,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Feature                                                                                                | Status | Cargo feature | Specification                                                      | Issue                                                     |
 | ------------------------------------------------------------------------------------------------------ | :----: | ------------- | ------------------------------------------------------------------ | --------------------------------------------------------- |
 | `did:key`: Ed25519, P-256, secp256k1, RSA and X25519 multicodec keys, base58btc multibase              |   ✅   | `did-key`     | [did:key][did-key], [multicodec][multicodec], [multibase][multibase] | [#10](https://github.com/impierce/identity-kit/issues/10) |
-| `did:jwk`: base64url JWK as method-specific id                                                         |   ✅   | `did-jwk`     | [did:jwk][did-jwk]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
+| `did:jwk`: base64url JWK as method-specific id, created in JCS canonical form                          |   ✅   | `did-jwk`     | [did:jwk][did-jwk], [RFC 8785][rfc8785]                            | [#10](https://github.com/impierce/identity-kit/issues/10), [#30](https://github.com/impierce/identity-kit/issues/30) |
 | `did:web`: origin mapping, resolver over an injected `HttpClient`, hardened default client, producer   |   ✅   | `did-web`, `reqwest` | [did:web][did-web]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
 
 ## Upper layer
@@ -127,6 +127,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 7518: JWA][rfc7518]                     | IETF        | `jose`                                    |
 | [RFC 7638: JWK thumbprint][rfc7638]          | IETF        | `jose`                                    |
 | [RFC 8037: EdDSA in JOSE][rfc8037]           | IETF        | `jose`                                    |
+| [RFC 8785: JSON Canonicalization Scheme][rfc8785] | IETF   | `methods::jwk`                            |
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
@@ -151,6 +152,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [rfc7518]: https://www.rfc-editor.org/rfc/rfc7518
 [rfc7638]: https://www.rfc-editor.org/rfc/rfc7638
 [rfc8037]: https://www.rfc-editor.org/rfc/rfc8037
+[rfc8785]: https://www.rfc-editor.org/rfc/rfc8785
 [rfc8812]: https://www.rfc-editor.org/rfc/rfc8812
 [rfc9901]: https://www.rfc-editor.org/rfc/rfc9901
 [sd-jwt-vc]: https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/
