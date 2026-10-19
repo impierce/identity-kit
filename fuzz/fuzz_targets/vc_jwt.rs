@@ -80,20 +80,20 @@ fuzz_target!(|data: &[u8]| {
                     decoded.credentials.len(),
                     decoded.presentation.verifiable_credential.len()
                 );
+                // `iss` is the holder.
+                if let Some(iss) = decoded.claims.iss.as_deref() {
+                    assert_eq!(decoded.holder().map(|holder| holder.as_str()), Some(iss));
+                }
             }
             if let Ok(decoded) = decode_presentation_v2(&jwt) {
                 assert_eq!(
                     decoded.credentials.len(),
                     decoded.presentation.verifiable_credential.len()
                 );
-                assert_eq!(
-                    decoded.holder().map(|holder| holder.as_str()),
-                    decoded
-                        .presentation
-                        .holder
-                        .as_ref()
-                        .map(|holder| holder.id().as_str())
-                );
+                // `iss`, when present, agrees with `holder`, or stands in for it.
+                if let Some(iss) = decoded.claims.iss.as_deref() {
+                    assert_eq!(decoded.holder().map(|holder| holder.as_str()), Some(iss));
+                }
             }
             let enveloped = EnvelopedVc::from_jwt(&jwt);
             assert_eq!(enveloped.data(), input);

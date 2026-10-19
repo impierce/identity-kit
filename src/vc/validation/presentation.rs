@@ -71,7 +71,9 @@ impl DecodedPresentationV2 {
 /// VCDM 1.1 JWT profile (`typ` `JWT`, the `vp` claim, credentials as JWTs) and
 /// [`validate_v2`](Self::validate_v2) for VCDM 2.0 secured with VC-JOSE-COSE (`typ`
 /// `vp+jwt`, the payload is the presentation, credentials enveloped). Neither accepts the
-/// other's `typ`. A verifier that takes both picks by `typ`:
+/// other's `typ`. A verifier that takes both picks by `typ`, and since `typ` is optional in
+/// both profiles, picks a token without one by its payload: VCDM 1.1 puts the presentation in
+/// a `vp` claim, VCDM 2.0 never has one.
 ///
 /// ```
 /// # #[cfg(feature = "did-key")]
@@ -80,14 +82,26 @@ impl DecodedPresentationV2 {
 /// use identity_kit::methods::DidKey;
 /// use identity_kit::resolver::Resolver;
 /// use identity_kit::vc::validation::{JwtPresentationValidator, PresentationValidationOptions};
-/// use identity_kit::vc::{Jwt, PresentationV2};
+/// use identity_kit::vc::{Jwt, JwtClaims, PresentationV2};
+///
+/// /// Whether `jwt` is a VCDM 2.0 presentation rather than a VCDM 1.1 one.
+/// fn is_v2(jwt: &Jwt) -> Result<bool, Box<dyn std::error::Error>> {
+///     let jws = jwt.decode()?;
+///     Ok(match jws.header().typ.as_deref() {
+///         Some(typ) => typ == PresentationV2::JWT_TYP,
+///         None => {
+///             let claims: JwtClaims = serde_json::from_slice(jws.payload())?;
+///             !claims.additional.contains_key("vp")
+///         }
+///     })
+/// }
 ///
 /// async fn holder_of(
 ///     validator: &JwtPresentationValidator<Resolver>,
 ///     jwt: &Jwt,
 ///     options: &PresentationValidationOptions,
 /// ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-///     let holder = if jwt.decode()?.header().typ.as_deref() == Some(PresentationV2::JWT_TYP) {
+///     let holder = if is_v2(jwt)? {
 ///         validator.validate_v2(jwt, options).await?.holder().cloned()
 ///     } else {
 ///         validator.validate(jwt, options).await?.holder().cloned()

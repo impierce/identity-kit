@@ -357,8 +357,9 @@ pub struct PresentationValidationOptions {
     /// Whether to stop at the first failing credential.
     pub fail_fast: FailFast,
     /// Header `typ` values accepted for the presentation JWT besides the profile's own (`JWT`
-    /// for VCDM 1.1); none by default. A token without `typ` is always accepted. The
-    /// credentials' own are [`CredentialValidationOptions::additional_typ`].
+    /// for VCDM 1.1, `vp+jwt` for VCDM 2.0), by both profiles; none by default. A token
+    /// without `typ` is always accepted. The credentials' own are
+    /// [`CredentialValidationOptions::additional_typ`].
     pub additional_typ: BTreeSet<String>,
 }
 
