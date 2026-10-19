@@ -7,23 +7,32 @@
 //!
 //! [RFC 8785]: https://www.rfc-editor.org/rfc/rfc8785
 
-use serde_json::Value;
+use serde_json::{Number, Value};
+
+/// A JSON number JCS cannot encode, because it has no finite `f64` value (RFC 8785 §3.2.2.3
+/// reads every number as an IEEE 754 double). `serde_json` only keeps such a number, `1e400`
+/// say, when its `arbitrary_precision` feature is on, which another crate of the build can do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnsupportedNumber(pub(crate) String);
 
 /// The canonical form of `value` (RFC 8785 §3.2).
-pub(crate) fn to_string(value: &Value) -> String {
+///
+/// # Errors
+///
+/// [`UnsupportedNumber`] for a number anywhere in `value` that has no finite `f64` value.
+pub(crate) fn to_string(value: &Value) -> Result<String, UnsupportedNumber> {
     let mut out = String::new();
-    write_value(&mut out, value);
-    out
+    write_value(&mut out, value)?;
+    Ok(out)
 }
 
-fn write_value(out: &mut String, value: &Value) {
+fn write_value(out: &mut String, value: &Value) -> Result<(), UnsupportedNumber> {
     match value {
         Value::Null => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
         Value::Bool(false) => out.push_str("false"),
-        // Without `arbitrary_precision`, every JSON number has an `f64` value: integers beyond
-        // 2^53 lose precision, which is what JCS specifies (RFC 8785 §3.2.2.3).
-        Value::Number(number) => write_number(out, number.as_f64().unwrap_or_default()),
+        // Integers beyond 2^53 lose precision, which is what JCS specifies.
+        Value::Number(number) => write_number(out, finite(number)?),
         Value::String(string) => write_string(out, string),
         Value::Array(items) => {
             out.push('[');
@@ -31,7 +40,7 @@ fn write_value(out: &mut String, value: &Value) {
                 if index > 0 {
                     out.push(',');
                 }
-                write_value(out, item);
+                write_value(out, item)?;
             }
             out.push(']');
         }
@@ -46,11 +55,20 @@ fn write_value(out: &mut String, value: &Value) {
                 }
                 write_string(out, name);
                 out.push(':');
-                write_value(out, member);
+                write_value(out, member)?;
             }
             out.push('}');
         }
     }
+    Ok(())
+}
+
+/// The `f64` value of `number`, which always exists without `arbitrary_precision`.
+fn finite(number: &Number) -> Result<f64, UnsupportedNumber> {
+    number
+        .as_f64()
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| UnsupportedNumber(number.to_string()))
 }
 
 /// A string as RFC 8785 §3.2.2.2 escapes it: `"` and `\`, `\b`, `\t`, `\n`, `\f`, `\r`, any
@@ -219,7 +237,7 @@ mod tests {
         .split(' ')
         .map(|byte| u8::from_str_radix(byte, 16).unwrap())
         .collect::<Vec<u8>>();
-        assert_eq!(to_string(&input).as_bytes(), bytes);
+        assert_eq!(to_string(&input).unwrap().as_bytes(), bytes);
     }
 
     /// The test data of the JCS reference implementation that RFC 8785 Appendix G points to
@@ -254,10 +272,10 @@ mod tests {
             ),
         ] {
             let value: Value = serde_json::from_str(input).unwrap();
-            assert_eq!(to_string(&value), output, "{input}");
+            assert_eq!(to_string(&value).unwrap(), output, "{input}");
             // The canonical form is a fixed point.
             let again: Value = serde_json::from_str(output).unwrap();
-            assert_eq!(to_string(&again), output, "{input}");
+            assert_eq!(to_string(&again).unwrap(), output, "{input}");
         }
     }
 
@@ -266,13 +284,16 @@ mod tests {
         // U+1F602 is the surrogate pair D83D DE02 in UTF-16, so it sorts before U+FB33, the
         // opposite of their code point (and UTF-8) order.
         let value = json!({"\u{fb33}": 1, "\u{1f602}": 2});
-        assert_eq!(to_string(&value), "{\"\u{1f602}\":2,\"\u{fb33}\":1}");
+        assert_eq!(
+            to_string(&value).unwrap(),
+            "{\"\u{1f602}\":2,\"\u{fb33}\":1}"
+        );
     }
 
     #[test]
     fn integers_are_numbers() {
         assert_eq!(
-            to_string(&json!([0, -0, 9_007_199_254_740_993_u64, -3])),
+            to_string(&json!([0, -0, 9_007_199_254_740_993_u64, -3])).unwrap(),
             "[0,0,9007199254740992,-3]"
         );
     }

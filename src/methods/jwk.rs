@@ -83,9 +83,11 @@ impl DidJwk {
     ///
     /// # Errors
     ///
-    /// [`DidError::TooLong`] when the encoded key exceeds [`MAX_DID_LEN`](Self::MAX_DID_LEN)
-    /// bytes, as a JWK carrying an `x5c` chain or large extension members may; base64url is
-    /// otherwise valid DID syntax.
+    /// - [`DidError::TooLong`] when the encoded key exceeds [`MAX_DID_LEN`](Self::MAX_DID_LEN)
+    ///   bytes, as a JWK carrying an `x5c` chain or large extension members may; base64url is
+    ///   otherwise valid DID syntax.
+    /// - [`DidError::UnsupportedNumber`] when an extension member holds a number with no finite
+    ///   double value, which only `serde_json`'s `arbitrary_precision` feature keeps.
     ///
     /// # Examples
     ///
@@ -113,7 +115,11 @@ impl DidJwk {
     /// [RFC 8785]: https://www.rfc-editor.org/rfc/rfc8785
     pub fn did(jwk: &Jwk) -> Result<Did, DidError> {
         let value = serde_json::to_value(jwk.public()).expect("a JWK serializes");
-        let id = crate::jose::base64url::encode(super::jcs::to_string(&value).as_bytes());
+        let json =
+            super::jcs::to_string(&value).map_err(|unsupported| DidError::UnsupportedNumber {
+                number: unsupported.0,
+            })?;
+        let id = crate::jose::base64url::encode(json.as_bytes());
         Did::parse_with_max_len(&format!("did:jwk:{id}"), Self::MAX_DID_LEN)
     }
 
