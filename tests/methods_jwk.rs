@@ -427,3 +427,27 @@ proptest! {
         prop_assert_eq!(created.as_str(), format!("did:jwk:{}", base64url(canonical)));
     }
 }
+
+#[tokio::test]
+async fn numbers_take_their_canonical_form() {
+    // JCS writes the number `46285.0` as `46285` (RFC 8785 §3.2.2.3), which reads back as an
+    // integer. The produced document is the one the DID resolves to, with the canonical number.
+    let jwk: Jwk = serde_json::from_str(
+        r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo","ext":46285.0}"#,
+    )
+    .unwrap();
+    let did = DidJwk::did(&jwk).unwrap();
+    assert_eq!(
+        did.as_str(),
+        format!(
+            "did:jwk:{}",
+            base64url(
+                r#"{"crv":"Ed25519","ext":46285,"kty":"OKP","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#
+            )
+        )
+    );
+    let produced = DidJwk.produce(&[jwk], ()).await.unwrap();
+    assert_eq!(produced, DidJwk::document(&did).unwrap());
+    let key = serde_json::to_value(produced.verification_method[0].public_key_jwk()).unwrap();
+    assert_eq!(key["ext"], json!(46285));
+}

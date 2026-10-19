@@ -199,13 +199,14 @@ impl DidProducer for DidJwk {
             .with_fixed_fragment(Self::FRAGMENT)
     }
 
-    /// The document of [`DidJwk::did`] for the one key in `keys`.
+    /// The document [`DidJwk::did`] of the one key in `keys` resolves to, which holds the key in
+    /// its canonical form.
     async fn produce(&self, keys: &[Jwk], _: ()) -> Result<DidDocument, ProduceError> {
         let jwk = super::single_key(keys)?;
-        let did = Self::did(jwk).map_err(|error| ProduceError::UnsupportedKey {
-            index: 0,
-            reason: error.to_string(),
-        })?;
-        Ok(build(&did, jwk.public())?)
+        let unsupported = |reason: String| ProduceError::UnsupportedKey { index: 0, reason };
+        let did = Self::did(jwk).map_err(|error| unsupported(error.to_string()))?;
+        // The document of the key as the DID encodes it, so that it is the document the DID
+        // resolves to: JCS writes `1.0` as `1`, which reads back as an integer.
+        Self::document(&did).map_err(|error| unsupported(error.to_string()))
     }
 }
