@@ -46,13 +46,13 @@ utoipa = ["dep:utoipa"]
 
 [dependencies]
 async-trait = "0.1"
-base64 = { version = "0.22", default-features = false, features = ["std"] }
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 bs58 = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["now", "serde", "std"], optional = true }
 ed25519-dalek = { version = "3.0", features = ["pkcs8"] }
 getrandom = { version = "0.4", features = ["std"], optional = true }
 indexmap = { version = "2.0", features = ["serde"] }
-jsonwebtoken = { version = "10.3", default-features = false }
+jsonwebtoken = { version = "11.1", default-features = false }
 k256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
 miniz_oxide = { version = "0.9", optional = true }
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
@@ -70,7 +70,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 boon = "0.6"
-jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 proptest = "1.0"
 tempfile = "3.0"
 tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread"] }
