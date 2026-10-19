@@ -79,7 +79,7 @@ boon = "0.6"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 proptest = "1.0"
 tempfile = "3.0"
-tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.0", features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
 wiremock = "0.6"
 
 [workspace]

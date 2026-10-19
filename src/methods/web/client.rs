@@ -284,11 +284,13 @@ mod local {
             if self.local == LocalNetwork::NONE || !matches!(url.scheme(), "https" | "http") {
                 return Ok(None);
             }
+            // An `http` or `https` URL always has a host and a port.
             let port = url.port_or_known_default().unwrap_or(443);
-            let (name, addresses): (Option<&str>, Vec<IpAddr>) = match url.host() {
-                Some(Host::Ipv4(ip)) => (None, vec![IpAddr::V4(ip)]),
-                Some(Host::Ipv6(ip)) => (None, vec![IpAddr::V6(ip)]),
-                Some(Host::Domain(name)) => {
+            let host = url.host().expect("an `http` or `https` URL has a host");
+            let (name, addresses): (Option<&str>, Vec<IpAddr>) = match host {
+                Host::Ipv4(ip) => (None, vec![IpAddr::V4(ip)]),
+                Host::Ipv6(ip) => (None, vec![IpAddr::V6(ip)]),
+                Host::Domain(name) => {
                     let addresses = tokio::net::lookup_host((name, port))
                         .await
                         .map_err(HttpError::new)?
@@ -296,7 +298,6 @@ mod local {
                         .collect();
                     (Some(name), addresses)
                 }
-                None => return Ok(None),
             };
             if !self.local.all_local(&addresses) {
                 return Ok(None);
@@ -304,13 +305,14 @@ mod local {
             debug_assert!(addresses.iter().all(|ip| !is_public(*ip)));
             let mut target = url.clone();
             if url.scheme() == "https" {
-                // The port the URL names, or the `https` default it implies.
+                // The port the URL names, or the `https` default it implies. Both changes are
+                // valid for any URL with a host.
                 target
                     .set_port(Some(port))
-                    .and_then(|()| target.set_scheme("http"))
-                    .map_err(|()| {
-                        HttpError::msg(format!("`{url}` cannot be fetched over `http`"))
-                    })?;
+                    .expect("a URL with a host takes a port");
+                target
+                    .set_scheme("http")
+                    .expect("an `https` URL can be `http`");
             }
             let mut builder = reqwest::Client::builder()
                 .no_proxy()

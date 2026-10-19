@@ -760,6 +760,35 @@ mod local_network {
     }
 
     #[tokio::test]
+    async fn a_streamed_body_is_limited_too() {
+        // A body without `Content-Length`, sent in chunks, is counted as it arrives.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
+                      5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+        let error = loopback()
+            .with_max_body(6)
+            .get(&url(&format!(
+                "https://127.0.0.1:{port}/.well-known/did.json"
+            )))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn redirects_are_not_followed() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
