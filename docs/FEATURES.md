@@ -63,6 +63,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `did:key`: Ed25519, P-256, secp256k1, RSA and X25519 multicodec keys, base58btc multibase              |   ✅   | `did-key`     | [did:key][did-key], [multicodec][multicodec], [multibase][multibase] | [#10](https://github.com/impierce/identity-kit/issues/10) |
 | `did:jwk`: base64url JWK as method-specific id, created in JCS canonical form                          |   ✅   | `did-jwk`     | [did:jwk][did-jwk], [RFC 8785][rfc8785]                            | [#10](https://github.com/impierce/identity-kit/issues/10), [#30](https://github.com/impierce/identity-kit/issues/30) |
 | `did:web`: origin mapping, resolver over an injected `HttpClient`, hardened default client, producer   |   ✅   | `did-web`, `reqwest` | [did:web][did-web]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
+| `ReqwestClient::builder` for development and tests: `dangerous_allow_loopback`, `dangerous_allow_private_network`; plain `http` only when every address is local, link-local always refused | ✅ | `reqwest-local-network` | [did:web][did-web] | [#37](https://github.com/impierce/identity-kit/issues/37) |
 
 ## Upper layer
 

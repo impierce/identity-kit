@@ -35,6 +35,10 @@ did-jwk = []
 did-web = ["dep:url"]
 # The hardened default `HttpClient` for `did:web`, via `reqwest` with `rustls` and `ring`.
 reqwest = ["did-web", "dep:reqwest", "dep:rustls", "dep:tokio"]
+# Development and tests only: `ReqwestClient::builder` with opt-ins that let the client reach
+# loopback and private addresses over plain `http`. Never in `default`; enable it under
+# `[dev-dependencies]` so a release build does not contain it.
+reqwest-local-network = ["reqwest"]
 # Verifiable credentials and presentations as JWTs (`vc`), via `chrono` for timestamps.
 vc = ["dep:chrono"]
 # SD-JWT (RFC 9901) and SD-JWT VC (`sd_jwt_vc`): `getrandom` for salts, `miniz_oxide` for status lists.
@@ -76,6 +80,7 @@ jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_c
 proptest = "1.0"
 tempfile = "3.0"
 tokio = { version = "1.0", features = ["macros", "rt", "rt-multi-thread"] }
+wiremock = "0.6"
 
 [workspace]
 members = ["xtask"]
