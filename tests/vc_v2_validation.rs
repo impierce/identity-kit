@@ -501,6 +501,28 @@ async fn presentation_errors() {
         ValidationError::Credential(_)
     ));
 
+    // The first `@context` must be the VCDM 2.0 base context, and `type` must include
+    // `VerifiablePresentation`.
+    let mut v1_context = claims(&presentation);
+    v1_context.additional.insert(
+        "@context".to_owned(),
+        json!(["https://www.w3.org/2018/credentials/v1"]),
+    );
+    let mut other_type = claims(&presentation);
+    other_type
+        .additional
+        .insert("type".to_owned(), json!(["VerifiableCredential"]));
+    for payload in [v1_context, other_type] {
+        assert!(matches!(
+            check(present(&payload, typ, None).await, options()).await,
+            ValidationError::Credential(CredentialError::InvalidClaim {
+                claim: "@context",
+                ..
+            })
+        ));
+        assert!(decode_presentation_v2(&present(&payload, typ, None).await).is_err());
+    }
+
     // A holder is required.
     let mut anonymous = presentation.clone();
     anonymous.holder = None;
