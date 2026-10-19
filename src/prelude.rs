@@ -66,8 +66,9 @@ pub mod credentials {
     #[cfg(feature = "domain-linkage")]
     #[cfg_attr(docsrs, doc(cfg(feature = "domain-linkage")))]
     pub use crate::domain_linkage::{
-        DomainLinkageConfiguration, DomainLinkageCredentialBuilder, DomainLinkageError,
-        DomainLinkageReport, DomainLinkageValidator, LinkedDid,
+        DomainLinkageClient, DomainLinkageConfiguration, DomainLinkageCredentialBuilder,
+        DomainLinkageError, DomainLinkageReport, DomainLinkageValidator, LinkedDid,
+        LinkedDomainReport, LinkedDomainsService,
     };
     #[cfg(feature = "linked-vp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "linked-vp")))]

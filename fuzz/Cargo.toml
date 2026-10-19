@@ -65,6 +65,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "domain_linkage"
+path = "fuzz_targets/domain_linkage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "sd_jwt"
 path = "fuzz_targets/sd_jwt.rs"
 test = false

@@ -1,18 +1,26 @@
 //! DIF Well Known DID Configuration vectors: the example DID configuration resource with its
 //! Linked Data Proof and JSON Web Token entries, the latter signed by a `did:key` and so
-//! verifiable here; then a configuration issued and validated over the RFC 8037 `did:key`.
+//! verifiable here, and the example DID document with its `LinkedDomains` services; then a
+//! configuration issued and validated over the RFC 8037 `did:key`, and fetched over a stub
+//! `HttpClient` for an origin and for every origin of a `did:web` document.
 #![cfg(all(feature = "domain-linkage", feature = "did-key"))]
 
 mod common;
 
+use std::collections::HashMap;
+use std::error::Error as _;
+use std::sync::{Arc, Mutex};
+
 use chrono::{DateTime, TimeZone as _, Utc};
-use identity_kit::did::{Did, DidUrl, Uri};
+use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri};
 use identity_kit::domain_linkage::{
-    CONTEXT, CREDENTIAL_TYPE, DomainLinkageConfiguration, DomainLinkageCredentialBuilder,
-    DomainLinkageError, DomainLinkageValidator, LinkedDid, configuration_url, normalize_origin,
+    CONTEXT, CREDENTIAL_TYPE, DomainLinkageClient, DomainLinkageConfiguration,
+    DomainLinkageCredentialBuilder, DomainLinkageError, DomainLinkageValidator, LinkedDid,
+    SERVICE_TYPE, configuration_url, fetch_configuration, normalize_origin, service, services,
 };
 use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
+use identity_kit::methods::web::{DidWeb, HttpClient, HttpError, HttpResponse};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, TimeOptions, ValidationError, decode_credential,
@@ -667,5 +675,477 @@ async fn format_rules() {
         Err(DomainLinkageError::Validation(ValidationError::Signature(
             _
         )))
+    ));
+}
+
+// ---------------------------------------------------------------------------------------------
+// `LinkedDomains` services
+// ---------------------------------------------------------------------------------------------
+
+fn did_document() -> DidDocument {
+    serde_json::from_str(include_str!("vectors/did_configuration/did_document.json")).unwrap()
+}
+
+fn url(s: &str) -> Url {
+    Url::parse(s).unwrap()
+}
+
+/// The origins of each `LinkedDomains` service of `document`, as strings.
+fn origins_of(document: &DidDocument) -> Vec<Result<(String, Vec<String>), DomainLinkageError>> {
+    services(document)
+        .map(|linked| {
+            linked.map(|linked| {
+                let origins = linked
+                    .origins
+                    .iter()
+                    .map(|origin| origin.origin().ascii_serialization())
+                    .collect();
+                (linked.id().to_string(), origins)
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn example_did_document_services() {
+    let document = did_document();
+    let found: Vec<_> = origins_of(&document)
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                "did:example:123#foo".to_owned(),
+                vec![
+                    "https://foo.example.com".to_owned(),
+                    "https://identity.foundation".to_owned()
+                ]
+            ),
+            (
+                "did:example:123#bar".to_owned(),
+                vec!["https://bar.example.com".to_owned()]
+            ),
+        ]
+    );
+    // `service` writes the two forms the example uses.
+    for linked in services(&document) {
+        let linked = linked.unwrap();
+        let rebuilt = service(linked.id().clone(), linked.origins.clone()).unwrap();
+        assert_eq!(&rebuilt, linked.service);
+    }
+}
+
+#[test]
+fn service_endpoint_forms() {
+    let document: DidDocument = serde_json::from_value(json!({
+      "id": "did:example:123",
+      "service": [
+        { "id": "did:example:123#set", "type": "LinkedDomains",
+          "serviceEndpoint": ["https://Example.com/", "https://example.org:8443/path"] },
+        { "id": "did:example:123#host", "type": ["LinkedDomains", "Other"],
+          "serviceEndpoint": { "origins": ["identity.foundation"], "other": true } },
+        { "id": "did:example:123#vp", "type": "LinkedVerifiablePresentation",
+          "serviceEndpoint": "https://example.com/vp.jwt" },
+        { "id": "did:example:123#map", "type": "LinkedDomains",
+          "serviceEndpoint": { "origin": "https://example.com" } },
+        { "id": "did:example:123#empty", "type": "LinkedDomains",
+          "serviceEndpoint": { "origins": [] } },
+        { "id": "did:example:123#number", "type": "LinkedDomains",
+          "serviceEndpoint": { "origins": ["https://example.com", 42] } },
+        { "id": "did:example:123#mailto", "type": "LinkedDomains",
+          "serviceEndpoint": "mailto:someone@example.com" }
+      ]
+    }))
+    .unwrap();
+    let found = origins_of(&document);
+    assert_eq!(found.len(), 6, "the other service type is ignored");
+    assert_eq!(
+        found[0].as_ref().unwrap(),
+        &(
+            "did:example:123#set".to_owned(),
+            vec![
+                "https://example.com".to_owned(),
+                "https://example.org:8443".to_owned()
+            ]
+        )
+    );
+    assert_eq!(
+        found[1].as_ref().unwrap(),
+        &(
+            "did:example:123#host".to_owned(),
+            vec!["https://identity.foundation".to_owned()]
+        )
+    );
+    for (result, id) in found[2..]
+        .iter()
+        .zip(["#map", "#empty", "#number", "#mailto"])
+    {
+        assert!(
+            matches!(result, Err(DomainLinkageError::InvalidService { id: found, .. }) if found.as_str().ends_with(id)),
+            "{id}: {result:?}"
+        );
+    }
+}
+
+#[test]
+fn service_builder() {
+    let id = DidUrl::parse("did:example:123#domains").unwrap();
+    let one = service(id.clone(), [url("https://Example.com/some/path")]).unwrap();
+    assert!(one.has_type(SERVICE_TYPE));
+    assert_eq!(
+        serde_json::to_value(&one.service_endpoint).unwrap(),
+        json!("https://example.com")
+    );
+    let two = service(
+        id.clone(),
+        [url("https://example.com"), url("https://example.org")],
+    )
+    .unwrap();
+    assert!(matches!(two.service_endpoint, ServiceEndpoint::Map(_)));
+    assert!(matches!(
+        service(id.clone(), []),
+        Err(DomainLinkageError::InvalidService { .. })
+    ));
+    assert!(matches!(
+        service(id, [url("mailto:someone@example.com")]),
+        Err(DomainLinkageError::InvalidService { .. })
+    ));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fetching
+// ---------------------------------------------------------------------------------------------
+
+/// A web serving fixed responses, recording what was fetched; `404` for anything else.
+#[derive(Default)]
+struct Web {
+    pages: HashMap<String, Result<(u16, Vec<u8>), String>>,
+    fetched: Mutex<Vec<String>>,
+}
+
+impl Web {
+    fn serving(mut self, url: &str, status: u16, body: impl Into<Vec<u8>>) -> Self {
+        self.pages.insert(url.to_owned(), Ok((status, body.into())));
+        self
+    }
+
+    fn failing(mut self, url: &str, message: &str) -> Self {
+        self.pages.insert(url.to_owned(), Err(message.to_owned()));
+        self
+    }
+
+    fn fetched(&self) -> Vec<String> {
+        self.fetched.lock().unwrap().clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl HttpClient for Web {
+    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
+        self.fetched.lock().unwrap().push(url.to_string());
+        match self.pages.get(url.as_str()) {
+            Some(Ok((status, body))) => Ok(HttpResponse::new(*status, body.clone())),
+            Some(Err(message)) => Err(HttpError::msg(message)),
+            None => Ok(HttpResponse::new(404, Vec::new())),
+        }
+    }
+}
+
+const EXAMPLE_RESOURCE_URL: &str = "https://identity.foundation/.well-known/did-configuration.json";
+
+#[tokio::test]
+async fn example_resource_fetched_and_validated() {
+    let web = Web::default().serving(EXAMPLE_RESOURCE_URL, 200, resource());
+    let configuration = fetch_configuration(&web, &origin()).await.unwrap();
+    assert_eq!(
+        configuration,
+        serde_json::from_str::<DomainLinkageConfiguration>(resource()).unwrap()
+    );
+    // Any URL of the origin names the same resource.
+    fetch_configuration(&web, &url("https://identity.foundation/about?x#y"))
+        .await
+        .unwrap();
+    assert_eq!(web.fetched(), [EXAMPLE_RESOURCE_URL, EXAMPLE_RESOURCE_URL]);
+
+    let client = DomainLinkageClient::new(web, validator());
+    assert_eq!(client.http().fetched().len(), 2);
+    assert!(!client.validator().credential_validator().has_status_check());
+    let report = client.validate_origin(&origin(), &at(now())).await.unwrap();
+    assert_eq!(report.dids().map(Did::as_str).collect::<Vec<_>>(), [DID]);
+    assert!(
+        report.failed.is_empty(),
+        "the Linked Data Proof entry is data"
+    );
+    let decoded = client
+        .validate_linkage(&Did::parse(DID).unwrap(), &origin(), &at(now()))
+        .await
+        .unwrap();
+    assert_eq!(decoded.credential.issuer.id().as_str(), DID);
+    // The example credential expired on 2025-12-04.
+    let late = at(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+    let error = client.validate_origin(&origin(), &late).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with("no domain linkage credential validated: 1: ")
+    );
+    assert!(matches!(
+        error,
+        DomainLinkageError::NoValidCredential(errors)
+            if matches!(errors.get(&1), Some(DomainLinkageError::Validation(ValidationError::Expired { .. })))
+    ));
+}
+
+#[tokio::test]
+async fn fetch_outcomes() {
+    let resource_of = |host: &str| format!("https://{host}/.well-known/did-configuration.json");
+    let other_context = json!({ "@context": "https://example.com/other", "linked_dids": [] });
+    let web = Web::default()
+        .serving(&resource_of("gone.example"), 410, "gone")
+        .serving(&resource_of("broken.example"), 500, "oops")
+        .serving(&resource_of("moved.example"), 301, Vec::new())
+        .failing(&resource_of("down.example"), "connection refused")
+        .serving(&resource_of("html.example"), 200, "<html></html>")
+        .serving(&resource_of("binary.example"), 200, [0xff, 0xfe])
+        .serving(
+            &resource_of("other.example"),
+            200,
+            other_context.to_string(),
+        )
+        .serving(&resource_of("empty.example"), 200, CONTEXT_ONLY);
+
+    // Not published: `404` (here: anything not served) and `410`.
+    for (host, expected) in [("missing.example", 404), ("gone.example", 410)] {
+        let error = fetch(&web, host).await.unwrap_err();
+        assert!(error.is_not_published(), "{host}");
+        assert!(
+            matches!(&error, DomainLinkageError::NotPublished { url, status } if *status == expected && url.as_str() == resource_of(host))
+        );
+    }
+
+    // Other statuses, and no response at all, are failures with their cause.
+    for (host, expected) in [("broken.example", 500), ("moved.example", 301)] {
+        let error = fetch(&web, host).await.unwrap_err();
+        assert!(!error.is_not_published());
+        assert!(
+            matches!(error, DomainLinkageError::HttpStatus { status, .. } if status == expected),
+            "{host}"
+        );
+    }
+    let error = fetch(&web, "down.example").await.unwrap_err();
+    assert!(matches!(error, DomainLinkageError::Http { .. }));
+    assert_eq!(
+        error.source().unwrap().to_string(),
+        "connection refused",
+        "the `HttpError` is the source"
+    );
+
+    // A body that is not a configuration keeps the JSON error as its source.
+    for host in ["html.example", "binary.example", "other.example"] {
+        let error = fetch(&web, host).await.unwrap_err();
+        assert!(
+            matches!(&error, DomainLinkageError::InvalidConfiguration { url, .. } if url.as_str() == resource_of(host)),
+            "{host}: {error:?}"
+        );
+        assert!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<serde_json::Error>()
+                .is_some()
+        );
+    }
+    assert!(
+        fetch(&web, "other.example")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("https://example.com/other")
+    );
+
+    // A configuration without credentials fetches, and validates to nothing.
+    let empty = fetch(&web, "empty.example").await.unwrap();
+    assert!(empty.linked_dids.is_empty());
+
+    // Only HTTPS origins are fetched; nothing reaches the client for the others.
+    let before = web.fetched().len();
+    assert!(matches!(
+        fetch_configuration(&web, &url("http://identity.foundation")).await,
+        Err(DomainLinkageError::InsecureOrigin(origin)) if origin == "http://identity.foundation"
+    ));
+    assert!(matches!(
+        fetch_configuration(&web, &url("data:text/plain,x")).await,
+        Err(DomainLinkageError::InvalidOrigin(_))
+    ));
+    assert_eq!(web.fetched().len(), before);
+
+    // The client reports the same outcomes from its validating calls.
+    let client = DomainLinkageClient::new(web, validator());
+    assert!(
+        client
+            .validate_origin(&url("https://gone.example"), &at(now()))
+            .await
+            .unwrap_err()
+            .is_not_published()
+    );
+    assert!(matches!(
+        client
+            .validate_linkage(
+                &Did::parse(DID).unwrap(),
+                &url("https://broken.example"),
+                &at(now())
+            )
+            .await,
+        Err(DomainLinkageError::HttpStatus { status: 500, .. })
+    ));
+    assert!(matches!(
+        client
+            .validate_origin(&url("https://empty.example"), &at(now()))
+            .await,
+        Err(DomainLinkageError::NoValidCredential(errors)) if errors.is_empty()
+    ));
+}
+
+/// The configuration of `https://{host}`.
+async fn fetch(web: &Web, host: &str) -> Result<DomainLinkageConfiguration, DomainLinkageError> {
+    fetch_configuration(web, &url(&format!("https://{host}"))).await
+}
+
+const CONTEXT_ONLY: &str = r#"{"@context":"https://identity.foundation/.well-known/did-configuration/v1","linked_dids":[]}"#;
+
+// ---------------------------------------------------------------------------------------------
+// A `did:web` and its origins
+// ---------------------------------------------------------------------------------------------
+
+const WEB_DID: &str = "did:web:example.com";
+
+/// The document of `did:web:example.com`: the RFC 8037 key under `assertionMethod`, its own
+/// origin, one that publishes nothing and one that does not link it, then an invalid entry.
+fn web_document(controller: &Controller) -> Value {
+    json!({
+      "@context": ["https://www.w3.org/ns/did/v1", CONTEXT],
+      "id": WEB_DID,
+      "verificationMethod": [{
+        "id": "did:web:example.com#key-1",
+        "type": "JsonWebKey2020",
+        "controller": WEB_DID,
+        "publicKeyJwk": controller.signer.public_jwk()
+      }],
+      "assertionMethod": ["did:web:example.com#key-1"],
+      "service": [
+        { "id": "did:web:example.com#domains", "type": "LinkedDomains",
+          "serviceEndpoint": { "origins": ["https://example.com", "https://example.org"] } },
+        { "id": "did:web:example.com#identity", "type": "LinkedDomains",
+          "serviceEndpoint": "https://identity.foundation" },
+        { "id": "did:web:example.com#broken", "type": "LinkedDomains",
+          "serviceEndpoint": { "origin": "https://example.com" } }
+      ]
+    })
+}
+
+#[tokio::test]
+async fn origins_of_a_did_web_are_reported_one_by_one() {
+    let controller = controller();
+    let did = Did::parse(WEB_DID).unwrap();
+    let kid = DidUrl::parse("did:web:example.com#key-1").unwrap();
+    let credential = DomainLinkageCredentialBuilder::new(
+        did.clone(),
+        &example_com(),
+        now() - chrono::TimeDelta::days(1),
+        now() + chrono::TimeDelta::days(365),
+    )
+    .unwrap()
+    .sign(&kid, &controller.signer)
+    .await
+    .unwrap();
+    let configuration = DomainLinkageConfiguration::new().with_credential(credential);
+    let web = Arc::new(
+        Web::default()
+            .serving(
+                "https://example.com/.well-known/did.json",
+                200,
+                web_document(&controller).to_string(),
+            )
+            .serving(
+                "https://example.com/.well-known/did-configuration.json",
+                200,
+                configuration.to_string(),
+            )
+            .serving(EXAMPLE_RESOURCE_URL, 200, resource()),
+    );
+    let resolver = Resolver::builder()
+        .with(DidKey::default())
+        .with(DidWeb::new(Arc::clone(&web)))
+        .build();
+    let client = DomainLinkageClient::new(
+        Arc::clone(&web),
+        DomainLinkageValidator::new(resolver, DefaultVerifier),
+    );
+
+    let reports = client.validate_did(&did, &at(now())).await.unwrap();
+    let summary: Vec<_> = reports
+        .iter()
+        .map(|report| {
+            (
+                report.service.fragment().unwrap_or_default().to_owned(),
+                report
+                    .origin
+                    .as_ref()
+                    .map(|origin| origin.origin().ascii_serialization()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("domains".to_owned(), Some("https://example.com".to_owned())),
+            ("domains".to_owned(), Some("https://example.org".to_owned())),
+            (
+                "identity".to_owned(),
+                Some("https://identity.foundation".to_owned())
+            ),
+            ("broken".to_owned(), None),
+        ]
+    );
+    let decoded = reports[0].result.as_ref().unwrap();
+    assert_eq!(decoded.credential.issuer.id().as_str(), WEB_DID);
+    assert!(reports[1].result.as_ref().unwrap_err().is_not_published());
+    assert!(matches!(
+        &reports[2].result,
+        Err(DomainLinkageError::NoCredentialFor(found)) if *found == did
+    ));
+    assert!(matches!(
+        &reports[3].result,
+        Err(DomainLinkageError::InvalidService { .. })
+    ));
+    // The DID document, then each origin's resource, the DID document again for the key of the
+    // one credential the DID issued; the `did:key` of the example resource is never resolved,
+    // as its entry is not the DID's.
+    assert_eq!(
+        web.fetched(),
+        [
+            "https://example.com/.well-known/did.json",
+            "https://example.com/.well-known/did-configuration.json",
+            "https://example.com/.well-known/did.json",
+            "https://example.org/.well-known/did-configuration.json",
+            EXAMPLE_RESOURCE_URL,
+        ]
+    );
+
+    // A DID document read elsewhere gives the same reports without resolving.
+    let document: DidDocument = serde_json::from_value(web_document(&controller)).unwrap();
+    assert_eq!(
+        client.validate_document(&document, &at(now())).await.len(),
+        4
+    );
+
+    // A DID that does not resolve is an error of its own.
+    assert!(matches!(
+        client
+            .validate_did(&Did::parse("did:web:example.net").unwrap(), &at(now()))
+            .await,
+        Err(DomainLinkageError::Resolution(error)) if *error.kind() == ResolutionErrorKind::NotFound
     ));
 }
