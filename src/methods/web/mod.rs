@@ -21,8 +21,8 @@ use std::sync::Arc;
 use url::{Host, Url};
 
 use crate::did::{
-    Context, Did, DidDocument, MethodType, ResolutionError, ResolutionOptions, ResolutionResult,
-    VerificationMaterial, VerificationMethod, VerificationRelationship,
+    Context, Did, DidDocument, MethodType, ResolutionError, ResolutionErrorKind, ResolutionOptions,
+    ResolutionResult, VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 use crate::jose::Jwk;
 use crate::resolver::{DidProducer, DidResolver, Hosting, MethodCapabilities, ProduceError};
@@ -473,34 +473,56 @@ impl<C: HttpClient> DidResolver for DidWeb<C> {
     ///
     /// # Errors
     ///
-    /// - [`ResolutionError::InvalidDid`] when `did` has no document URL.
-    /// - [`ResolutionError::NotFound`] on a `404` or `410` response.
-    /// - [`ResolutionError::InternalError`] when the client fails or returns any other
-    ///   non-success status.
-    /// - [`ResolutionError::InvalidDidDocument`] when the body is not a DID document, or is
-    ///   the document of another DID.
-    /// - [`ResolutionError::RepresentationNotSupported`] for an `accept` that is not JSON.
+    /// A [`ResolutionError`] whose kind is:
+    ///
+    /// - [`InvalidDid`](ResolutionErrorKind::InvalidDid) when `did` has no document URL, caused
+    ///   by the [`WebError`].
+    /// - [`NotFound`](ResolutionErrorKind::NotFound) on a `404` or `410` response.
+    /// - [`InternalError`](ResolutionErrorKind::InternalError) when the client fails, caused by
+    ///   its [`HttpError`], or when it returns any other non-success status, which the detail
+    ///   names.
+    /// - [`InvalidDidDocument`](ResolutionErrorKind::InvalidDidDocument) when the body is not a
+    ///   DID document, caused by the [`serde_json::Error`], or is the document of another DID,
+    ///   which the detail names.
+    /// - [`RepresentationNotSupported`](ResolutionErrorKind::RepresentationNotSupported) for an
+    ///   `accept` that is not JSON.
     async fn resolve(
         &self,
         did: &Did,
         options: &ResolutionOptions,
     ) -> Result<ResolutionResult, ResolutionError> {
         check_accept(options)?;
-        let url = document_url(did).map_err(|_| ResolutionError::InvalidDid)?;
-        let response = self
-            .client
-            .get(&url)
-            .await
-            .map_err(|_| ResolutionError::InternalError)?;
-        match response.status {
-            200..=299 => {}
-            404 | 410 => return Err(ResolutionError::NotFound),
-            _ => return Err(ResolutionError::InternalError),
+        let url = document_url(did).map_err(|error| {
+            ResolutionError::new(ResolutionErrorKind::InvalidDid).with_source(error)
+        })?;
+        let response = self.client.get(&url).await.map_err(|error| {
+            ResolutionError::new(ResolutionErrorKind::InternalError)
+                .with_detail(format!("fetching `{url}` failed"))
+                .with_source(error)
+        })?;
+        let kind = match response.status {
+            200..=299 => None,
+            404 | 410 => Some(ResolutionErrorKind::NotFound),
+            _ => Some(ResolutionErrorKind::InternalError),
+        };
+        if let Some(kind) = kind {
+            return Err(ResolutionError::new(kind).with_detail(format!(
+                "`{url}` responded with HTTP status {}",
+                response.status
+            )));
         }
-        let document: DidDocument = serde_json::from_slice(&response.body)
-            .map_err(|_| ResolutionError::InvalidDidDocument)?;
+        let document: DidDocument = serde_json::from_slice(&response.body).map_err(|error| {
+            ResolutionError::new(ResolutionErrorKind::InvalidDidDocument)
+                .with_detail(format!("the body of `{url}` is not a DID document"))
+                .with_source(error)
+        })?;
         if document.id != *did {
-            return Err(ResolutionError::InvalidDidDocument);
+            return Err(
+                ResolutionError::new(ResolutionErrorKind::InvalidDidDocument).with_detail(format!(
+                    "`{url}` holds the document of `{}`, not `{did}`",
+                    document.id
+                )),
+            );
         }
         Ok(ResolutionResult::new(document))
     }

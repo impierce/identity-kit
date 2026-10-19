@@ -20,8 +20,8 @@ use serde_json::Value;
 
 use crate::did::{
     Context, DEFAULT_MAX_LEN, Did, DidDocument, DocumentError, MethodType, ResolutionError,
-    ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
-    VerificationRelationship,
+    ResolutionErrorKind, ResolutionOptions, ResolutionResult, VerificationMaterial,
+    VerificationMethod, VerificationRelationship,
 };
 use crate::jose::{Jwk, JwkError};
 use crate::resolver::{DidProducer, DidResolver, Hosting, MethodCapabilities, ProduceError};
@@ -167,37 +167,57 @@ impl DidKey {
     ///
     /// # Errors
     ///
-    /// - [`ResolutionError::MethodNotSupported`] when `did` is not a `did:key`.
-    /// - [`ResolutionError::InvalidDid`] when the method-specific id is not a Multikey string
-    ///   (optionally preceded by a positive integer version) with a known multicodec header, or
-    ///   the DID is so long that the verification method id `did#multikey` would not fit
-    ///   [`DEFAULT_MAX_LEN`] bytes.
-    /// - [`ResolutionError::Other`] with the method's own error names otherwise:
+    /// A [`ResolutionError`] whose kind is:
+    ///
+    /// - [`MethodNotSupported`](ResolutionErrorKind::MethodNotSupported) when `did` is not a
+    ///   `did:key`.
+    /// - [`InvalidDid`](ResolutionErrorKind::InvalidDid) when the method-specific id is not a
+    ///   Multikey string (optionally preceded by a positive integer version) with a known
+    ///   multicodec header, or the DID is so long that the verification method id
+    ///   `did#multikey` would not fit [`DEFAULT_MAX_LEN`] bytes.
+    /// - [`Other`](ResolutionErrorKind::Other) with the method's own error names otherwise:
     ///   `unsupportedPublicKeyType` for a key type this crate cannot read,
     ///   `invalidPublicKeyLength` when the raw key has the wrong length, and `invalidPublicKey`
     ///   when it is not a valid key.
+    ///
+    /// A failure to decode the Multikey string has the [`JwkError`] as its source.
     pub fn document(&self, did: &Did) -> Result<DidDocument, ResolutionError> {
         if did.method() != Self::METHOD {
-            return Err(ResolutionError::MethodNotSupported);
+            return Err(
+                ResolutionError::new(ResolutionErrorKind::MethodNotSupported)
+                    .with_detail(format!("`{did}` is not a did:key")),
+            );
         }
-        let multikey = multikey_of(did).ok_or(ResolutionError::InvalidDid)?;
-        let jwk = Jwk::from_multikey(multikey).map_err(|error| match error {
-            JwkError::InvalidMultikey(_) => ResolutionError::InvalidDid,
-            JwkError::UnsupportedMulticodec(_) | JwkError::FeatureDisabled { .. } => {
-                ResolutionError::Other("unsupportedPublicKeyType".to_owned())
-            }
-            JwkError::InvalidKeyLength { .. } => {
-                ResolutionError::Other("invalidPublicKeyLength".to_owned())
-            }
-            _ => ResolutionError::Other("invalidPublicKey".to_owned()),
+        let multikey = multikey_of(did).ok_or_else(|| {
+            ResolutionError::new(ResolutionErrorKind::InvalidDid).with_detail(
+                "the method-specific id is not a Multikey string after an optional version",
+            )
+        })?;
+        let jwk = Jwk::from_multikey(multikey).map_err(|error| {
+            let kind = match &error {
+                JwkError::InvalidMultikey(_) => ResolutionErrorKind::InvalidDid,
+                JwkError::UnsupportedMulticodec(_) | JwkError::FeatureDisabled { .. } => {
+                    ResolutionErrorKind::Other("unsupportedPublicKeyType".to_owned())
+                }
+                JwkError::InvalidKeyLength { .. } => {
+                    ResolutionErrorKind::Other("invalidPublicKeyLength".to_owned())
+                }
+                _ => ResolutionErrorKind::Other("invalidPublicKey".to_owned()),
+            };
+            ResolutionError::new(kind).with_source(error)
         })?;
         // The verification method id is `did#multikey`, which must fit a DID URL: a long
         // version prefix can push it past the limit.
         if did.as_str().len() + 1 + multikey.len() > DEFAULT_MAX_LEN {
-            return Err(ResolutionError::InvalidDid);
+            return Err(
+                ResolutionError::new(ResolutionErrorKind::InvalidDid).with_detail(format!(
+                    "the verification method id `did#multikey` would exceed {DEFAULT_MAX_LEN} bytes"
+                )),
+            );
         }
-        self.build(did, multikey, jwk)
-            .map_err(|_| ResolutionError::InvalidDidDocument)
+        self.build(did, multikey, jwk).map_err(|error| {
+            ResolutionError::new(ResolutionErrorKind::InvalidDidDocument).with_source(error)
+        })
     }
 
     /// The document for `did`, whose Multikey string is `multikey` and decodes to `jwk`.
@@ -251,16 +271,22 @@ impl DidKey {
                 Some("Multikey") => KeyFormat::Multikey,
                 Some("JsonWebKey") => KeyFormat::JsonWebKey,
                 _ => {
-                    return Err(ResolutionError::Other(
+                    return Err(ResolutionError::new(ResolutionErrorKind::Other(
                         "unsupportedPublicKeyType".to_owned(),
-                    ));
+                    ))
+                    .with_detail(format!("`publicKeyFormat` {format} is not supported")));
                 }
             };
         }
         if let Some(derive) = options.properties.get("enableEncryptionKeyDerivation") {
             method.key_agreement = match derive {
                 Value::Bool(derive) => *derive,
-                _ => return Err(ResolutionError::Other("invalidOptions".to_owned())),
+                _ => {
+                    return Err(ResolutionError::new(ResolutionErrorKind::Other(
+                        "invalidOptions".to_owned(),
+                    ))
+                    .with_detail("`enableEncryptionKeyDerivation` must be a boolean"));
+                }
             };
         }
         Ok(method)

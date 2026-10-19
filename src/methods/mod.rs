@@ -46,7 +46,8 @@ pub use key::DidKey;
 pub use web::DidWeb;
 
 use crate::did::{
-    APPLICATION_DID_JSON, APPLICATION_DID_LD_JSON, ResolutionError, ResolutionOptions,
+    APPLICATION_DID_JSON, APPLICATION_DID_LD_JSON, ResolutionError, ResolutionErrorKind,
+    ResolutionOptions,
 };
 #[cfg(any(feature = "did-key", feature = "did-jwk"))]
 use crate::jose::Jwk;
@@ -96,6 +97,9 @@ fn check_accept(options: &ResolutionOptions) -> Result<(), ResolutionError> {
     match options.accept.as_deref() {
         None => Ok(()),
         Some(accept) if JSON_MEDIA_TYPES.contains(&accept) => Ok(()),
-        Some(_) => Err(ResolutionError::RepresentationNotSupported),
+        Some(accept) => Err(
+            ResolutionError::new(ResolutionErrorKind::RepresentationNotSupported)
+                .with_detail(format!("`{accept}` is not a JSON representation")),
+        ),
     }
 }

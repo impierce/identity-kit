@@ -2,11 +2,13 @@
 //! Document Creation Algorithm and its options.
 #![cfg(feature = "did-key")]
 
+use std::error::Error as _;
+
 use identity_kit::did::{
-    DEFAULT_MAX_LEN, Did, DidDocument, DidUrl, MethodType, ResolutionError, ResolutionOptions,
+    DEFAULT_MAX_LEN, Did, DidDocument, DidUrl, MethodType, ResolutionErrorKind, ResolutionOptions,
     VerificationRelationship,
 };
-use identity_kit::jose::Jwk;
+use identity_kit::jose::{Jwk, JwkError};
 use identity_kit::methods::DidKey;
 use identity_kit::methods::key::{DidKeyError, KeyFormat};
 use identity_kit::resolver::{DidProducer, DidResolver, Hosting, ProduceError, Resolver};
@@ -217,7 +219,7 @@ fn version_segment() {
         let did = did(&format!("did:key:{invalid}:{ED25519_MULTIKEY}"));
         assert_eq!(
             method.document(&did),
-            Err(ResolutionError::InvalidDid),
+            Err(ResolutionErrorKind::InvalidDid.into()),
             "{did}"
         );
     }
@@ -228,7 +230,10 @@ fn version_segment() {
     );
     let long = did(&format!("{prefix}{ED25519_MULTIKEY}"));
     assert!(long.as_str().len() <= DEFAULT_MAX_LEN);
-    assert_eq!(method.document(&long), Err(ResolutionError::InvalidDid));
+    assert_eq!(
+        method.document(&long),
+        Err(ResolutionErrorKind::InvalidDid.into())
+    );
     let fits = did(&format!(
         "did:key:{}:{ED25519_MULTIKEY}",
         "1".repeat(DEFAULT_MAX_LEN - 2 * ED25519_MULTIKEY.len() - 10)
@@ -240,15 +245,18 @@ fn version_segment() {
 fn errors_of_the_document_creation_algorithm() {
     let method = DidKey::new();
     let base58 = |bytes: &[u8]| format!("did:key:z{}", bs58::encode(bytes).into_string());
-    let other = |name: &str| ResolutionError::Other(name.to_owned());
+    let other = |name: &str| ResolutionErrorKind::Other(name.to_owned());
     for (did_str, error) in [
         // Not a `did:key`.
-        ("did:web:example.com", ResolutionError::MethodNotSupported),
+        (
+            "did:web:example.com",
+            ResolutionErrorKind::MethodNotSupported,
+        ),
         // No `z` multibase prefix (the base64url form is not supported).
-        ("did:key:u7QEA", ResolutionError::InvalidDid),
-        ("did:key:6MkhaXg", ResolutionError::InvalidDid),
+        ("did:key:u7QEA", ResolutionErrorKind::InvalidDid),
+        ("did:key:6MkhaXg", ResolutionErrorKind::InvalidDid),
         // Not base58btc.
-        ("did:key:z0OIl", ResolutionError::InvalidDid),
+        ("did:key:z0OIl", ResolutionErrorKind::InvalidDid),
         // A multicodec this crate does not know: P-384, BLS12-381.
         (
             "did:key:z82LkvCwHNreneWpsgPEbV3gu1C6NFJEBg4srfJ5gdxEsMGRJUz2sG9FE42shbn2xkZJh54",
@@ -268,8 +276,25 @@ fn errors_of_the_document_creation_algorithm() {
             other("invalidPublicKey"),
         ),
     ] {
-        assert_eq!(method.document(&did(did_str)), Err(error), "{did_str}");
+        assert_eq!(
+            method.document(&did(did_str)).unwrap_err(),
+            error,
+            "{did_str}"
+        );
     }
+    // A Multikey string that does not decode has the decoding error as its source.
+    for did_str in [
+        "did:key:z0OIl",
+        &base58(&[&[0xed, 0x01][..], &[7; 31]].concat()),
+    ] {
+        let error = method.document(&did(did_str)).unwrap_err();
+        assert!(error.source().unwrap().is::<JwkError>(), "{error}");
+    }
+    let error = method.document(&did("did:key:u7QEA")).unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some("the method-specific id is not a Multikey string after an optional version")
+    );
 }
 
 #[tokio::test]
@@ -323,7 +348,10 @@ async fn rsa_key_too_long_for_a_did() {
     ));
     // The bare DID still parses, but its document would not fit a DID URL.
     let bare = did(&format!("did:key:{}", too_long.to_multikey().unwrap()));
-    assert_eq!(method.document(&bare), Err(ResolutionError::InvalidDid));
+    assert_eq!(
+        method.document(&bare),
+        Err(ResolutionErrorKind::InvalidDid.into())
+    );
     // An unsupported key type is the other error.
     let p384: Jwk =
         serde_json::from_value(json!({"kty": "EC", "crv": "P-384", "x": "", "y": ""})).unwrap();
@@ -366,21 +394,23 @@ async fn resolution_options() {
     for (properties, error) in [
         (
             json!({"publicKeyFormat": "Ed25519VerificationKey2018"}),
-            ResolutionError::Other("unsupportedPublicKeyType".to_owned()),
+            ResolutionErrorKind::Other("unsupportedPublicKeyType".to_owned()),
         ),
         (
             json!({"publicKeyFormat": 1}),
-            ResolutionError::Other("unsupportedPublicKeyType".to_owned()),
+            ResolutionErrorKind::Other("unsupportedPublicKeyType".to_owned()),
         ),
         (
             json!({"enableEncryptionKeyDerivation": "yes"}),
-            ResolutionError::Other("invalidOptions".to_owned()),
+            ResolutionErrorKind::Other("invalidOptions".to_owned()),
         ),
     ] {
-        assert_eq!(
-            resolver.resolve_with(&did, &options(properties)).await,
-            Err(error)
-        );
+        let failure = resolver
+            .resolve_with(&did, &options(properties))
+            .await
+            .unwrap_err();
+        assert_eq!(failure, error);
+        assert!(failure.detail().is_some(), "{failure}");
     }
 
     // `accept` may only ask for JSON.
@@ -400,7 +430,7 @@ async fn resolution_options() {
         resolver
             .resolve_with(&did, &ResolutionOptions::accept("application/did+cbor"))
             .await,
-        Err(ResolutionError::RepresentationNotSupported)
+        Err(ResolutionErrorKind::RepresentationNotSupported.into())
     );
 }
 

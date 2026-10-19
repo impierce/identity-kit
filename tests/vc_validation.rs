@@ -412,7 +412,7 @@ async fn signature_and_key_errors() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "resolving key `did:example:abfe13f712120431c276e12ecab#keys-1`: resolving `did:example:abfe13f712120431c276e12ecab`: DID method not supported"
+        "resolving key `did:example:abfe13f712120431c276e12ecab#keys-1`: resolving `did:example:abfe13f712120431c276e12ecab`: DID method not supported: no resolver is registered for `did:example`"
     );
     let missing_method = sign(
         JwsHeader::new(JwsAlgorithm::EdDSA).with_kid(issuer.did.join("#keys-1").unwrap().as_str()),

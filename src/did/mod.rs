@@ -9,7 +9,8 @@
 //!   the other types of DID Core §5, serialized deterministically with extension properties in
 //!   insertion order, plus the operations to edit and query a document.
 //! - **Resolution.** [`ResolutionResult`], [`DocumentMetadata`], [`ResolutionMetadata`],
-//!   [`ResolutionOptions`] and the [`ResolutionError`] vocabulary of DID Core §7.1.
+//!   [`ResolutionOptions`] and [`ResolutionError`], whose [`ResolutionErrorKind`] is the error
+//!   vocabulary of DID Core §7.1.
 //!
 //! # DID syntax
 //!
@@ -79,7 +80,7 @@ pub use error::DidError;
 pub use reference::DidUrlReference;
 pub use resolution::{
     APPLICATION_DID_JSON, APPLICATION_DID_LD_JSON, DocumentMetadata, ResolutionError,
-    ResolutionMetadata, ResolutionOptions, ResolutionResult,
+    ResolutionErrorKind, ResolutionMetadata, ResolutionOptions, ResolutionResult,
 };
 pub use syntax::{DEFAULT_MAX_LEN, Did, DidUrl};
 pub use uri::Uri;

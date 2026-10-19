@@ -4,9 +4,10 @@
 #![cfg(feature = "did-web")]
 
 use std::collections::HashMap;
+use std::error::Error as _;
 use std::sync::Mutex;
 
-use identity_kit::did::{Did, DidUrl, ResolutionError, ResolutionOptions};
+use identity_kit::did::{Did, DidUrl, ResolutionErrorKind, ResolutionOptions};
 use identity_kit::jose::Jwk;
 use identity_kit::methods::DidWeb;
 use identity_kit::methods::web::{
@@ -358,8 +359,18 @@ async fn read_operation() {
     assert_eq!(
         web.resolve(&did, &ResolutionOptions::accept("application/did+cbor"))
             .await,
-        Err(ResolutionError::RepresentationNotSupported)
+        Err(ResolutionErrorKind::RepresentationNotSupported.into())
     );
+}
+
+/// What a failed `did:web` resolution says about its cause, besides its keyword.
+enum Cause {
+    /// The detail is exactly this text, and there is no source.
+    Detail(&'static str),
+    /// The source is the client's `HttpError`, with this message.
+    Http(&'static str),
+    /// The source is the `serde_json::Error` of the body.
+    Json,
 }
 
 #[tokio::test]
@@ -367,49 +378,109 @@ async fn read_operation_failures() {
     let url = "https://example.com/.well-known/did.json";
     let example = did("did:web:example.com");
     let other = r#"{"id": "did:web:example.org"}"#;
-    for (mock, error) in [
-        (Mock::serving(url, 404, ""), ResolutionError::NotFound),
-        (Mock::serving(url, 410, ""), ResolutionError::NotFound),
-        (Mock::serving(url, 500, ""), ResolutionError::InternalError),
-        (Mock::serving(url, 301, ""), ResolutionError::InternalError),
+    let status = |code: u16| match code {
+        404 => "`https://example.com/.well-known/did.json` responded with HTTP status 404",
+        410 => "`https://example.com/.well-known/did.json` responded with HTTP status 410",
+        500 => "`https://example.com/.well-known/did.json` responded with HTTP status 500",
+        301 => "`https://example.com/.well-known/did.json` responded with HTTP status 301",
+        _ => unreachable!(),
+    };
+    for (mock, kind, cause) in [
+        (
+            Mock::serving(url, 404, ""),
+            ResolutionErrorKind::NotFound,
+            Cause::Detail(status(404)),
+        ),
+        (
+            Mock::serving(url, 410, ""),
+            ResolutionErrorKind::NotFound,
+            Cause::Detail(status(410)),
+        ),
+        (
+            Mock::serving(url, 500, ""),
+            ResolutionErrorKind::InternalError,
+            Cause::Detail(status(500)),
+        ),
+        (
+            Mock::serving(url, 301, ""),
+            ResolutionErrorKind::InternalError,
+            Cause::Detail(status(301)),
+        ),
         (
             Mock::failing(url, "connection refused"),
-            ResolutionError::InternalError,
+            ResolutionErrorKind::InternalError,
+            Cause::Http("connection refused"),
+        ),
+        (
+            Mock::failing(url, "`https://example.com/` is not a public address"),
+            ResolutionErrorKind::InternalError,
+            Cause::Http("`https://example.com/` is not a public address"),
         ),
         (
             Mock::serving(url, 200, "<html>"),
-            ResolutionError::InvalidDidDocument,
+            ResolutionErrorKind::InvalidDidDocument,
+            Cause::Json,
         ),
         (
             Mock::serving(url, 200, "{}"),
-            ResolutionError::InvalidDidDocument,
+            ResolutionErrorKind::InvalidDidDocument,
+            Cause::Json,
         ),
         (
             Mock::serving(url, 200, other),
-            ResolutionError::InvalidDidDocument,
+            ResolutionErrorKind::InvalidDidDocument,
+            Cause::Detail(
+                "`https://example.com/.well-known/did.json` holds the document of \
+                 `did:web:example.org`, not `did:web:example.com`",
+            ),
         ),
         (
             Mock::serving("https://example.com/did.json", 200, EXAMPLE),
-            ResolutionError::NotFound,
+            ResolutionErrorKind::NotFound,
+            Cause::Detail(status(404)),
         ),
     ] {
         let method = DidWeb::new(mock);
-        assert_eq!(
-            method
-                .resolve(&example, &ResolutionOptions::default())
-                .await,
-            Err(error)
-        );
+        let error = method
+            .resolve(&example, &ResolutionOptions::default())
+            .await
+            .unwrap_err();
+        assert_eq!(error, kind);
         assert_eq!(method.client().calls.lock().unwrap().len(), 1);
+        match cause {
+            Cause::Detail(detail) => {
+                assert_eq!(error.detail(), Some(detail));
+                assert!(error.source().is_none(), "{error}");
+                assert_eq!(error.to_string(), format!("{kind}: {detail}"));
+            }
+            Cause::Http(message) => {
+                let source = error.source().unwrap().downcast_ref::<HttpError>();
+                assert_eq!(source.unwrap().to_string(), message);
+                assert_eq!(
+                    error.to_string(),
+                    format!("internal resolver error: fetching `{url}` failed: {message}")
+                );
+            }
+            Cause::Json => {
+                let source = error.source().unwrap();
+                assert!(source.is::<serde_json::Error>(), "{error}");
+                assert_eq!(
+                    error.detail(),
+                    Some(
+                        "the body of `https://example.com/.well-known/did.json` is not a DID document"
+                    )
+                );
+            }
+        }
     }
     // A DID without a document URL never reaches the client.
     let method = DidWeb::new(Mock::default());
-    assert_eq!(
-        method
-            .resolve(&did("did:web:192.0.2.1"), &ResolutionOptions::default())
-            .await,
-        Err(ResolutionError::InvalidDid)
-    );
+    let error = method
+        .resolve(&did("did:web:192.0.2.1"), &ResolutionOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(error, ResolutionErrorKind::InvalidDid);
+    assert!(error.source().unwrap().is::<WebError>(), "{error}");
     assert!(method.client().calls.lock().unwrap().is_empty());
 }
 

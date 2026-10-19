@@ -2,8 +2,10 @@
 //! specification and its Create and Read operations.
 #![cfg(feature = "did-jwk")]
 
+use std::error::Error as _;
+
 use identity_kit::did::{
-    DEFAULT_MAX_LEN, Did, DidDocument, DidError, DidUrl, ResolutionError, ResolutionOptions,
+    DEFAULT_MAX_LEN, Did, DidDocument, DidError, DidUrl, ResolutionErrorKind, ResolutionOptions,
 };
 use identity_kit::jose::Jwk;
 use identity_kit::methods::DidJwk;
@@ -203,7 +205,7 @@ async fn create_operation() {
     assert!(too_long.len() <= DEFAULT_MAX_LEN);
     assert_eq!(
         DidJwk::document(&did(&too_long)),
-        Err(ResolutionError::InvalidDid)
+        Err(ResolutionErrorKind::InvalidDid.into())
     );
     assert!(matches!(
         DidJwk.produce(std::slice::from_ref(&huge), ()).await,
@@ -239,25 +241,60 @@ async fn read_operation_errors() {
     for (did_str, error) in [
         (
             "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
-            ResolutionError::MethodNotSupported,
+            ResolutionErrorKind::MethodNotSupported,
         ),
         // Not base64url: `.` and `%` are DID characters but not base64url ones (`=` padding is
         // not even DID syntax).
-        ("did:jwk:abc.def", ResolutionError::InvalidDid),
-        ("did:jwk:ab%20", ResolutionError::InvalidDid),
+        ("did:jwk:abc.def", ResolutionErrorKind::InvalidDid),
+        ("did:jwk:ab%20", ResolutionErrorKind::InvalidDid),
         // Not a JWK.
-        (&encode("not json"), ResolutionError::InvalidDid),
-        (&encode("{}"), ResolutionError::InvalidDid),
+        (&encode("not json"), ResolutionErrorKind::InvalidDid),
+        (&encode("{}"), ResolutionErrorKind::InvalidDid),
         // A private key must be rejected.
         (
             &encode(
                 r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo","d":"nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"}"#,
             ),
-            ResolutionError::InvalidDid,
+            ResolutionErrorKind::InvalidDid,
         ),
     ] {
-        assert_eq!(DidJwk::document(&did(did_str)), Err(error), "{did_str}");
+        assert_eq!(
+            DidJwk::document(&did(did_str)).unwrap_err(),
+            error,
+            "{did_str}"
+        );
     }
+    // The detail says which step failed, and the decoding error is the source.
+    let error = DidJwk::document(&did("did:jwk:abc.def")).unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some("the method-specific id is not base64url")
+    );
+    assert!(
+        error.source().unwrap().is::<base64::DecodeError>(),
+        "{error}"
+    );
+    let error = DidJwk::document(&did(&encode("not json"))).unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some("the method-specific id does not encode a JSON Web Key")
+    );
+    assert!(error.source().unwrap().is::<serde_json::Error>(), "{error}");
+    assert!(
+        error
+            .to_string()
+            .starts_with("invalid DID: the method-specific id does not encode a JSON Web Key: "),
+        "{error}"
+    );
+    let error = DidJwk::document(&did(
+        "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    ))
+    .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "DID method not supported: `did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK` is \
+         not a did:jwk"
+    );
     // `{"kty":"OKP"}` is a JWK as far as the method goes: whether the key is usable is for the
     // consumer of the document to decide.
     let bare = DidJwk::document(&did(&encode(r#"{"kty":"OKP"}"#))).unwrap();
@@ -271,7 +308,7 @@ async fn read_operation_errors() {
         resolver
             .resolve_with(&did(P256_DID), &ResolutionOptions::accept("text/html"))
             .await,
-        Err(ResolutionError::RepresentationNotSupported)
+        Err(ResolutionErrorKind::RepresentationNotSupported.into())
     );
     assert!(
         resolver

@@ -2,7 +2,8 @@
 
 use identity_kit::did::{
     APPLICATION_DID_JSON, APPLICATION_DID_LD_JSON, Did, DidDocument, DidError, DocumentMetadata,
-    ResolutionError, ResolutionMetadata, ResolutionOptions, ResolutionResult, VerificationMaterial,
+    ResolutionError, ResolutionErrorKind, ResolutionMetadata, ResolutionOptions, ResolutionResult,
+    VerificationMaterial,
 };
 use identity_kit::jose::Jwk;
 use serde_json::{Value, json};
@@ -38,10 +39,10 @@ fn did_core_metadata_examples_round_trip() {
     );
 
     let metadata: ResolutionMetadata = serde_json::from_str(EXAMPLE_17).unwrap();
-    assert_eq!(metadata.error, Some(ResolutionError::NotFound));
+    assert_eq!(metadata.error, Some(ResolutionErrorKind::NotFound.into()));
     assert_eq!(
         metadata,
-        ResolutionMetadata::error(ResolutionError::NotFound)
+        ResolutionMetadata::error(ResolutionErrorKind::NotFound)
     );
     assert_eq!(
         serde_json::to_string(&metadata).unwrap(),
@@ -102,21 +103,31 @@ fn resolution_metadata_keeps_unknown_properties() {
 
 #[test]
 fn error_vocabulary() {
-    for (error, keyword) in [
-        (ResolutionError::InvalidDid, "invalidDid"),
-        (ResolutionError::NotFound, "notFound"),
-        (ResolutionError::MethodNotSupported, "methodNotSupported"),
+    for (kind, keyword) in [
+        (ResolutionErrorKind::InvalidDid, "invalidDid"),
+        (ResolutionErrorKind::NotFound, "notFound"),
         (
-            ResolutionError::RepresentationNotSupported,
+            ResolutionErrorKind::MethodNotSupported,
+            "methodNotSupported",
+        ),
+        (
+            ResolutionErrorKind::RepresentationNotSupported,
             "representationNotSupported",
         ),
-        (ResolutionError::InvalidDidDocument, "invalidDidDocument"),
-        (ResolutionError::InternalError, "internalError"),
         (
-            ResolutionError::Other("invalidOptions".to_owned()),
+            ResolutionErrorKind::InvalidDidDocument,
+            "invalidDidDocument",
+        ),
+        (ResolutionErrorKind::InternalError, "internalError"),
+        (
+            ResolutionErrorKind::Other("invalidOptions".to_owned()),
             "invalidOptions",
         ),
     ] {
+        assert_eq!(kind.as_str(), keyword);
+        assert_eq!(keyword.parse::<ResolutionErrorKind>().unwrap(), kind);
+        let error = ResolutionError::from(kind.clone());
+        assert_eq!(error.kind(), &kind);
         assert_eq!(error.as_str(), keyword);
         assert_eq!(keyword.parse::<ResolutionError>().unwrap(), error);
         assert_eq!(
@@ -127,11 +138,12 @@ fn error_vocabulary() {
             serde_json::from_str::<ResolutionError>(&format!("\"{keyword}\"")).unwrap(),
             error
         );
+        assert_eq!(error.to_string(), kind.to_string());
         assert!(!error.to_string().is_empty());
     }
-    assert_eq!(ResolutionError::NotFound.to_string(), "DID not found");
+    assert_eq!(ResolutionErrorKind::NotFound.to_string(), "DID not found");
     assert_eq!(
-        ResolutionError::Other("x".to_owned()).to_string(),
+        ResolutionErrorKind::Other("x".to_owned()).to_string(),
         "resolution error `x`"
     );
     assert!(serde_json::from_str::<ResolutionError>("\"\"").is_err());
@@ -139,7 +151,65 @@ fn error_vocabulary() {
     assert!(serde_json::from_str::<ResolutionError>("{}").is_err());
     assert_eq!(
         ResolutionError::from(DidError::MissingScheme),
-        ResolutionError::InvalidDid
+        ResolutionErrorKind::InvalidDid
+    );
+}
+
+#[test]
+fn errors_carry_a_detail_and_a_source() {
+    use std::collections::HashSet;
+    use std::error::Error as _;
+
+    let bare = ResolutionError::new(ResolutionErrorKind::InternalError);
+    assert_eq!(bare.detail(), None);
+    assert!(bare.source().is_none());
+    assert_eq!(bare.to_string(), "internal resolver error");
+
+    let detailed = bare
+        .clone()
+        .with_detail("`https://example.com/` responded with HTTP status 500");
+    assert_eq!(
+        detailed.to_string(),
+        "internal resolver error: `https://example.com/` responded with HTTP status 500"
+    );
+
+    let caused = detailed
+        .clone()
+        .with_source(std::io::Error::other("connection refused"));
+    assert_eq!(
+        caused.to_string(),
+        "internal resolver error: `https://example.com/` responded with HTTP status 500: \
+         connection refused"
+    );
+    // A clone shares the source.
+    let clone = caused.clone();
+    assert!(clone.source().unwrap().is::<std::io::Error>());
+    assert_eq!(clone.to_string(), caused.to_string());
+
+    // Only the keyword is compared, hashed and serialized, so an error equals its round trip.
+    assert_eq!(bare, caused);
+    assert_eq!(caused, ResolutionErrorKind::InternalError);
+    assert_ne!(caused, ResolutionErrorKind::NotFound);
+    assert_eq!(HashSet::from([bare, detailed, caused.clone()]).len(), 1);
+    let round_trip: ResolutionError =
+        serde_json::from_str(&serde_json::to_string(&caused).unwrap()).unwrap();
+    assert_eq!(round_trip, caused);
+    assert_eq!(round_trip.detail(), None);
+    assert!(round_trip.source().is_none());
+
+    // The metadata keeps the whole error in memory and serializes the keyword.
+    let metadata = ResolutionMetadata::error(caused);
+    assert_eq!(
+        serde_json::to_string(&metadata).unwrap(),
+        r#"{"error":"internalError"}"#
+    );
+    assert!(metadata.error.unwrap().source().is_some());
+
+    // A DID syntax error keeps its cause.
+    let invalid = ResolutionError::from(DidError::MissingScheme);
+    assert_eq!(
+        invalid.source().unwrap().downcast_ref(),
+        Some(&DidError::MissingScheme)
     );
 }
 
@@ -170,15 +240,15 @@ fn resolution_results() {
     assert_eq!(parsed.error_kind(), None);
     assert_eq!(parsed.into_document(), Ok(document.clone()));
 
-    let failed = ResolutionResult::error(ResolutionError::MethodNotSupported);
+    let failed = ResolutionResult::error(ResolutionErrorKind::MethodNotSupported);
     assert_eq!(failed.document, None);
     assert_eq!(
         failed.error_kind(),
-        Some(&ResolutionError::MethodNotSupported)
+        Some(&ResolutionErrorKind::MethodNotSupported)
     );
     assert_eq!(
         failed.clone().into_document(),
-        Err(ResolutionError::MethodNotSupported)
+        Err(ResolutionErrorKind::MethodNotSupported.into())
     );
     assert_eq!(
         serde_json::to_string(&failed).unwrap(),
@@ -188,7 +258,7 @@ fn resolution_results() {
     // A result with neither document nor error is "not found"; one with both reports the error.
     assert_eq!(
         ResolutionResult::default().into_document(),
-        Err(ResolutionError::NotFound)
+        Err(ResolutionErrorKind::NotFound.into())
     );
     let inconsistent: ResolutionResult = serde_json::from_str(
         r#"{"didDocument":{"id":"did:example:123"},"didResolutionMetadata":{"error":"invalidDid"}}"#,
@@ -196,7 +266,7 @@ fn resolution_results() {
     .unwrap();
     assert_eq!(
         inconsistent.into_document(),
-        Err(ResolutionError::InvalidDid)
+        Err(ResolutionErrorKind::InvalidDid.into())
     );
     // Metadata objects default when absent.
     let minimal: ResolutionResult =
