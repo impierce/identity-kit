@@ -39,6 +39,9 @@ pub mod key;
 pub mod web;
 
 #[cfg(feature = "did-jwk")]
+mod jcs;
+
+#[cfg(feature = "did-jwk")]
 pub use jwk::DidJwk;
 #[cfg(feature = "did-key")]
 pub use key::DidKey;

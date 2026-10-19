@@ -136,31 +136,43 @@ async fn create_operation() {
     assert!(capabilities.single_key && !capabilities.updatable);
     assert_eq!(capabilities.fixed_fragment, Some("0"));
 
-    // Create: serialize the JWK, base64url-encode it, prefix `did:jwk:`. The specification's
-    // example serializes `crv` first; this crate serializes `kty` first, which is another valid
-    // DID for the same key (the method defines no canonical form).
+    // Create: serialize the JWK with the JSON Canonicalization Scheme (RFC 8785), base64url-encode
+    // it, prefix `did:jwk:`. The specification's P-256 example is in JCS order, so the same key
+    // yields it byte for byte, in whatever order its members come.
     let jwk: Jwk = serde_json::from_value(json!({
-        "crv": "P-256", "kty": "EC",
-        "x": "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0",
-        "y": "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE"
+        "kty": "EC", "crv": "P-256",
+        "y": "_KcyLj9vWMptnmKtm46GqDz8wf74I5LKgrl2GzH3nSE",
+        "x": "acbIQiuMs3i8_uszEjJ2tpTtRM4EU3yz91PH6CdH2V0"
     }))
     .unwrap();
     let created = DidJwk::did(&jwk).unwrap();
-    assert_eq!(
-        created.as_str(),
-        "did:jwk:eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6ImFjYklRaXVNczNpOF91c3pFakoydHBUdFJNNEVVM3l6OTFQSDZDZEgyVjAiLCJ5IjoiX0tjeUxqOXZXTXB0bm1LdG00NkdxRHo4d2Y3NEk1TEtncmwyR3pIM25TRSJ9"
-    );
+    assert_eq!(created.as_str(), P256_DID);
     let produced = DidJwk
         .produce(std::slice::from_ref(&jwk), ())
         .await
         .unwrap();
     assert_eq!(produced.id, created);
     assert_eq!(produced, DidJwk::document(&created).unwrap());
-    // Both DIDs expand to the same key.
-    let spec = DidJwk::document(&did(P256_DID)).unwrap();
+    assert_eq!(produced, DidJwk::document(&did(P256_DID)).unwrap());
+
+    // The specification's X25519 example is not in JCS order (`kty` comes first). It still
+    // resolves, but creating a DID for its key yields the canonical one.
+    let x25519 = DidJwk::document(&did(X25519_DID)).unwrap();
+    let key = x25519.verification_method[0].public_key_jwk().unwrap();
+    let canonical = DidJwk::did(key).unwrap();
+    assert_ne!(canonical.as_str(), X25519_DID);
     assert_eq!(
-        spec.verification_method[0].public_key_jwk(),
-        produced.verification_method[0].public_key_jwk()
+        canonical.as_str(),
+        format!(
+            "did:jwk:{}",
+            base64url(
+                r#"{"crv":"X25519","kty":"OKP","use":"enc","x":"3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08"}"#
+            )
+        )
+    );
+    assert_eq!(
+        DidJwk::document(&canonical).unwrap().verification_method[0].public_key_jwk(),
+        Some(key)
     );
 
     // Private parameters never reach the DID.
@@ -319,4 +331,160 @@ async fn read_operation_errors() {
             .await
             .is_ok()
     );
+}
+
+/// base64url without padding, the did:jwk method-specific id of `json`.
+fn base64url(json: &str) -> String {
+    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, json)
+}
+
+/// Canonical forms written out by hand per RFC 8785 for Ed25519 (RFC 8037 §A.2), P-256
+/// (RFC 7515 §A.3), secp256k1 (the generator of SEC 2 §2.4.1) and X25519 (the specification's
+/// example) keys, each bare and with `alg` (or `use`) and its RFC 7638 thumbprint as `kid`. These
+/// are also the DIDs that did-manager and UniCore derive.
+#[test]
+fn creation_is_canonical() {
+    for (input, canonical) in [
+        // Ed25519, bare
+        (
+            r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#,
+            r#"{"crv":"Ed25519","kty":"OKP","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#,
+        ),
+        // Ed25519, alg+kid
+        (
+            r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo","alg":"EdDSA","kid":"kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k"}"#,
+            r#"{"alg":"EdDSA","crv":"Ed25519","kid":"kPrK_qmxVWaYVA9wwBF6Iuo3vVzz7TxHCTwXBygrS4k","kty":"OKP","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#,
+        ),
+        // P-256, bare
+        (
+            r#"{"kty":"EC","crv":"P-256","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}"#,
+            r#"{"crv":"P-256","kty":"EC","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}"#,
+        ),
+        // P-256, alg+kid
+        (
+            r#"{"kty":"EC","crv":"P-256","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0","alg":"ES256","kid":"oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U"}"#,
+            r#"{"alg":"ES256","crv":"P-256","kid":"oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U","kty":"EC","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}"#,
+        ),
+        // secp256k1, bare
+        (
+            r#"{"kty":"EC","crv":"secp256k1","x":"eb5mfvncu6xVoGKVzocLBwKb_NstzijZWfKBWxb4F5g","y":"SDradyajxGVdpPv8DhEIqP0XtEimhVQZnEfQj_sQ1Lg"}"#,
+            r#"{"crv":"secp256k1","kty":"EC","x":"eb5mfvncu6xVoGKVzocLBwKb_NstzijZWfKBWxb4F5g","y":"SDradyajxGVdpPv8DhEIqP0XtEimhVQZnEfQj_sQ1Lg"}"#,
+        ),
+        // secp256k1, alg+kid
+        (
+            r#"{"kty":"EC","crv":"secp256k1","x":"eb5mfvncu6xVoGKVzocLBwKb_NstzijZWfKBWxb4F5g","y":"SDradyajxGVdpPv8DhEIqP0XtEimhVQZnEfQj_sQ1Lg","alg":"ES256K","kid":"2JF8vg9etJzjFwZwmkvhBLLZ0bfMVVOPivYR5lFtcec"}"#,
+            r#"{"alg":"ES256K","crv":"secp256k1","kid":"2JF8vg9etJzjFwZwmkvhBLLZ0bfMVVOPivYR5lFtcec","kty":"EC","x":"eb5mfvncu6xVoGKVzocLBwKb_NstzijZWfKBWxb4F5g","y":"SDradyajxGVdpPv8DhEIqP0XtEimhVQZnEfQj_sQ1Lg"}"#,
+        ),
+        // X25519, bare
+        (
+            r#"{"kty":"OKP","crv":"X25519","x":"3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08"}"#,
+            r#"{"crv":"X25519","kty":"OKP","x":"3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08"}"#,
+        ),
+        // X25519, use+kid
+        (
+            r#"{"kty":"OKP","crv":"X25519","x":"3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08","kid":"giQqigT_IKcuzHl0FVJ3k5ts3_TWNAxvsC08UZsfcM8","use":"enc"}"#,
+            r#"{"crv":"X25519","kid":"giQqigT_IKcuzHl0FVJ3k5ts3_TWNAxvsC08UZsfcM8","kty":"OKP","use":"enc","x":"3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08"}"#,
+        ),
+    ] {
+        let jwk: Jwk = serde_json::from_str(input).unwrap();
+        if let Some(kid) = jwk.kid() {
+            assert_eq!(kid, jwk.thumbprint_sha256().unwrap(), "{input}");
+        }
+        assert_eq!(
+            DidJwk::did(&jwk).unwrap().as_str(),
+            format!("did:jwk:{}", base64url(canonical)),
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn creation_sorts_every_member() {
+    // `use`, `key_ops` and extension members, in no particular order, nested ones included.
+    let jwk: Jwk = serde_json::from_str(
+        r#"{
+          "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+          "use": "sig",
+          "kty": "OKP",
+          "key_ops": ["verify"],
+          "zz": {"b": 1, "a": [2.50, 1E3, "\u00e9"]},
+          "crv": "Ed25519",
+          "ext": true
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        DidJwk::did(&jwk).unwrap().as_str(),
+        format!(
+            "did:jwk:{}",
+            base64url(concat!(
+                r#"{"crv":"Ed25519","ext":true,"key_ops":["verify"],"kty":"OKP","use":"sig","#,
+                r#""x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo","zz":{"a":[2.5,1000,"é"],"b":1}}"#
+            ))
+        )
+    );
+}
+
+use proptest::prelude::*;
+
+proptest! {
+    /// The DID does not depend on the order of the members of the input JWK.
+    #[test]
+    fn creation_ignores_member_order(
+        members in Just(vec![
+            (r#""kty""#, r#""EC""#),
+            (r#""crv""#, r#""P-256""#),
+            (r#""x""#, r#""f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU""#),
+            (r#""y""#, r#""x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0""#),
+            (r#""alg""#, r#""ES256""#),
+            (r#""use""#, r#""sig""#),
+            (r#""key_ops""#, r#"["verify"]"#),
+            (r#""kid""#, r#""oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U""#),
+            (r#""ext""#, r#"{"b":[1,2],"a":null}"#),
+            (r#""Z""#, r#""upper""#),
+        ])
+        .prop_shuffle(),
+    ) {
+        let json = format!(
+            "{{{}}}",
+            members
+                .iter()
+                .map(|(name, value)| format!("{name}:{value}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let jwk: Jwk = serde_json::from_str(&json).unwrap();
+        let canonical = concat!(
+            r#"{"Z":"upper","alg":"ES256","crv":"P-256","ext":{"a":null,"b":[1,2]},"#,
+            r#""key_ops":["verify"],"kid":"oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U","kty":"EC","#,
+            r#""use":"sig","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","#,
+            r#""y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}"#
+        );
+        let created = DidJwk::did(&jwk).unwrap();
+        prop_assert_eq!(created.as_str(), format!("did:jwk:{}", base64url(canonical)));
+    }
+}
+
+#[tokio::test]
+async fn numbers_take_their_canonical_form() {
+    // JCS writes the number `46285.0` as `46285` (RFC 8785 §3.2.2.3), which reads back as an
+    // integer. The produced document is the one the DID resolves to, with the canonical number.
+    let jwk: Jwk = serde_json::from_str(
+        r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo","ext":46285.0}"#,
+    )
+    .unwrap();
+    let did = DidJwk::did(&jwk).unwrap();
+    assert_eq!(
+        did.as_str(),
+        format!(
+            "did:jwk:{}",
+            base64url(
+                r#"{"crv":"Ed25519","ext":46285,"kty":"OKP","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#
+            )
+        )
+    );
+    let produced = DidJwk.produce(&[jwk], ()).await.unwrap();
+    assert_eq!(produced, DidJwk::document(&did).unwrap());
+    let key = serde_json::to_value(produced.verification_method[0].public_key_jwk()).unwrap();
+    assert_eq!(key["ext"], json!(46285));
 }

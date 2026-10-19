@@ -45,4 +45,12 @@ pub enum DidError {
     /// The DID URL fragment contains a character not allowed by RFC 3986.
     #[error("invalid DID URL fragment")]
     InvalidFragment,
+    /// The key of a `did:jwk` holds a JSON number with no finite double value, such as
+    /// `1e400`, which the JSON Canonicalization Scheme cannot encode. `serde_json` only keeps
+    /// such a number when its `arbitrary_precision` feature is on.
+    #[error("the JSON number {number} has no finite double value, so it cannot be canonicalized")]
+    UnsupportedNumber {
+        /// The number as written.
+        number: String,
+    },
 }
