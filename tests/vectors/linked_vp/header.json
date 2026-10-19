@@ -1,0 +1,5 @@
+{
+  "alg": "EdDSA",
+  "kid": "did:example:123#_Qq0UL2Fq651Q0Fjd6TvnYE-faHiOpRlPVQcY_-tA4A",
+  "typ": "'vp+ld+jwt'"
+}

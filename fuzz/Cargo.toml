@@ -11,9 +11,10 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = { version = "1.4", features = ["derive"] }
+async-trait = "0.1"
 base64 = "0.23"
 chrono = "0.4"
-identity-kit = { path = "..", default-features = false, features = ["secp256k1", "did-key", "did-jwk", "did-web", "vc", "sd-jwt", "domain-linkage"] }
+identity-kit = { path = "..", default-features = false, features = ["secp256k1", "did-key", "did-jwk", "did-web", "vc", "sd-jwt", "domain-linkage", "linked-vp"] }
 libfuzzer-sys = "0.4"
 serde = "1.0"
 serde_json = { version = "1.0", features = ["preserve_order"] }
@@ -52,6 +53,13 @@ bench = false
 [[bin]]
 name = "vc_jwt"
 path = "fuzz_targets/vc_jwt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "linked_vp"
+path = "fuzz_targets/linked_vp.rs"
 test = false
 doc = false
 bench = false

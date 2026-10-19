@@ -27,7 +27,7 @@ cargo publish --dry-run --locked
 cargo deny check
 ```
 
-The lower layer (`did`, `jose`, `keys`, `resolver`, `methods`) never imports the upper layer (`vc`, `sd_jwt_vc`, `domain_linkage`).
+The lower layer (`did`, `jose`, `keys`, `resolver`, `methods`) never imports the upper layer (`vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`).
 CI proves it by building with `--no-default-features --features did-key,software`, which leaves the upper modules out, and by checking that `cargo tree` in that configuration lists neither `chrono` nor `miniz_oxide`, the upper layer's own dependencies, nor `sd-jwt-payload`, an SD-JWT library the lower layer must never grow.
 
 CI also measures test coverage and reports it on the pull request via [Codecov](https://codecov.io/gh/impierce/identity-kit).

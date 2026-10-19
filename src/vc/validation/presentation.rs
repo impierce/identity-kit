@@ -1,6 +1,6 @@
 //! `JwtPresentationValidator`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -8,7 +8,7 @@ use crate::did::{Uri, VerificationRelationship};
 use crate::jose::{DefaultVerifier, JwsHeader, JwsVerifier};
 use crate::vc::{Jwt, JwtClaims, Party, Presentation};
 
-use super::credential::{check_controller, check_typ, decode};
+use super::credential::{NO_TYP, check_controller, check_typ, decode};
 use super::{
     DecodedCredential, FailFast, JwtCredentialValidator, KeyResolver, PresentationValidationError,
     PresentationValidationOptions, StatusCheck, SubjectHolderRelationship, ValidationError,
@@ -127,7 +127,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
         options: &PresentationValidationOptions,
     ) -> Result<DecodedPresentation, ValidationError> {
         let jws = jwt.decode()?;
-        check_typ(jws.header(), "JWT")?;
+        check_typ(jws.header(), "JWT", &options.additional_typ)?;
         let claims: JwtClaims = serde_json::from_slice(jws.payload())
             .map_err(|e| ValidationError::Payload(e.to_string()))?;
         let presentation = Presentation::from_jwt_claims(&claims)?;
@@ -183,15 +183,25 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtPresentat
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
 /// or [`ValidationError::Credential`] when the token or one of its credentials does not decode.
 pub fn decode_presentation(jwt: &Jwt) -> Result<DecodedPresentation, ValidationError> {
+    decode_presentation_with(jwt, &NO_TYP, &NO_TYP)
+}
+
+/// [`decode_presentation`] also accepting `presentation_typ` on the presentation and
+/// `credential_typ` on its credentials.
+pub(crate) fn decode_presentation_with(
+    jwt: &Jwt,
+    presentation_typ: &BTreeSet<String>,
+    credential_typ: &BTreeSet<String>,
+) -> Result<DecodedPresentation, ValidationError> {
     let jws = jwt.decode()?;
-    check_typ(jws.header(), "JWT")?;
+    check_typ(jws.header(), "JWT", presentation_typ)?;
     let claims: JwtClaims = serde_json::from_slice(jws.payload())
         .map_err(|e| ValidationError::Payload(e.to_string()))?;
     let presentation = Presentation::from_jwt_claims(&claims)?;
     let credentials = presentation
         .verifiable_credential
         .iter()
-        .map(|credential| decode(&credential.decode()?))
+        .map(|credential| decode(&credential.decode()?, credential_typ))
         .collect::<Result<_, _>>()?;
     Ok(DecodedPresentation {
         header: jws.header().clone(),

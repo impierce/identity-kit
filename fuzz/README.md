@@ -16,6 +16,7 @@ One file per target in [`fuzz_targets/`](fuzz_targets/); the doc comment at the 
 | `did_methods`        | `did:key`, `did:jwk`, `did:web`: the Read operations, a DID produced from a key resolves back to that key | a DID or HTTPS URL on the first line, then a JWK as JSON     |
 | `jose`               | `CompactJws::decode`, JWK JSON, Multikey and SPKI decoding, verification with any key                     | a compact JWS on the first line, then a JWK as JSON          |
 | `vc_jwt`             | `Jwt`, `JwtClaims`, VCDM 1.1 and 2.0 credentials and presentations, `data:` envelopes                     | a JWT, a claims set or a credential as JSON                  |
+| `linked_vp`          | `LinkedVerifiablePresentation` services of a document, fetched bodies, linked presentation decoding and validation, `LinkedPresentationBuilder` claims round trip | a DID document, a response body, or builder input derived with `arbitrary` |
 | `sd_jwt`             | `Disclosure`, `SdJwt`, `SdJwtVc` parsing, `select` and `disclose`                                         | an SD-JWT, a disclosure or a digest                          |
 | `sd_jwt_roundtrip`   | `SdJwtBuilder`: arbitrary claims concealed along arbitrary paths process back to the same claims          | structured, derived from the bytes with `arbitrary`          |
 | `sd_jwt_vc_metadata` | type metadata, integrity metadata, status lists, claim paths, DID configuration resources                 | a JSON document, a status list token or an integrity string  |

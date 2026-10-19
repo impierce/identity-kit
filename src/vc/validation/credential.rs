@@ -1,5 +1,7 @@
 //! `JwtCredentialValidator`.
 
+use std::collections::BTreeSet;
+
 use crate::did::{Did, DidUrl, Uri, VerificationRelationship};
 use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
 use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party, TypedObject};
@@ -145,7 +147,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         options: &CredentialValidationOptions,
     ) -> Result<DecodedCredential, ValidationError> {
         let jws = jwt.decode()?;
-        let decoded = decode(&jws)?;
+        let decoded = decode(&jws, &options.additional_typ)?;
         let kid = self
             .verify(&jws, VerificationRelationship::AssertionMethod)
             .await?;
@@ -172,7 +174,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         options: &CredentialValidationOptions,
     ) -> Result<DecodedCredentialV2, ValidationError> {
         let jws = jwt.decode()?;
-        let decoded = decode_v2(&jws)?;
+        let decoded = decode_v2(&jws, &options.additional_typ)?;
         let kid = self
             .verify(&jws, VerificationRelationship::AssertionMethod)
             .await?;
@@ -258,7 +260,7 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtCredentia
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
 /// or [`ValidationError::Credential`] when the token does not decode to a credential.
 pub fn decode_credential(jwt: &Jwt) -> Result<DecodedCredential, ValidationError> {
-    decode(&jwt.decode()?)
+    decode(&jwt.decode()?, &NO_TYP)
 }
 
 /// Decodes a VCDM 2.0 credential JWT without verifying or validating anything.
@@ -267,12 +269,19 @@ pub fn decode_credential(jwt: &Jwt) -> Result<DecodedCredential, ValidationError
 ///
 /// As [`decode_credential`].
 pub fn decode_credential_v2(jwt: &Jwt) -> Result<DecodedCredentialV2, ValidationError> {
-    decode_v2(&jwt.decode()?)
+    decode_v2(&jwt.decode()?, &NO_TYP)
 }
 
-/// Decodes a VCDM 1.1 credential JWT.
-pub(super) fn decode(jws: &CompactJws) -> Result<DecodedCredential, ValidationError> {
-    check_typ(jws.header(), "JWT")?;
+/// No `typ` besides the profile's own.
+pub(super) static NO_TYP: BTreeSet<String> = BTreeSet::new();
+
+/// Decodes a VCDM 1.1 credential JWT whose `typ`, when present, is `JWT` or one of
+/// `additional_typ`.
+pub(super) fn decode(
+    jws: &CompactJws,
+    additional_typ: &BTreeSet<String>,
+) -> Result<DecodedCredential, ValidationError> {
+    check_typ(jws.header(), "JWT", additional_typ)?;
     let claims: JwtClaims = serde_json::from_slice(jws.payload())
         .map_err(|e| ValidationError::Payload(e.to_string()))?;
     let credential = Credential::from_jwt_claims(&claims)?;
@@ -284,9 +293,13 @@ pub(super) fn decode(jws: &CompactJws) -> Result<DecodedCredential, ValidationEr
 }
 
 /// Decodes a VCDM 2.0 credential JWT: `typ` is `vc+jwt` when present (VC-JOSE-COSE §3.1.1),
-/// so a token typed for another purpose is never read as a credential.
-fn decode_v2(jws: &CompactJws) -> Result<DecodedCredentialV2, ValidationError> {
-    check_typ(jws.header(), CredentialV2::JWT_TYP)?;
+/// or one of `additional_typ`, so a token typed for another purpose is never read as a
+/// credential.
+fn decode_v2(
+    jws: &CompactJws,
+    additional_typ: &BTreeSet<String>,
+) -> Result<DecodedCredentialV2, ValidationError> {
+    check_typ(jws.header(), CredentialV2::JWT_TYP, additional_typ)?;
     let claims: JwtClaims = serde_json::from_slice(jws.payload())
         .map_err(|e| ValidationError::Payload(e.to_string()))?;
     let credential = CredentialV2::from_jwt_claims(&claims)?;
@@ -297,13 +310,19 @@ fn decode_v2(jws: &CompactJws) -> Result<DecodedCredentialV2, ValidationError> {
     })
 }
 
-/// Rejects a header `typ` other than `expected`, when one is present.
-pub(super) fn check_typ(header: &JwsHeader, expected: &'static str) -> Result<(), ValidationError> {
+/// Rejects a header `typ` other than `expected` and `additional`, when one is present.
+pub(super) fn check_typ(
+    header: &JwsHeader,
+    expected: &'static str,
+    additional: &BTreeSet<String>,
+) -> Result<(), ValidationError> {
     match header.typ.as_deref() {
-        Some(found) if found != expected => Err(ValidationError::UnexpectedTyp {
-            expected,
-            found: found.to_owned(),
-        }),
+        Some(found) if found != expected && !additional.contains(found) => {
+            Err(ValidationError::UnexpectedTyp {
+                expected,
+                found: found.to_owned(),
+            })
+        }
         _ => Ok(()),
     }
 }

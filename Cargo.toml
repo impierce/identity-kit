@@ -15,7 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["secp256k1", "software", "did-key", "did-jwk", "did-web", "reqwest", "vc", "sd-jwt", "domain-linkage"]
+default = ["secp256k1", "software", "did-key", "did-jwk", "did-web", "reqwest", "vc", "sd-jwt", "domain-linkage", "linked-vp"]
 # ES256K signatures and `secp256k1` keys, via `k256`.
 secp256k1 = ["dep:k256"]
 # RS256 and PS256 signatures, via `rsa`.
@@ -41,6 +41,8 @@ vc = ["dep:chrono"]
 sd-jwt = ["vc", "dep:getrandom", "dep:miniz_oxide"]
 # DIF Well Known DID Configuration (`domain_linkage`), over the `vc` module and `did:web`'s `url`.
 domain-linkage = ["vc", "did-web"]
+# DIF Linked Verifiable Presentation (`linked_vp`), over the `vc` module and `did:web`'s `HttpClient`.
+linked-vp = ["vc", "did-web"]
 # OpenAPI schemas (`utoipa::ToSchema`) for the public JSON types.
 utoipa = ["dep:utoipa"]
 
