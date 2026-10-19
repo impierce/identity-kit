@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{DidResolver, DocumentCache};
-use crate::did::{Did, DidDocument, ResolutionError, ResolutionOptions, ResolutionResult};
+use crate::did::{
+    Did, DidDocument, ResolutionError, ResolutionErrorKind, ResolutionOptions, ResolutionResult,
+};
 
 /// Routes each DID to the [`DidResolver`] registered for its method, with an optional
 /// [`DocumentCache`] in front.
@@ -54,10 +56,10 @@ impl Resolver {
     ///
     /// # Errors
     ///
-    /// [`ResolutionError::MethodNotSupported`] when no resolver is registered for the method
+    /// [`ResolutionErrorKind::MethodNotSupported`] when no resolver is registered for the method
     /// of `did`; otherwise what the method's resolver reports, as `Err` or in its resolution
-    /// metadata; [`ResolutionError::NotFound`] when it reports neither a document nor an error
-    /// nor deactivation; [`ResolutionError::InvalidDidDocument`] when the document's `id` is
+    /// metadata; [`ResolutionErrorKind::NotFound`] when it reports neither a document nor an error
+    /// nor deactivation; [`ResolutionErrorKind::InvalidDidDocument`] when the document's `id` is
     /// neither `did` nor the `canonicalId` of the document metadata.
     pub async fn resolve(&self, did: &Did) -> Result<ResolutionResult, ResolutionError> {
         self.resolve_with(did, &ResolutionOptions::default()).await
@@ -73,10 +75,12 @@ impl Resolver {
         did: &Did,
         options: &ResolutionOptions,
     ) -> Result<ResolutionResult, ResolutionError> {
-        let resolver = self
-            .methods
-            .get(did.method())
-            .ok_or(ResolutionError::MethodNotSupported)?;
+        let resolver = self.methods.get(did.method()).ok_or_else(|| {
+            ResolutionError::new(ResolutionErrorKind::MethodNotSupported).with_detail(format!(
+                "no resolver is registered for `did:{}`",
+                did.method()
+            ))
+        })?;
         let cache = self
             .cache
             .as_ref()
@@ -95,12 +99,13 @@ impl Resolver {
     ///
     /// # Errors
     ///
-    /// As [`resolve`](Self::resolve); a deactivated DID is [`ResolutionError::NotFound`], even
+    /// As [`resolve`](Self::resolve); a deactivated DID is [`ResolutionErrorKind::NotFound`], even
     /// when the method still returns its last document.
     pub async fn resolve_document(&self, did: &Did) -> Result<DidDocument, ResolutionError> {
         let result = self.resolve(did).await?;
         if result.document_metadata.is_deactivated() {
-            return Err(ResolutionError::NotFound);
+            return Err(ResolutionError::new(ResolutionErrorKind::NotFound)
+                .with_detail(format!("`{did}` is deactivated")));
         }
         result.into_document()
     }
@@ -116,11 +121,21 @@ fn check_result(did: &Did, result: ResolutionResult) -> Result<ResolutionResult,
         Some(document) => {
             let canonical = result.document_metadata.canonical_id.as_ref();
             if document.id != *did && canonical != Some(&document.id) {
-                return Err(ResolutionError::InvalidDidDocument);
+                return Err(
+                    ResolutionError::new(ResolutionErrorKind::InvalidDidDocument).with_detail(
+                        format!(
+                            "the resolver returned the document of `{}` for `{did}`",
+                            document.id
+                        ),
+                    ),
+                );
             }
         }
         None if result.document_metadata.is_deactivated() => {}
-        None => return Err(ResolutionError::NotFound),
+        None => {
+            return Err(ResolutionError::new(ResolutionErrorKind::NotFound)
+                .with_detail("the resolver returned neither a document nor an error"));
+        }
     }
     Ok(result)
 }
@@ -141,7 +156,9 @@ impl fmt::Debug for Resolver {
 /// ```
 /// use std::time::Duration;
 ///
-/// use identity_kit::did::{Did, ResolutionError, ResolutionOptions, ResolutionResult};
+/// use identity_kit::did::{
+///     Did, ResolutionError, ResolutionErrorKind, ResolutionOptions, ResolutionResult,
+/// };
 /// use identity_kit::resolver::{DidResolver, Resolver};
 ///
 /// struct Nothing;
@@ -157,7 +174,7 @@ impl fmt::Debug for Resolver {
 ///         _: &Did,
 ///         _: &ResolutionOptions,
 ///     ) -> Result<ResolutionResult, ResolutionError> {
-///         Err(ResolutionError::NotFound)
+///         Err(ResolutionErrorKind::NotFound.into())
 ///     }
 /// }
 ///

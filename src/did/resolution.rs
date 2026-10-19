@@ -2,7 +2,10 @@
 //! two metadata structures, the resolution options and the error vocabulary.
 
 use core::fmt;
+use core::hash::{Hash, Hasher};
 use core::str::FromStr;
+use std::error::Error;
+use std::sync::Arc;
 
 use indexmap::IndexMap;
 use serde::de::Error as _;
@@ -16,38 +19,31 @@ pub const APPLICATION_DID_JSON: &str = "application/did+json";
 /// Media type of the JSON-LD representation of a DID document (DID Core §6.3).
 pub const APPLICATION_DID_LD_JSON: &str = "application/did+ld+json";
 
-/// The error vocabulary of DID resolution (DID Core §7.1.2, DID Resolution).
+/// The error keywords of DID resolution (DID Core §7.1.2, DID Resolution).
 ///
-/// Serializes as the registered keyword, for example `notFound`; a keyword this crate does not
-/// know is kept in [`Other`](Self::Other).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, thiserror::Error)]
+/// [`ResolutionError::kind`] returns it; it is what the error serializes as and what callers
+/// match on. A keyword this crate does not know is kept in [`Other`](Self::Other).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum ResolutionError {
+pub enum ResolutionErrorKind {
     /// `invalidDid`: the DID does not conform to the DID syntax.
-    #[error("invalid DID")]
     InvalidDid,
     /// `notFound`: no DID document exists for the DID.
-    #[error("DID not found")]
     NotFound,
     /// `methodNotSupported`: the resolver has no implementation of the DID method.
-    #[error("DID method not supported")]
     MethodNotSupported,
     /// `representationNotSupported`: the resolver cannot produce the requested media type.
-    #[error("representation not supported")]
     RepresentationNotSupported,
     /// `invalidDidDocument`: the method returned a document that is malformed or not the
     /// document of the DID (DID Resolution "Errors").
-    #[error("invalid DID document")]
     InvalidDidDocument,
     /// `internalError`: the resolver failed unexpectedly (DID Resolution "Errors").
-    #[error("internal resolver error")]
     InternalError,
     /// Any other keyword.
-    #[error("resolution error `{0}`")]
     Other(String),
 }
 
-impl ResolutionError {
+impl ResolutionErrorKind {
     /// The registered keyword, for example `notFound`.
     pub fn as_str(&self) -> &str {
         match self {
@@ -62,10 +58,25 @@ impl ResolutionError {
     }
 }
 
-impl FromStr for ResolutionError {
+impl fmt::Display for ResolutionErrorKind {
+    /// A short English description, for example "DID not found".
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDid => f.write_str("invalid DID"),
+            Self::NotFound => f.write_str("DID not found"),
+            Self::MethodNotSupported => f.write_str("DID method not supported"),
+            Self::RepresentationNotSupported => f.write_str("representation not supported"),
+            Self::InvalidDidDocument => f.write_str("invalid DID document"),
+            Self::InternalError => f.write_str("internal resolver error"),
+            Self::Other(keyword) => write!(f, "resolution error `{keyword}`"),
+        }
+    }
+}
+
+impl FromStr for ResolutionErrorKind {
     type Err = core::convert::Infallible;
 
-    /// Never fails: an unknown keyword becomes [`ResolutionError::Other`].
+    /// Never fails: an unknown keyword becomes [`ResolutionErrorKind::Other`].
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
             "invalidDid" => Self::InvalidDid,
@@ -79,9 +90,151 @@ impl FromStr for ResolutionError {
     }
 }
 
+/// Why a DID could not be resolved: a [`ResolutionErrorKind`] keyword, and optionally a
+/// human-readable detail and the underlying error.
+///
+/// The keyword is the error as DID Core defines it: it is what the error serializes as, what
+/// [`ResolutionMetadata::error`] reports, and the only part two errors are compared on. The
+/// detail (the HTTP status of a failed `did:web` fetch, the ids of a mismatched document) and
+/// the source (the HTTP client's error, the JSON or decoding error)
+/// are diagnostics: they appear in [`Display`](fmt::Display) and [`Error::source`], and are
+/// lost when the error is serialized.
+///
+/// # Examples
+///
+/// ```
+/// use std::error::Error as _;
+///
+/// use identity_kit::did::{ResolutionError, ResolutionErrorKind};
+///
+/// let cause = std::io::Error::other("connection refused");
+/// let error = ResolutionError::new(ResolutionErrorKind::InternalError)
+///     .with_detail("fetching `https://example.com/.well-known/did.json` failed")
+///     .with_source(cause);
+///
+/// assert_eq!(error.kind(), &ResolutionErrorKind::InternalError);
+/// assert_eq!(error, ResolutionErrorKind::InternalError);
+/// assert_eq!(error.as_str(), "internalError");
+/// assert_eq!(
+///     error.to_string(),
+///     "internal resolver error: fetching `https://example.com/.well-known/did.json` failed: \
+///      connection refused"
+/// );
+/// assert!(error.source().unwrap().downcast_ref::<std::io::Error>().is_some());
+/// assert_eq!(serde_json::to_string(&error)?, r#""internalError""#);
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct ResolutionError {
+    kind: ResolutionErrorKind,
+    detail: Option<String>,
+    source: Option<Arc<dyn Error + Send + Sync + 'static>>,
+}
+
+impl ResolutionError {
+    /// An error reporting `kind`, without detail or source.
+    pub const fn new(kind: ResolutionErrorKind) -> Self {
+        Self {
+            kind,
+            detail: None,
+            source: None,
+        }
+    }
+
+    /// This error with a human-readable `detail`, replacing any previous one.
+    #[must_use]
+    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    /// This error caused by `source`, replacing any previous source.
+    #[must_use]
+    pub fn with_source<E: Error + Send + Sync + 'static>(mut self, source: E) -> Self {
+        self.source = Some(Arc::new(source));
+        self
+    }
+
+    /// The keyword.
+    pub const fn kind(&self) -> &ResolutionErrorKind {
+        &self.kind
+    }
+
+    /// The registered keyword, for example `notFound`.
+    pub fn as_str(&self) -> &str {
+        self.kind.as_str()
+    }
+
+    /// The human-readable detail, if any.
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
+    }
+}
+
+impl fmt::Display for ResolutionError {
+    /// The keyword's description, then the detail and the source's message when present, each
+    /// after a colon.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.kind, f)?;
+        if let Some(detail) = &self.detail {
+            write!(f, ": {detail}")?;
+        }
+        if let Some(source) = &self.source {
+            write!(f, ": {source}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Error for ResolutionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn Error + 'static))
+    }
+}
+
+/// Errors are equal when their keywords are; the detail and the source are not compared, so an
+/// error equals its own serialization round trip.
+impl PartialEq for ResolutionError {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Eq for ResolutionError {}
+
+impl PartialEq<ResolutionErrorKind> for ResolutionError {
+    fn eq(&self, other: &ResolutionErrorKind) -> bool {
+        self.kind == *other
+    }
+}
+
+impl Hash for ResolutionError {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+    }
+}
+
+impl From<ResolutionErrorKind> for ResolutionError {
+    fn from(kind: ResolutionErrorKind) -> Self {
+        Self::new(kind)
+    }
+}
+
+impl FromStr for ResolutionError {
+    type Err = core::convert::Infallible;
+
+    /// Never fails: an unknown keyword becomes [`ResolutionErrorKind::Other`].
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse().map(Self::new)
+    }
+}
+
 impl From<DidError> for ResolutionError {
-    fn from(_: DidError) -> Self {
-        Self::InvalidDid
+    /// [`ResolutionErrorKind::InvalidDid`], caused by `error`.
+    fn from(error: DidError) -> Self {
+        Self::new(ResolutionErrorKind::InvalidDid).with_source(error)
     }
 }
 
@@ -134,7 +287,8 @@ pub struct ResolutionMetadata {
         skip_serializing_if = "Option::is_none"
     )]
     pub content_type: Option<String>,
-    /// Why resolution failed.
+    /// Why resolution failed. Only the keyword is serialized; the detail and source of the
+    /// error are kept in memory, for the caller of the resolver.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<ResolutionError>,
     /// Every other property, in insertion order.
@@ -143,11 +297,11 @@ pub struct ResolutionMetadata {
 }
 
 impl ResolutionMetadata {
-    /// Metadata reporting `error`.
-    pub fn error(error: ResolutionError) -> Self {
+    /// Metadata reporting `error`, a [`ResolutionError`] or a bare [`ResolutionErrorKind`].
+    pub fn error(error: impl Into<ResolutionError>) -> Self {
         Self {
             content_type: None,
-            error: Some(error),
+            error: Some(error.into()),
             properties: IndexMap::new(),
         }
     }
@@ -227,14 +381,14 @@ impl DocumentMetadata {
 /// # Examples
 ///
 /// ```
-/// use identity_kit::did::{ResolutionError, ResolutionResult};
+/// use identity_kit::did::{ResolutionErrorKind, ResolutionResult};
 ///
-/// let failed = ResolutionResult::error(ResolutionError::NotFound);
+/// let failed = ResolutionResult::error(ResolutionErrorKind::NotFound);
 /// assert_eq!(
 ///     serde_json::to_string(&failed)?,
 ///     r#"{"didResolutionMetadata":{"error":"notFound"},"didDocumentMetadata":{}}"#
 /// );
-/// assert_eq!(failed.into_document(), Err(ResolutionError::NotFound));
+/// assert_eq!(failed.into_document().unwrap_err(), ResolutionErrorKind::NotFound);
 /// # Ok::<(), serde_json::Error>(())
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -265,8 +419,9 @@ impl ResolutionResult {
         }
     }
 
-    /// A failed result reporting `error`.
-    pub fn error(error: ResolutionError) -> Self {
+    /// A failed result reporting `error`, a [`ResolutionError`] or a bare
+    /// [`ResolutionErrorKind`].
+    pub fn error(error: impl Into<ResolutionError>) -> Self {
         Self {
             document: None,
             resolution_metadata: ResolutionMetadata::error(error),
@@ -288,13 +443,17 @@ impl ResolutionResult {
         self
     }
 
-    /// The reported error, if any.
-    pub fn error_kind(&self) -> Option<&ResolutionError> {
-        self.resolution_metadata.error.as_ref()
+    /// The keyword of the reported error, if any; the error itself, with its detail and source,
+    /// is in [`resolution_metadata`](Self::resolution_metadata).
+    pub fn error_kind(&self) -> Option<&ResolutionErrorKind> {
+        self.resolution_metadata
+            .error
+            .as_ref()
+            .map(ResolutionError::kind)
     }
 
     /// The document, or the reported error; a result with neither counts as
-    /// [`ResolutionError::NotFound`].
+    /// [`ResolutionErrorKind::NotFound`].
     ///
     /// # Errors
     ///
@@ -303,7 +462,7 @@ impl ResolutionResult {
         match (self.document, self.resolution_metadata.error) {
             (_, Some(error)) => Err(error),
             (Some(document), None) => Ok(document),
-            (None, None) => Err(ResolutionError::NotFound),
+            (None, None) => Err(ResolutionErrorKind::NotFound.into()),
         }
     }
 }

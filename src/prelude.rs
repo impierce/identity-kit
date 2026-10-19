@@ -16,9 +16,9 @@
 
 pub use crate::did::{
     Context, Did, DidDocument, DidDocumentBuilder, DidError, DidUrl, DidUrlReference,
-    DocumentMetadata, MethodRef, MethodType, OneOrMany, ResolutionError, ResolutionMetadata,
-    ResolutionOptions, ResolutionResult, Service, ServiceEndpoint, Uri, VerificationMaterial,
-    VerificationMethod, VerificationRelationship,
+    DocumentMetadata, MethodRef, MethodType, OneOrMany, ResolutionError, ResolutionErrorKind,
+    ResolutionMetadata, ResolutionOptions, ResolutionResult, Service, ServiceEndpoint, Uri,
+    VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 pub use crate::jose::{
     CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, KeyType, Signer,

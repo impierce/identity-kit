@@ -116,8 +116,14 @@ Operations on `DidDocument`: `builder()`, `insert_verification_method(method, re
 (fragment-only references resolve against `id`), `map_dids(FnMut(Did) -> Did)`.
 
 Resolution types follow the W3C DID Resolution specification: `ResolutionResult { document,
-document_metadata, resolution_metadata }`, `DocumentMetadata`, `ResolutionMetadata`, and the error
-vocabulary `invalidDid`, `notFound`, `methodNotSupported`, `representationNotSupported`.
+document_metadata, resolution_metadata }`, `DocumentMetadata`, `ResolutionMetadata`, and
+`ResolutionError`. The error is a `ResolutionErrorKind` keyword (`invalidDid`, `notFound`,
+`methodNotSupported`, `representationNotSupported`, `invalidDidDocument`, `internalError`, or any
+other) plus an optional human-readable detail and an optional `source()`, the way
+`std::io::Error` pairs an `ErrorKind` with a cause. Only the keyword is serialized and compared;
+the detail and source tell a refused URL, a timeout, an HTTP `500` and a malformed body apart in
+logs. RFC 9457 problem details, which the DID Resolution draft now prefers, map onto the same
+three parts.
 
 Serialization: empty arrays and `None` are omitted; `Did`, `DidUrl` serialize as strings;
 `Service.type` is a string when single; `@context` is emitted first.

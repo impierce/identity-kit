@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use identity_kit::did::{
-    Did, DidDocument, DidUrl, DocumentMetadata, MethodType, ResolutionError, ResolutionMetadata,
-    ResolutionOptions, ResolutionResult, Service, VerificationMaterial, VerificationMethod,
-    VerificationRelationship,
+    Did, DidDocument, DidUrl, DocumentMetadata, MethodType, ResolutionError, ResolutionErrorKind,
+    ResolutionMetadata, ResolutionOptions, ResolutionResult, Service, VerificationMaterial,
+    VerificationMethod, VerificationRelationship,
 };
 use identity_kit::jose::{Jwk, JwkError};
 use identity_kit::resolver::{
@@ -261,7 +261,7 @@ impl DidResolver for ExampleResolver {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.last_options.lock().unwrap() = Some(options.clone());
         if let Some(version) = options.properties.get("versionId") {
-            let version = version.as_str().ok_or(ResolutionError::InternalError)?;
+            let version = version.as_str().ok_or(ResolutionErrorKind::InternalError)?;
             return self
                 .versions
                 .get(&(did.clone(), version.to_owned()))
@@ -271,12 +271,12 @@ impl DidResolver for ExampleResolver {
                     metadata.version_id = Some(version.to_owned());
                     ResolutionResult::new(document).with_document_metadata(metadata)
                 })
-                .ok_or(ResolutionError::NotFound);
+                .ok_or(ResolutionErrorKind::NotFound.into());
         }
         self.responses
             .get(did)
             .cloned()
-            .unwrap_or(Err(ResolutionError::NotFound))
+            .unwrap_or(Err(ResolutionErrorKind::NotFound.into()))
     }
 }
 
@@ -409,7 +409,7 @@ async fn did_resolution_example_dereferences_to_verification_method() {
             .await,
         Err(DereferenceError::Resolution {
             did: did("did:example:123456789abcdefghi"),
-            error: ResolutionError::NotFound,
+            error: ResolutionErrorKind::NotFound.into(),
         })
     );
 }
@@ -547,7 +547,7 @@ async fn did_core_examples_7_to_11_relationships() {
         resolver.dereference(&foreign).await,
         Err(DereferenceError::Resolution {
             did: did("did:example:123"),
-            error: ResolutionError::NotFound,
+            error: ResolutionErrorKind::NotFound.into(),
         })
     );
 }
@@ -644,11 +644,16 @@ async fn resolution_results_are_normalized() {
     let (_, resolver) = resolver_for(
         ExampleResolver::new()
             .with_document(doc.clone())
-            .with_response("did:example:err", Err(ResolutionError::InternalError))
+            .with_response(
+                "did:example:err",
+                Err(ResolutionError::new(ResolutionErrorKind::InternalError)
+                    .with_source(std::io::Error::other("ledger unreachable"))),
+            )
             .with_response(
                 "did:example:meta",
                 Ok(ResolutionResult::error(
-                    ResolutionError::RepresentationNotSupported,
+                    ResolutionError::new(ResolutionErrorKind::RepresentationNotSupported)
+                        .with_detail("only CBOR is served"),
                 )),
             )
             .with_response("did:example:empty", Ok(ResolutionResult::default()))
@@ -682,7 +687,7 @@ async fn resolution_results_are_normalized() {
     // A method without a resolver.
     assert_eq!(
         resolver.resolve(&did("did:web:example.com")).await,
-        Err(ResolutionError::MethodNotSupported)
+        Err(ResolutionErrorKind::MethodNotSupported.into())
     );
     assert_eq!(
         resolver
@@ -690,30 +695,45 @@ async fn resolution_results_are_normalized() {
                 "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
             ))
             .await,
-        Err(ResolutionError::MethodNotSupported)
+        Err(ResolutionErrorKind::MethodNotSupported.into())
     );
     // Both error forms become `Err`.
     assert_eq!(
         resolver.resolve(&did("did:example:missing")).await,
-        Err(ResolutionError::NotFound)
+        Err(ResolutionErrorKind::NotFound.into())
     );
+    // The method's detail and source come through either way.
+    let error = resolver.resolve(&did("did:example:err")).await.unwrap_err();
+    assert_eq!(error, ResolutionErrorKind::InternalError);
     assert_eq!(
-        resolver.resolve(&did("did:example:err")).await,
-        Err(ResolutionError::InternalError)
+        std::error::Error::source(&error).map(ToString::to_string),
+        Some("ledger unreachable".to_owned())
     );
+    let error = resolver
+        .resolve(&did("did:example:meta"))
+        .await
+        .unwrap_err();
+    assert_eq!(error, ResolutionErrorKind::RepresentationNotSupported);
+    assert_eq!(error.detail(), Some("only CBOR is served"));
+    let error = resolver
+        .resolve(&did("did:example:empty"))
+        .await
+        .unwrap_err();
+    assert_eq!(error, ResolutionErrorKind::NotFound);
     assert_eq!(
-        resolver.resolve(&did("did:example:meta")).await,
-        Err(ResolutionError::RepresentationNotSupported)
-    );
-    assert_eq!(
-        resolver.resolve(&did("did:example:empty")).await,
-        Err(ResolutionError::NotFound)
+        error.detail(),
+        Some("the resolver returned neither a document nor an error")
     );
     // A document for another DID is refused, unless the DID is an equivalent of the canonical
     // one the document is for.
+    let error = resolver
+        .resolve(&did("did:example:wrong"))
+        .await
+        .unwrap_err();
+    assert_eq!(error, ResolutionErrorKind::InvalidDidDocument);
     assert_eq!(
-        resolver.resolve(&did("did:example:wrong")).await,
-        Err(ResolutionError::InvalidDidDocument)
+        error.detail(),
+        Some("the resolver returned the document of `did:example:123` for `did:example:wrong`")
     );
     let canonical = resolver
         .resolve(&did("did:example:canonical"))
@@ -757,7 +777,7 @@ async fn resolution_results_are_normalized() {
         error,
         DereferenceError::Resolution {
             did: did("did:example:missing"),
-            error: ResolutionError::NotFound,
+            error: ResolutionErrorKind::NotFound.into(),
         }
     );
     assert_eq!(
@@ -768,7 +788,7 @@ async fn resolution_results_are_normalized() {
         resolver.dereference(&url("did:web:example.com")).await,
         Err(DereferenceError::Resolution {
             did: did("did:web:example.com"),
-            error: ResolutionError::MethodNotSupported,
+            error: ResolutionErrorKind::MethodNotSupported.into(),
         })
     );
 }
@@ -796,7 +816,7 @@ async fn deactivated_dids_resolve_but_do_not_dereference() {
     assert!(result.document.is_none() && result.document_metadata.is_deactivated());
     assert_eq!(
         resolver.resolve_document(&gone).await,
-        Err(ResolutionError::NotFound)
+        Err(ResolutionErrorKind::NotFound.into())
     );
     assert_eq!(
         resolver.dereference(&gone.to_url()).await,
@@ -810,7 +830,7 @@ async fn deactivated_dids_resolve_but_do_not_dereference() {
     assert!(result.document.is_some() && result.document_metadata.is_deactivated());
     assert_eq!(
         resolver.resolve_document(key.did()).await,
-        Err(ResolutionError::NotFound)
+        Err(ResolutionErrorKind::NotFound.into())
     );
     assert_eq!(
         resolver.resolve_public_key(&key, None).await,
@@ -871,7 +891,7 @@ async fn builder_registers_by_method_and_later_registrations_win() {
     );
     assert_eq!(
         resolver.resolve(&did("did:example:123")).await,
-        Err(ResolutionError::NotFound)
+        Err(ResolutionErrorKind::NotFound.into())
     );
     assert_eq!((first.calls(), second.calls()), (0, 2));
     assert_eq!(
@@ -899,7 +919,7 @@ async fn builder_registers_by_method_and_later_registrations_win() {
     assert!(empty.methods().is_empty());
     assert_eq!(
         empty.resolve(&did("did:example:123")).await,
-        Err(ResolutionError::MethodNotSupported)
+        Err(ResolutionErrorKind::MethodNotSupported.into())
     );
 }
 
@@ -1303,7 +1323,7 @@ fn capabilities_and_error_messages() {
     }
     let resolution = DereferenceError::Resolution {
         did: did("did:example:123"),
-        error: ResolutionError::MethodNotSupported,
+        error: ResolutionErrorKind::MethodNotSupported.into(),
     };
     assert_eq!(
         std::error::Error::source(&resolution).map(ToString::to_string),

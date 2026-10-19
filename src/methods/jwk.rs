@@ -10,8 +10,8 @@
 
 use crate::did::{
     Context, DEFAULT_MAX_LEN, Did, DidDocument, DidError, DocumentError, MethodType,
-    ResolutionError, ResolutionOptions, ResolutionResult, VerificationMaterial, VerificationMethod,
-    VerificationRelationship,
+    ResolutionError, ResolutionErrorKind, ResolutionOptions, ResolutionResult,
+    VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 use crate::jose::Jwk;
 use crate::resolver::{DidProducer, DidResolver, Hosting, MethodCapabilities, ProduceError};
@@ -78,24 +78,41 @@ impl DidJwk {
     ///
     /// # Errors
     ///
-    /// - [`ResolutionError::MethodNotSupported`] when `did` is not a `did:jwk`.
-    /// - [`ResolutionError::InvalidDid`] when the method-specific id is not base64url of a
-    ///   JSON Web Key, the key carries private parameters, or the DID is longer than
-    ///   [`MAX_DID_LEN`](Self::MAX_DID_LEN).
+    /// A [`ResolutionError`] whose kind is:
+    ///
+    /// - [`MethodNotSupported`](ResolutionErrorKind::MethodNotSupported) when `did` is not a
+    ///   `did:jwk`.
+    /// - [`InvalidDid`](ResolutionErrorKind::InvalidDid) when the method-specific id is not
+    ///   base64url of a JSON Web Key, the key carries private parameters, or the DID is longer
+    ///   than [`MAX_DID_LEN`](Self::MAX_DID_LEN). The detail says which, and the base64url or
+    ///   JSON error is the source.
     pub fn document(did: &Did) -> Result<DidDocument, ResolutionError> {
+        let invalid = |detail: &str| {
+            ResolutionError::new(ResolutionErrorKind::InvalidDid).with_detail(detail)
+        };
         if did.method() != Self::METHOD {
-            return Err(ResolutionError::MethodNotSupported);
+            return Err(
+                ResolutionError::new(ResolutionErrorKind::MethodNotSupported)
+                    .with_detail(format!("`{did}` is not a did:jwk")),
+            );
         }
         if did.as_str().len() > Self::MAX_DID_LEN {
-            return Err(ResolutionError::InvalidDid);
+            return Err(invalid(&format!(
+                "the DID is longer than {} bytes",
+                Self::MAX_DID_LEN
+            )));
         }
-        let json = crate::jose::base64url::decode(did.method_specific_id())
-            .map_err(|_| ResolutionError::InvalidDid)?;
-        let jwk: Jwk = serde_json::from_slice(&json).map_err(|_| ResolutionError::InvalidDid)?;
+        let json = crate::jose::base64url::decode(did.method_specific_id()).map_err(|error| {
+            invalid("the method-specific id is not base64url").with_source(error)
+        })?;
+        let jwk: Jwk = serde_json::from_slice(&json).map_err(|error| {
+            invalid("the method-specific id does not encode a JSON Web Key").with_source(error)
+        })?;
         if jwk.is_private() {
-            return Err(ResolutionError::InvalidDid);
+            return Err(invalid("the JSON Web Key carries private parameters"));
         }
-        build(did, jwk).map_err(|_| ResolutionError::InvalidDid)
+        build(did, jwk)
+            .map_err(|error| invalid("the JSON Web Key yields no DID document").with_source(error))
     }
 }
 

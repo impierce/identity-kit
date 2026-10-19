@@ -8,7 +8,7 @@
 //! # Resolution
 //!
 //! [`Resolver::resolve`] implements the DID Resolution algorithm around the method's resolver:
-//! it reports [`ResolutionError::MethodNotSupported`] for a method nobody registered, turns a
+//! it reports [`ResolutionErrorKind::MethodNotSupported`] for a method nobody registered, turns a
 //! result whose metadata reports an error into `Err`, refuses a document whose `id` is not the
 //! DID being resolved (nor its `canonicalId`), and serves repeated resolutions from the cache
 //! when one is configured. [`Resolver::resolve_document`] is the shortcut to the document.
@@ -33,7 +33,8 @@
 //! use std::collections::HashMap;
 //!
 //! use identity_kit::did::{
-//!     Did, DidDocument, DidUrl, ResolutionError, ResolutionOptions, ResolutionResult,
+//!     Did, DidDocument, DidUrl, ResolutionError, ResolutionErrorKind, ResolutionOptions,
+//!     ResolutionResult,
 //! };
 //! use identity_kit::resolver::{Dereferenced, DidResolver, Resolver};
 //!
@@ -50,11 +51,10 @@
 //!         did: &Did,
 //!         _: &ResolutionOptions,
 //!     ) -> Result<ResolutionResult, ResolutionError> {
-//!         self.0
-//!             .get(did)
-//!             .cloned()
-//!             .map(ResolutionResult::new)
-//!             .ok_or(ResolutionError::NotFound)
+//!         self.0.get(did).cloned().map(ResolutionResult::new).ok_or_else(|| {
+//!             ResolutionError::new(ResolutionErrorKind::NotFound)
+//!                 .with_detail(format!("no document is stored for `{did}`"))
+//!         })
 //!     }
 //! }
 //!
@@ -85,10 +85,9 @@
 //! assert!(matches!(resolver.dereference(&key).await?, Dereferenced::VerificationMethod(_)));
 //!
 //! let unknown = Did::parse("did:other:123")?;
-//! assert_eq!(
-//!     resolver.resolve(&unknown).await.unwrap_err(),
-//!     ResolutionError::MethodNotSupported
-//! );
+//! let error = resolver.resolve(&unknown).await.unwrap_err();
+//! assert_eq!(error, ResolutionErrorKind::MethodNotSupported);
+//! assert_eq!(error.detail(), Some("no resolver is registered for `did:other`"));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! # })?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -96,6 +95,8 @@
 
 use std::sync::Arc;
 
+#[cfg(doc)]
+use crate::did::ResolutionErrorKind;
 use crate::did::{Did, ResolutionError, ResolutionOptions, ResolutionResult};
 
 mod cache;
@@ -132,10 +133,13 @@ pub trait DidResolver: Send + Sync {
     ///
     /// # Errors
     ///
-    /// A [`ResolutionError`]: [`NotFound`](ResolutionError::NotFound) for a DID that does not
-    /// exist, [`RepresentationNotSupported`](ResolutionError::RepresentationNotSupported) for an
-    /// `accept` the method cannot produce, [`InternalError`](ResolutionError::InternalError) for
-    /// an unexpected failure such as a network error.
+    /// A [`ResolutionError`] whose kind is [`NotFound`](ResolutionErrorKind::NotFound) for a DID
+    /// that does not exist,
+    /// [`RepresentationNotSupported`](ResolutionErrorKind::RepresentationNotSupported) for an
+    /// `accept` the method cannot produce, or [`InternalError`](ResolutionErrorKind::InternalError)
+    /// for an unexpected failure such as a network error. Attach what caused it with
+    /// [`ResolutionError::with_source`] and [`ResolutionError::with_detail`], so callers can tell
+    /// one failure from another.
     async fn resolve(
         &self,
         did: &Did,
