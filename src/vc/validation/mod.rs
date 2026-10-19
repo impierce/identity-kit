@@ -29,13 +29,17 @@
 //! For a presentation ([`JwtPresentationValidator`]): the same for the presentation JWT, with
 //! the key resolved under `authentication` and the holder as the signer, plus the expected
 //! audience and nonce; then every credential it carries is validated as above, and its subject
-//! is checked against the holder per the [`SubjectHolderRelationship`].
+//! is checked against the holder per the [`SubjectHolderRelationship`]. A VCDM 1.1
+//! presentation (`typ` `JWT`, [`validate`](JwtPresentationValidator::validate)) carries
+//! credential JWTs in its `vp` claim; a VCDM 2.0 one (`typ` `vp+jwt`,
+//! [`validate_v2`](JwtPresentationValidator::validate_v2)) is the payload itself and envelopes
+//! `vc+jwt` credentials, an envelope of another media type failing for that credential alone.
 //!
 //! Everything a verifier decides by policy (which issuers to trust, which credential types to
 //! accept, what the claims must say) is left to the application, which gets the decoded
-//! credential back. [`decode_credential`], [`decode_credential_v2`] and
-//! [`decode_presentation`] decode without verifying, for a look at a token before deciding how
-//! to validate it; [`extract_issuer`] and [`extract_holder`] read just the signer's DID.
+//! credential back. [`decode_credential`], [`decode_credential_v2`], [`decode_presentation`]
+//! and [`decode_presentation_v2`] decode without verifying, for a look at a token before
+//! deciding how to validate it; [`extract_issuer`] and [`extract_holder`] read just the signer's DID.
 
 use core::time::Duration;
 use std::collections::BTreeSet;
@@ -59,7 +63,10 @@ pub use credential::{
 pub use error::{KeyResolutionError, PresentationValidationError, StatusError, ValidationError};
 #[cfg(feature = "linked-vp")]
 pub(crate) use presentation::decode_presentation_with;
-pub use presentation::{DecodedPresentation, JwtPresentationValidator, decode_presentation};
+pub use presentation::{
+    DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, decode_presentation,
+    decode_presentation_v2,
+};
 
 /// Finds the public key a JWT was signed with, given the DID URL in its `kid`.
 ///
