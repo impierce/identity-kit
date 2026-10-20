@@ -73,6 +73,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `Credential` and `Presentation` builders for the VCDM 1.1 JWT profile, `to_jwt_claims` mapping              |   ✅   | `vc`          | [VCDM 1.1 §6.3.1][vcdm11-jwt]                  | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `CredentialV2` and `EnvelopedVc` for VCDM 2.0 enveloped credentials                                         |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `JwtCredentialValidator`, `JwtPresentationValidator`: issuer and holder binding, clock-skew leeway, `FailFast`, `StatusCheck` hook |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VCDM 2.0][vcdm20]         | [#11](https://github.com/impierce/identity-kit/issues/11) |
+| `JwtPresentationValidator::validate_v2`, `decode_presentation_v2`: VCDM 2.0 `vp+jwt` presentations of enveloped `vc+jwt` credentials |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#36](https://github.com/impierce/identity-kit/issues/36) |
 | Additional accepted header `typ` values per validation (`additional_typ`)                                   |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 
 ### `sd_jwt_vc`: SD-JWT verifiable credentials
