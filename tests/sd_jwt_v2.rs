@@ -17,10 +17,10 @@ use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
 use identity_kit::sd_jwt_vc::{
-    Disclosure, KeyBinding, KeyBindingOptions, SdJwt, SdJwtBuilder, SdJwtCredentialV2,
-    SdJwtCredentialV2Builder, SdJwtCredentialV2Error, SdJwtCredentialValidator, SdJwtError,
-    SdJwtStatusCheck, SdJwtValidationError, SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder,
-    SdJwtVcError, Status, StatusListRef,
+    Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, SdJwt, SdJwtBuilder,
+    SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error, SdJwtCredentialValidator,
+    SdJwtError, SdJwtStatusCheck, SdJwtValidationError, SdJwtValidationOptions, SdJwtVc,
+    SdJwtVcBuilder, SdJwtVcError, Status, StatusListRef,
 };
 use identity_kit::vc::validation::{
     CredentialValidationOptions, FailFast, JwtPresentationValidator, KeyResolutionError,
@@ -1382,4 +1382,70 @@ async fn issuance_is_deterministic_with_fixed_salts() {
         .unwrap();
     assert_ne!(other.to_string(), first.to_string());
     assert_eq!(other.credential(), first.credential());
+}
+
+#[tokio::test]
+async fn builder_setters_and_debug_output() {
+    let (issuer, signer) = issuer();
+    let (holder, _) = holder();
+    let original = credential(&issuer.did, &holder.did);
+    let builder = builder(original.clone())
+        .with_not_before(Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap())
+        .with_hash_algorithm(HashAlgorithm::Sha384);
+    assert_eq!(*builder.credential(), original);
+    let debug = format!("{builder:?}");
+    assert!(debug.starts_with("SdJwtCredentialV2Builder {"));
+    assert!(debug.contains("alg: Sha384"));
+    assert!(debug.contains("concealed: ["));
+    assert!(debug.ends_with(", .. }"));
+
+    // A copy of the credential alone: nothing concealed, nothing else set.
+    let bare = builder.clone_credential().sign(&signer).await.unwrap();
+    assert!(bare.sd_jwt().disclosures().is_empty());
+    assert!(bare.confirmation().is_none());
+    assert_eq!(bare.claims().nbf, None);
+    assert_eq!(bare.header().kid.as_deref(), None);
+
+    let signed = builder.sign(&signer).await.unwrap();
+    assert_eq!(signed.claims().nbf, Some(1_717_200_000));
+    assert_eq!(
+        signed.sd_jwt().hash_algorithm().unwrap(),
+        HashAlgorithm::Sha384
+    );
+    let debug = format!("{signed:?}");
+    assert!(debug.starts_with("SdJwtCredentialV2 {"));
+    assert!(debug.contains("cnf: Some("));
+    assert!(debug.contains("status: None"));
+    assert!(debug.ends_with(", .. }"));
+    validator()
+        .validate_v2(signed.sd_jwt(), &options())
+        .await
+        .unwrap();
+
+    // `cnf` and `status` must be what the claims hold.
+    for (claim, value) in [("cnf", json!("not an object")), ("status", json!(5))] {
+        let mut claims = original.to_jwt_claims();
+        claims.iss = Some(issuer.did.to_string());
+        claims.additional.insert(claim.to_owned(), value);
+        let header = JwsHeader::new(JwsAlgorithm::EdDSA)
+            .with_typ(SdJwtCredentialV2::TYP)
+            .with_kid(issuer.kid.as_str());
+        let sd_jwt = SdJwtBuilder::new(
+            serde_json::to_value(&claims)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .sign(&header, &signer)
+        .await
+        .unwrap();
+        assert!(
+            matches!(
+                SdJwtCredentialV2::from_sd_jwt(sd_jwt),
+                Err(SdJwtCredentialV2Error::InvalidClaim { claim: found, .. }) if found == claim
+            ),
+            "{claim}"
+        );
+    }
 }
