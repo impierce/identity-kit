@@ -85,10 +85,10 @@ pub mod credentials {
         StatusList, StatusListToken, TypeMetadata, ValidatedSdJwtVc,
     };
     pub use crate::vc::validation::{
-        CredentialValidationOptions, DecodedCredential, DecodedPresentation, FailFast,
-        JwtCredentialValidator, JwtPresentationValidator, KeyResolver,
-        PresentationValidationOptions, StatusCheck, StatusPolicy, SubjectHolderRelationship,
-        TimeOptions, ValidationError,
+        CredentialValidationOptions, DecodedCredential, DecodedCredentialV2, DecodedPresentation,
+        DecodedPresentationV2, FailFast, JwtCredentialValidator, JwtPresentationValidator,
+        KeyResolver, PresentationValidationOptions, StatusCheck, StatusPolicy,
+        SubjectHolderRelationship, TimeOptions, ValidationError,
     };
     pub use crate::vc::{
         Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Party,

@@ -295,7 +295,7 @@ pub(super) fn decode(
 /// Decodes a VCDM 2.0 credential JWT: `typ` is `vc+jwt` when present (VC-JOSE-COSE §3.1.1),
 /// or one of `additional_typ`, so a token typed for another purpose is never read as a
 /// credential.
-fn decode_v2(
+pub(super) fn decode_v2(
     jws: &CompactJws,
     additional_typ: &BTreeSet<String>,
 ) -> Result<DecodedCredentialV2, ValidationError> {
