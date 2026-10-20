@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -686,6 +687,190 @@ async fn key_signer_checks_the_algorithm_and_can_override_the_kid() {
     let err = signer.sign(b"x").await.unwrap_err();
     assert_eq!(err.to_string(), "key `k` not found");
     assert!(err.inner().downcast_ref::<KeyStoreError>().is_some());
+}
+
+/// A store that counts the `public_jwk` and `sign` calls it forwards.
+struct Counting<S> {
+    inner: S,
+    public_jwk: AtomicUsize,
+    sign: AtomicUsize,
+}
+
+impl<S> Counting<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            public_jwk: AtomicUsize::new(0),
+            sign: AtomicUsize::new(0),
+        }
+    }
+
+    fn calls(&self) -> (usize, usize) {
+        (
+            self.public_jwk.load(Ordering::SeqCst),
+            self.sign.load(Ordering::SeqCst),
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl<S: KeyStore> KeyStore for Counting<S> {
+    fn capabilities(&self) -> KeyStoreCapabilities {
+        self.inner.capabilities()
+    }
+
+    async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError> {
+        self.public_jwk.fetch_add(1, Ordering::SeqCst);
+        self.inner.public_jwk(key).await
+    }
+
+    async fn sign(
+        &self,
+        key: &KeyId,
+        alg: JwsAlgorithm,
+        data: &[u8],
+    ) -> Result<Vec<u8>, KeyStoreError> {
+        self.sign.fetch_add(1, Ordering::SeqCst);
+        self.inner.sign(key, alg, data).await
+    }
+
+    async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError> {
+        self.inner.exists(key).await
+    }
+}
+
+#[tokio::test]
+async fn key_signer_over_an_arc_moves_into_a_spawned_task() {
+    let store: Arc<dyn KeyStore> = Arc::new(InMemoryKeyStore::with_seed([4; 32]));
+    let id = store
+        .generate(spec(KeyType::P256, JwsAlgorithm::ES256))
+        .await
+        .unwrap();
+    let signer = KeySigner::new(Arc::clone(&store), id, JwsAlgorithm::ES256)
+        .await
+        .unwrap();
+    let public = signer.public_jwk().clone();
+
+    let token = tokio::spawn(async move {
+        encode_compact(&JwsHeader::new(JwsAlgorithm::ES256), b"{}", &signer).await
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    CompactJws::decode(&token)
+        .unwrap()
+        .verify(&DefaultVerifier, &public)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn key_signer_from_a_known_public_jwk_skips_the_lookup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("keys.json");
+    write_key_set(&path, &format!(r#"{{"keys":[{RFC8037_A1}]}}"#));
+    let store = Arc::new(Counting::new(SoftwareKeyStore::open(&path).unwrap()));
+    let id = KeyId::new(RFC8037_THUMBPRINT);
+
+    // RFC 8037 A.2, the public key of A.1.
+    let public = jwk(RFC8037_A1).public();
+    let signer = KeySigner::from_public_jwk(
+        Arc::clone(&store),
+        id.clone(),
+        JwsAlgorithm::EdDSA,
+        public.clone(),
+    )
+    .unwrap();
+    assert_eq!(store.calls(), (0, 0));
+    assert_eq!(signer.public_jwk(), &public);
+    assert_eq!(signer.kid(), Some(RFC8037_THUMBPRINT));
+
+    // RFC 8037 A.5, byte for byte, with one call to the store: the signature.
+    let token = encode_compact(
+        &JwsHeader::new(JwsAlgorithm::EdDSA),
+        b"Example of Ed25519 signing",
+        &signer,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        token,
+        format!("{RFC8037_SIGNING_INPUT}.{RFC8037_SIGNATURE}")
+    );
+    CompactJws::decode(&token)
+        .unwrap()
+        .verify(&DefaultVerifier, &public)
+        .unwrap();
+    assert_eq!(store.calls(), (0, 1));
+
+    // A clone signs through the same store.
+    let clone = signer.clone().with_kid("did:example:123#k");
+    assert_eq!(clone.kid(), Some("did:example:123#k"));
+    clone.sign(b"x").await.unwrap();
+    assert_eq!(store.calls(), (0, 2));
+    assert!(Arc::ptr_eq(signer.store(), clone.store()));
+
+    // `new` asks the store for the public key; the result is the same signer.
+    let fetched = KeySigner::new(&*store, id, JwsAlgorithm::EdDSA)
+        .await
+        .unwrap();
+    assert_eq!(store.calls(), (1, 2));
+    assert_eq!(fetched.public_jwk().x(), public.x());
+}
+
+#[tokio::test]
+async fn key_signer_from_a_known_public_jwk_checks_the_key() {
+    let store = InMemoryKeyStore::with_seed([5; 32]);
+    let id = KeyId::new("k");
+    let ed25519 = jwk(RFC8037_A1).public();
+
+    // The store does not sign with the algorithm.
+    let err = KeySigner::from_public_jwk(&store, id.clone(), JwsAlgorithm::RS256, ed25519.clone())
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            KeyStoreError::UnsupportedAlgorithm(JwsAlgorithm::RS256)
+        ),
+        "{err}"
+    );
+
+    // The JWK names another algorithm.
+    let err = KeySigner::from_public_jwk(
+        &store,
+        id.clone(),
+        JwsAlgorithm::EdDSA,
+        ed25519.clone().with_alg("ES256"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, KeyStoreError::AlgorithmMismatch { ref key, key_alg: JwsAlgorithm::ES256, requested: JwsAlgorithm::EdDSA } if *key == id),
+        "{err}"
+    );
+
+    // The JWK carries the private key (RFC 8037 A.1).
+    let err = KeySigner::from_public_jwk(&store, id.clone(), JwsAlgorithm::EdDSA, jwk(RFC8037_A1))
+        .unwrap_err();
+    assert!(matches!(err, KeyStoreError::InvalidKey { .. }), "{err}");
+    assert_eq!(
+        err.to_string(),
+        "key `k` is unusable: the given public JWK carries private parameters"
+    );
+
+    // The JWK is not a key for the algorithm: P-256 (RFC 7515 A.3) for EdDSA, Ed25519 for ES256.
+    let p256 = jwk(RFC7515_A3_KEY).public();
+    let err = KeySigner::from_public_jwk(&store, id.clone(), JwsAlgorithm::EdDSA, p256.clone())
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "key `k` is unusable: the given public JWK (`kty` EC, `crv` P-256) is not a key for EdDSA"
+    );
+    let err =
+        KeySigner::from_public_jwk(&store, id.clone(), JwsAlgorithm::ES256, ed25519).unwrap_err();
+    assert!(matches!(err, KeyStoreError::InvalidKey { .. }), "{err}");
+
+    // A fitting key is accepted, with or without `alg`.
+    KeySigner::from_public_jwk(&store, id.clone(), JwsAlgorithm::ES256, p256.clone()).unwrap();
+    KeySigner::from_public_jwk(&store, id, JwsAlgorithm::ES256, p256.with_alg("ES256")).unwrap();
 }
 
 // ---------------------------------------------------------------------------------------------

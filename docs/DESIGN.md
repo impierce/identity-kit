@@ -183,7 +183,7 @@ pub trait KeyStore: Send + Sync {
     async fn generate(&self, spec: KeySpec) -> Result<KeyId, KeyStoreError> { Err(KeyStoreError::Unsupported("generate")) }
     async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> { Err(KeyStoreError::Unsupported("delete")) }
 }
-pub struct KeySigner<'a> { store: &'a dyn KeyStore, key: KeyId, alg: JwsAlgorithm, public: Jwk }  // implements jose::Signer
+pub struct KeySigner<S> { store: S, key: KeyId, alg: JwsAlgorithm, public: Jwk }  // S: KeyStore (&T, Arc<dyn KeyStore>, ..); implements jose::Signer
 ```
 
 Backends: `InMemoryKeyStore` (`in-memory`; optional deterministic seed for fixtures),
