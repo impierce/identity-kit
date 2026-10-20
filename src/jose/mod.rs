@@ -14,6 +14,9 @@
 //! - [`CompactJws`] decodes a compact serialization without verifying it; [`encode_compact`]
 //!   produces one with any [`Signer`], which is `async` because private keys live in key stores
 //!   and HSMs.
+//! - [`ecdsa_signature_from_der`] and [`normalize_ecdsa_signature`] turn what an HSM or a cloud
+//!   KMS returns for an ECDSA key into the JWS form: raw `r || s`, with a secp256k1 `s` in the
+//!   lower half of the group order.
 //!
 //! JWE is out of scope.
 //!
@@ -25,6 +28,7 @@
 mod algorithm;
 pub(crate) mod base64url;
 mod compact;
+mod ecdsa;
 mod error;
 mod jwk;
 mod multikey;
@@ -32,7 +36,8 @@ mod verifier;
 
 pub use algorithm::{JwsAlgorithm, UnknownAlgorithm};
 pub use compact::{CompactJws, JwsHeader, Signer, encode_compact};
-pub use error::{JwkError, JwsError, SignError, VerificationError};
+pub use ecdsa::{ecdsa_signature_from_der, normalize_ecdsa_signature};
+pub use error::{EcdsaSignatureError, JwkError, JwsError, SignError, VerificationError};
 pub use jwk::{Jwk, KeyType};
 pub use multikey::KeyCodec;
 pub use verifier::{DefaultVerifier, JwsVerifier};

@@ -259,6 +259,11 @@ async fn check_key(store: &dyn KeyStore, id: &KeyId, alg: JwsAlgorithm) {
         .await
         .unwrap_or_else(|e| panic!("sign with `{id}` ({alg}) failed: {e}"));
     check_signature_form(alg, &signature, &public, id);
+    // Before verifying, so that a high `s` is reported as such rather than as a bad signature.
+    #[cfg(feature = "secp256k1")]
+    if alg == JwsAlgorithm::ES256K {
+        check_low_s(store, id).await;
+    }
     verify(alg, data, &signature, &public, id);
 
     // Signing twice must give two valid signatures (equal or not; RFC 6979 and random nonces
@@ -312,6 +317,26 @@ async fn check_key(store: &dyn KeyStore, id: &KeyId, alg: JwsAlgorithm) {
                     | KeyStoreError::UnsupportedAlgorithm(_))
             ),
             "KeySigner::new for `{id}` ({alg}) under {other} must fail, got {mismatch:?}"
+        );
+    }
+}
+
+/// Every ES256K signature has `s` in the lower half of the group order, the only one
+/// [`DefaultVerifier`] accepts. A store that passes its signer's `s` through gets it right half
+/// the time, so the check signs 32 inputs: such a store passes with a chance of 2^-32.
+#[cfg(feature = "secp256k1")]
+async fn check_low_s(store: &dyn KeyStore, id: &KeyId) {
+    for i in 0..32u8 {
+        let signature = store
+            .sign(id, JwsAlgorithm::ES256K, &[i])
+            .await
+            .unwrap_or_else(|e| panic!("signing with `{id}` (ES256K) failed: {e}"));
+        let normalized = crate::jose::normalize_ecdsa_signature(JwsAlgorithm::ES256K, &signature)
+            .unwrap_or_else(|e| panic!("ES256K signature of `{id}` is not `r || s`: {e}"));
+        assert!(
+            signature == normalized,
+            "ES256K signature of `{id}` has `s` in the upper half of the group order, which \
+             verifiers refuse; normalize it with `jose::normalize_ecdsa_signature`"
         );
     }
 }
