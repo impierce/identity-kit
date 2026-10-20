@@ -256,6 +256,11 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   credentialSubject.id`, one `origin` matching the requested one after normalization, `exp`
   present, no `id`, no extra header parameters or claims, signature under `assertionMethod`);
   validation of a configuration is at-least-one, reporting the rest as errors.
+  `fetch_configuration` gets the resource over the injected `methods::web::HttpClient` (HTTPS
+  only; `404`/`410` is `NotPublished`, a state rather than a failure), `service`/`services`
+  build and read `LinkedDomains` entries, and `DomainLinkageClient` fetches and validates per
+  origin, per DID at an origin, or for every origin of a DID document or resolved DID, fetching
+  at most `max_origins` (32 by default) origins per document.
 - `linked_vp` (`linked-vp`): DIF Linked Verifiable Presentation v1.0.0. `service`/`services`
   for `LinkedVerifiablePresentation` entries (a map endpoint or a non-URL is an error, never
   skipped), `LinkedPresentationBuilder` (VCDM 1.1 JWT, `iss == sub == holder`, optional `exp`,

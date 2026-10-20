@@ -275,7 +275,8 @@ pub mod vc_jose_cose {
     }
 }
 
-/// DIF Well Known DID Configuration: the example resource and its credentials.
+/// DIF Well Known DID Configuration: the example resource and its credentials, and the example
+/// DID document with `LinkedDomains` services.
 pub mod did_configuration {
     vectors! {
         /// The example DID configuration resource, with a Linked Data Proof entry and a JSON
@@ -289,6 +290,9 @@ pub mod did_configuration {
         HEADER = "did_configuration/header.json";
         /// The payload of that JWT.
         PAYLOAD = "did_configuration/payload.json";
+        /// The example DID document with two `LinkedDomains` services, one listing two origins
+        /// in an `origins` object, one a single origin string.
+        DID_DOCUMENT = "did_configuration/did_document.json";
     }
 }
 

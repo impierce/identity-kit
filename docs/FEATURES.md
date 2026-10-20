@@ -90,6 +90,9 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | ------------------------------------------------------------------------------------ | :----: | ---------------- | ------------------------------------------ | --------------------------------------------------------- |
 | `DomainLinkageConfiguration` and credential builder                                  |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | Validator: `iss == sub`, single `origin`, `exp` present, subject matches, at-least-one across DIDs |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `LinkedDomains` service entries: `service` builds one, `services` reads the origin string, `{"origins": [...]}` and array forms from a document, invalid entries reported | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
+| `fetch_configuration` over an `HttpClient` (HTTPS only): "not published" (`404`/`410`) told apart from failures, which keep their cause | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
+| `DomainLinkageClient`: fetches and validates an origin, one DID at an origin, or every origin of a DID document or resolved DID (at most `max_origins`, 32 by default, fetched), reporting per origin | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
 
 ### `linked_vp`: linked presentations
 
