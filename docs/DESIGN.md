@@ -242,14 +242,21 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
   `SdJwt` (parse, `process` per §7.1, `disclose`/`select` for presentation, `sign_key_binding`),
   `SdJwtBuilder` concealing claims at `ClaimPath`s (recursive disclosures, decoys, pluggable
-  salts); `SdJwtVc` with `typ: dc+sd-jwt` (`vc+sd-jwt` accepted), `SdJwtVcClaims` with the
-  registered claims first-class and the non-disclosable ones enforced, `SdJwtVcBuilder`;
-  `Status`/`StatusListRef`/`StatusMechanism`, `StatusList` (ZLIB bit array) and
-  `StatusListToken` for the Token Status List; `TypeMetadata` with claim paths, `extends`
-  folding, claim validation and `Integrity` metadata; `SdJwtCredentialValidator` over
-  `KeyResolver` + `JwsVerifier` (issuer key under `assertionMethod`, `iss` bound to the DID of
-  `kid`, time claims, key binding with `KeyBindingOptions`, `SdJwtStatusCheck` with a
-  `StatusPolicy`, `StatusListCheck` over an `HttpClient`).
+  salts); `SdJwtVc` with `typ: dc+sd-jwt` (`vc+sd-jwt` accepted when the payload has `vct`),
+  `SdJwtVcClaims` with the registered claims first-class and the non-disclosable ones
+  enforced, `SdJwtVcBuilder`; `SdJwtCredentialV2` for a VCDM 2.0 credential secured with
+  SD-JWT (VC-JOSE-COSE §3.2.1: `typ: vc+sd-jwt`, the `CredentialV2` as the payload, `cnf` and
+  `status` beside it), `SdJwtCredentialV2Builder`, and `EnvelopedVc::to_sd_jwt` for the
+  `application/vc+sd-jwt` envelope of a VCDM 2.0 presentation; `Status`/`StatusListRef`/
+  `StatusMechanism`, `StatusList` (ZLIB bit array) and `StatusListToken` for the Token Status
+  List; `TypeMetadata` with claim paths, `extends` folding, claim validation and `Integrity`
+  metadata; `SdJwtCredentialValidator` over `KeyResolver` + `JwsVerifier` (`validate` an SD-JWT
+  VC, `validate_v2` a VCDM 2.0 credential: issuer key under `assertionMethod`, `iss` or
+  `issuer` bound to the DID of `kid`, time claims and validity period, key binding with
+  `KeyBindingOptions`, `SdJwtStatusCheck` for `status` and `StatusCheck` for
+  `credentialStatus` with a `StatusPolicy`, `StatusListCheck` over an `HttpClient`).
+  `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
+  (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
   Data Proof entries carried as data), `DomainLinkageCredentialBuilder`, `DomainLinkageValidator`
   implementing the DIF Well Known DID Configuration checks (`iss == sub ==

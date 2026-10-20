@@ -217,7 +217,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     }
 
     /// Checks every status entry per `policy`.
-    async fn check_status<'a>(
+    pub(super) async fn check_status<'a>(
         &self,
         statuses: impl Iterator<Item = &'a TypedObject>,
         policy: StatusPolicy,

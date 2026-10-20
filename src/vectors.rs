@@ -251,9 +251,30 @@ pub mod status_list {
     }
 }
 
-/// VC-JOSE-COSE: VCDM 2.0 presentations secured with JOSE (`vp+jwt`).
+/// VC-JOSE-COSE: VCDM 2.0 presentations secured with JOSE (`vp+jwt`) and credentials secured
+/// with SD-JWT (`vc+sd-jwt`).
 pub mod vc_jose_cose {
     vectors! {
+        /// W3C VC-JOSE-COSE test suite input `credential-selective.json`: the credential of
+        /// [`SUITE_CREDENTIAL_SDJWT_SELECTIVE`] before securing.
+        SUITE_CREDENTIAL_SELECTIVE = "vc_jose_cose/suite-credential-selective.json";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-selective.txt` (test 20), a
+        /// `vc+sd-jwt` with `credentialSubject.firstName` and `lastName` selectively
+        /// disclosable, signed with [`SUITE_VM_P384`].
+        SUITE_CREDENTIAL_SDJWT_SELECTIVE = "vc_jose_cose/suite-credential-sdjwt-selective.txt";
+        /// W3C VC-JOSE-COSE test suite input `credential-nested-selective.json`: the credential
+        /// of [`SUITE_CREDENTIAL_SDJWT_NESTED`] before securing.
+        SUITE_CREDENTIAL_NESTED_SELECTIVE = "vc_jose_cose/suite-credential-nested-selective.json";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-nested.txt` (test 21), a
+        /// `vc+sd-jwt` with nested properties and an array element selectively disclosable,
+        /// signed with [`SUITE_VM_P521`].
+        SUITE_CREDENTIAL_SDJWT_NESTED = "vc_jose_cose/suite-credential-sdjwt-nested.txt";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-bad-signature.txt` (test 23):
+        /// [`SUITE_CREDENTIAL_SDJWT_SELECTIVE`] with its signature bytes rearranged.
+        SUITE_CREDENTIAL_SDJWT_BAD_SIGNATURE = "vc_jose_cose/suite-credential-sdjwt-bad-signature.txt";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-bad-media-type.txt` (test 24),
+        /// `typ` `bad+typ`, signed with [`SUITE_VM_ED25519`].
+        SUITE_CREDENTIAL_SDJWT_BAD_MEDIA_TYPE = "vc_jose_cose/suite-credential-sdjwt-bad-media-type.txt";
         /// The `vp+jwt` of the specification's "verifiable presentation secured with JOSE with
         /// the EnvelopedVerifiablePresentation type" example, as its `data:` URL holds it.
         ENVELOPED_PRESENTATION_JWT = "vc_jose_cose/enveloped_presentation_jwt.txt";
@@ -272,6 +293,8 @@ pub mod vc_jose_cose {
         SUITE_VM_P384 = "vc_jose_cose/suite-vm-p384.json";
         /// The test suite's Ed25519 verification method (`vm-ed25519.json`, public part).
         SUITE_VM_ED25519 = "vc_jose_cose/suite-vm-ed25519.json";
+        /// The test suite's P-521 verification method (`vm-p521.json`, public part).
+        SUITE_VM_P521 = "vc_jose_cose/suite-vm-p521.json";
     }
 }
 

@@ -385,13 +385,13 @@ async fn presentation_validates() {
     let [validated] = decoded.credentials.as_slice() else {
         panic!("one credential");
     };
-    assert_eq!(validated.credential, credential);
-    assert_eq!(validated.header.typ.as_deref(), Some("vc+jwt"));
+    assert_eq!(*validated.credential(), credential);
+    assert_eq!(validated.header().typ.as_deref(), Some("vc+jwt"));
 
     // Decoding without validating gives the same.
     let unverified = decode_presentation_v2(&jwt).unwrap();
     assert_eq!(unverified.presentation, decoded.presentation);
-    assert_eq!(unverified.credentials[0].credential, credential);
+    assert_eq!(*unverified.credentials[0].credential(), credential);
 
     // The VCDM 1.1 decoder and validator refuse the 2.0 profile by its `typ`.
     assert!(matches!(
@@ -601,15 +601,13 @@ async fn credential_errors_are_reported_by_index() {
     let (holder, _) = holder();
     let stranger = Did::parse("did:example:stranger").unwrap();
     let good = EnvelopedVc::from_jwt(&issue(&credential(&issuer, &holder.did), "vc+jwt").await);
-    let sd_jwt = EnvelopedVc::new(
-        "application/vc+sd-jwt",
-        "eyJhbGciOiJFUzI1NiJ9.eyJfc2QiOltdfQ.c2lnbmF0dXJl~",
-    )
-    .unwrap();
+    // (An SD-JWT envelope is unwrapped with the `sd-jwt` feature; `tests/sd_jwt_v2.rs` covers
+    // it. A COSE one is never.)
+    let cose = EnvelopedVc::new("application/vc+cose;base64", "0oRDoQEmoQRYIA").unwrap();
     let v1_typed = EnvelopedVc::from_jwt(&issue(&credential(&issuer, &holder.did), "JWT").await);
     let not_holders =
         EnvelopedVc::from_jwt(&issue(&credential(&issuer, &stranger), "vc+jwt").await);
-    let presentation = presentation([good, sd_jwt, v1_typed, not_holders]);
+    let presentation = presentation([good, cose, v1_typed, not_holders]);
     let jwt = present(&claims(&presentation), Some("vp+jwt"), None).await;
 
     // The first failure stops validation by default.
@@ -617,7 +615,7 @@ async fn credential_errors_are_reported_by_index() {
     assert!(matches!(
         credential_errors(error).as_slice(),
         [(1, ValidationError::Credential(CredentialError::UnsupportedMediaType { media_type, .. }))]
-            if media_type == "application/vc+sd-jwt"
+            if media_type == "application/vc+cose;base64"
     ));
 
     let all = options().with_fail_fast(FailFast::AllErrors);

@@ -33,7 +33,10 @@
 //! presentation (`typ` `JWT`, [`validate`](JwtPresentationValidator::validate)) carries
 //! credential JWTs in its `vp` claim; a VCDM 2.0 one (`typ` `vp+jwt`,
 //! [`validate_v2`](JwtPresentationValidator::validate_v2)) is the payload itself and envelopes
-//! `vc+jwt` credentials, an envelope of another media type failing for that credential alone.
+//! `vc+jwt` credentials and, with the `sd-jwt` feature, `vc+sd-jwt` ones (validated as
+//! `SdJwtCredentialValidator::validate_v2` of `sd_jwt_vc` does, with the key binding the
+//! presentation options require); an envelope of another media type fails for that
+//! credential alone.
 //!
 //! Everything a verifier decides by policy (which issuers to trust, which credential types to
 //! accept, what the claims must say) is left to the application, which gets the decoded
@@ -64,8 +67,8 @@ pub use error::{KeyResolutionError, PresentationValidationError, StatusError, Va
 #[cfg(feature = "linked-vp")]
 pub(crate) use presentation::decode_presentation_with;
 pub use presentation::{
-    DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, decode_presentation,
-    decode_presentation_v2,
+    DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, PresentedCredentialV2,
+    decode_presentation, decode_presentation_v2,
 };
 
 /// Finds the public key a JWT was signed with, given the DID URL in its `kid`.
@@ -361,6 +364,12 @@ pub struct PresentationValidationOptions {
     /// without `typ` is always accepted. The credentials' own are
     /// [`CredentialValidationOptions::additional_typ`].
     pub additional_typ: BTreeSet<String>,
+    /// The key binding every enveloped credential secured with SD-JWT must prove, if any
+    /// is required; none by default, since the presentation JWT already proves holder
+    /// control. See [`JwtPresentationValidator::validate_v2`].
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    pub key_binding: Option<crate::sd_jwt_vc::KeyBindingOptions>,
 }
 
 impl PresentationValidationOptions {
@@ -417,6 +426,16 @@ impl PresentationValidationOptions {
     #[must_use]
     pub fn with_additional_typ(mut self, typ: impl Into<String>) -> Self {
         self.additional_typ.insert(typ.into());
+        self
+    }
+
+    /// These options requiring `key_binding` of every enveloped credential secured with
+    /// SD-JWT.
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    #[must_use]
+    pub fn with_key_binding(mut self, key_binding: crate::sd_jwt_vc::KeyBindingOptions) -> Self {
+        self.key_binding = Some(key_binding);
         self
     }
 }

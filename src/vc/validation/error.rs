@@ -139,6 +139,24 @@ pub enum ValidationError {
         /// The holder of the presentation.
         holder: Uri,
     },
+    /// A credential secured with SD-JWT, enveloped in a presentation, failed a check of its
+    /// own: it is not a well-formed SD-JWT credential, or its key binding is missing or wrong.
+    /// (A check shared with the JWT validators is reported as that check's own variant.)
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    #[error(transparent)]
+    SdJwt(Box<crate::sd_jwt_vc::SdJwtValidationError>),
+}
+
+#[cfg(feature = "sd-jwt")]
+impl From<crate::sd_jwt_vc::SdJwtValidationError> for ValidationError {
+    /// Unwraps a shared check's error; boxes the SD-JWT-specific ones.
+    fn from(error: crate::sd_jwt_vc::SdJwtValidationError) -> Self {
+        match error {
+            crate::sd_jwt_vc::SdJwtValidationError::Validation(error) => error,
+            other => Self::SdJwt(Box::new(other)),
+        }
+    }
 }
 
 /// Why a [`StatusCheck`] did not pass.
