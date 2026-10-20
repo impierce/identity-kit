@@ -1,5 +1,5 @@
-//! `DidMethod`: a DID method name with an optional namespace, such as `did:iota` or
-//! `did:iota:smr`.
+//! `DidMethod`: a DID method name with an optional namespace, such as `did:demo` or
+//! `did:demo:dev`.
 
 use core::fmt;
 use core::str::FromStr;
@@ -12,14 +12,14 @@ use super::syntax::{
     DEFAULT_MAX_LEN, Did, check_len, is_idchar, is_method_char, is_pct_encoded_at,
 };
 
-/// A DID method, named with an optional namespace: `did:iota` or `did:iota:smr`.
+/// A DID method, named with an optional namespace: `did:demo` or `did:demo:dev`.
 ///
 /// Parties that declare or negotiate support for DID methods (SIOPv2's
 /// `subject_syntax_types_supported`, a wallet's configuration, a resolver's registry) exchange
 /// method identifiers rather than DIDs. A `DidMethod` is such an identifier: the method name of
 /// [DID Core §3.1] (`method-name = 1*method-char`, lowercase ASCII letters and digits only),
 /// optionally followed by one `idchar` segment that names a namespace within the method, as
-/// `smr` in `did:iota:smr` or `zXYZ` in `did:ebsi:zXYZ`. SIOPv2 lists methods without a
+/// `dev` in `did:demo:dev` or `zXYZ` in `did:ebsi:zXYZ`. SIOPv2 lists methods without a
 /// namespace; wallets and issuers that distinguish networks of one method exchange the namespaced
 /// form; both parse.
 ///
@@ -37,7 +37,7 @@ use super::syntax::{
 ///
 /// A method name that is empty or has a character outside `a-z` and `0-9` is
 /// [`DidError::InvalidMethodName`], as it is for a [`Did`]. A namespace that is empty, has a
-/// second segment (`did:iota:smr:x`) or a character that is not an `idchar` is
+/// second segment (`did:demo:dev:x`) or a character that is not an `idchar` is
 /// [`DidError::InvalidNamespace`]; an incomplete percent-encoding in it is
 /// [`DidError::InvalidPercentEncoding`]. Parsing a string also reports
 /// [`DidError::MissingScheme`] and [`DidError::TooLong`] as [`Did::parse`] does. Positions are
@@ -49,18 +49,18 @@ use super::syntax::{
 /// ```
 /// use identity_kit::did::{Did, DidError, DidMethod};
 ///
-/// let iota: DidMethod = "did:iota".parse()?;
-/// let shimmer = DidMethod::new("iota")?.with_namespace("smr")?;
-/// assert_eq!(iota.name(), "iota");
-/// assert_eq!(iota.namespace(), None);
-/// assert_eq!(shimmer.namespace(), Some("smr"));
-/// assert_eq!(shimmer.to_string(), "did:iota:smr");
+/// let demo: DidMethod = "did:demo".parse()?;
+/// let namespaced = DidMethod::new("demo")?.with_namespace("dev")?;
+/// assert_eq!(demo.name(), "demo");
+/// assert_eq!(demo.namespace(), None);
+/// assert_eq!(namespaced.namespace(), Some("dev"));
+/// assert_eq!(namespaced.to_string(), "did:demo:dev");
 ///
-/// let did = Did::parse("did:iota:smr:0xabc")?;
-/// assert!(iota.matches(&did));
-/// assert!(shimmer.matches(&did));
-/// assert!(!DidMethod::parse("did:iota:rms")?.matches(&did));
-/// assert_eq!(DidMethod::from(&did), iota);
+/// let did = Did::parse("did:demo:dev:0xabc")?;
+/// assert!(demo.matches(&did));
+/// assert!(namespaced.matches(&did));
+/// assert!(!DidMethod::parse("did:demo:alt")?.matches(&did));
+/// assert_eq!(DidMethod::from(&did), demo);
 ///
 /// // The method name is lowercase; the namespace is one non-empty segment.
 /// assert_eq!(
@@ -68,11 +68,11 @@ use super::syntax::{
 ///     Err(DidError::InvalidMethodName { position: 4 })
 /// );
 /// assert_eq!(
-///     DidMethod::parse("did:iota:"),
+///     DidMethod::parse("did:demo:"),
 ///     Err(DidError::InvalidNamespace { position: 9 })
 /// );
 /// assert_eq!(
-///     DidMethod::parse("did:iota:smr:x"),
+///     DidMethod::parse("did:demo:dev:x"),
 ///     Err(DidError::InvalidNamespace { position: 12 })
 /// );
 /// # Ok::<(), DidError>(())
@@ -81,9 +81,9 @@ use super::syntax::{
 /// [DID Core §3.1]: https://www.w3.org/TR/did-core/#did-syntax
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DidMethod {
-    /// The method name: `iota` in `did:iota:smr`.
+    /// The method name: `demo` in `did:demo:dev`.
     name: String,
-    /// The namespace within the method: `smr` in `did:iota:smr`.
+    /// The namespace within the method: `dev` in `did:demo:dev`.
     namespace: Option<String>,
 }
 
@@ -184,12 +184,12 @@ impl DidMethod {
         })
     }
 
-    /// The method name: `iota` in `did:iota:smr`.
+    /// The method name: `demo` in `did:demo:dev`.
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// The namespace within the method: `smr` in `did:iota:smr`, `None` in `did:iota`.
+    /// The namespace within the method: `dev` in `did:demo:dev`, `None` in `did:demo`.
     pub fn namespace(&self) -> Option<&str> {
         self.namespace.as_deref()
     }
@@ -203,10 +203,10 @@ impl DidMethod {
     /// ```
     /// use identity_kit::did::{Did, DidMethod};
     ///
-    /// let did = Did::parse("did:iota:smr:0xabc")?;
-    /// assert!(DidMethod::parse("did:iota")?.matches(&did));
-    /// assert!(DidMethod::parse("did:iota:smr")?.matches(&did));
-    /// assert!(!DidMethod::parse("did:iota:rms")?.matches(&did));
+    /// let did = Did::parse("did:demo:dev:0xabc")?;
+    /// assert!(DidMethod::parse("did:demo")?.matches(&did));
+    /// assert!(DidMethod::parse("did:demo:dev")?.matches(&did));
+    /// assert!(!DidMethod::parse("did:demo:alt")?.matches(&did));
     /// assert!(!DidMethod::parse("did:web")?.matches(&did));
     /// # Ok::<(), identity_kit::did::DidError>(())
     /// ```
@@ -225,7 +225,7 @@ impl DidMethod {
     }
 }
 
-/// The method of a DID, without a namespace: `did:iota` for `did:iota:smr:0xabc`.
+/// The method of a DID, without a namespace: `did:demo` for `did:demo:dev:0xabc`.
 impl From<&Did> for DidMethod {
     fn from(did: &Did) -> Self {
         Self {

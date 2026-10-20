@@ -5,7 +5,7 @@
 //! - **Identifiers.** [`Did`] and [`DidUrl`] implement the DID and DID URL syntax, described
 //!   below; [`DidUrlReference`] is a DID URL or a relative reference such as `#key-1`; [`Uri`]
 //!   is any RFC 3986 URI, kept as written; [`DidMethod`] names a method, with an optional
-//!   namespace (`did:iota`, `did:iota:smr`), for parties that declare or negotiate which
+//!   namespace (`did:demo`, `did:demo:dev`), for parties that declare or negotiate which
 //!   methods they support.
 //! - **Documents.** [`DidDocument`] with [`VerificationMethod`], [`MethodRef`], [`Service`] and
 //!   the other types of DID Core §5, serialized deterministically with extension properties in

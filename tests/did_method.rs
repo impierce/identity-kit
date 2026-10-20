@@ -23,7 +23,7 @@ fn did(s: &str) -> Did {
 
 /// Every boundary of `method-char`: `a`, `z`, `0`, `9`, and the names of the methods in use.
 const VALID_NAMES: &[&str] = &[
-    "a", "z", "0", "9", "az09", "key", "jwk", "web", "iota", "ebsi",
+    "a", "z", "0", "9", "az09", "key", "jwk", "web", "demo", "ebsi",
 ];
 
 #[test]
@@ -54,7 +54,7 @@ fn method_name_rejects_what_the_abnf_excludes() {
         ("did:ex%61mple", 6),
         ("did:exämple", 6),
         ("did:", 4),
-        ("did::smr", 4),
+        ("did::dev", 4),
     ];
     for (input, position) in invalid {
         assert_eq!(
@@ -87,7 +87,7 @@ fn method_name_rejects_what_the_abnf_excludes() {
 #[test]
 fn scheme_is_lowercase_and_required() {
     for input in [
-        "iota", "DID:iota", "Did:iota", "did", "", ":iota", "did iota",
+        "demo", "DID:demo", "Did:demo", "did", "", ":demo", "did demo",
     ] {
         assert_eq!(
             DidMethod::parse(input),
@@ -120,8 +120,8 @@ fn input_longer_than_the_limit_is_rejected() {
 #[test]
 fn namespace_forms_parse() {
     let valid: &[(&str, &str, &str)] = &[
-        ("did:iota:smr", "iota", "smr"),
-        ("did:iota:rms", "iota", "rms"),
+        ("did:demo:dev", "demo", "dev"),
+        ("did:demo:alt", "demo", "alt"),
         ("did:ebsi:zXYZ", "ebsi", "zXYZ"),
         ("did:web:example.com", "web", "example.com"),
         ("did:example:a.b-c_d", "example", "a.b-c_d"),
@@ -145,35 +145,35 @@ fn namespace_forms_parse() {
 #[test]
 fn namespace_rejects_empty_second_segment_and_non_idchar() {
     let invalid: &[(&str, DidError)] = &[
-        ("did:iota:", DidError::InvalidNamespace { position: 9 }),
+        ("did:demo:", DidError::InvalidNamespace { position: 9 }),
         (
-            "did:iota:smr:x",
+            "did:demo:dev:x",
             DidError::InvalidNamespace { position: 12 },
         ),
-        ("did:iota:smr:", DidError::InvalidNamespace { position: 12 }),
-        ("did:iota::smr", DidError::InvalidNamespace { position: 9 }),
-        ("did:iota:sm r", DidError::InvalidNamespace { position: 11 }),
-        ("did:iota:smr/", DidError::InvalidNamespace { position: 12 }),
+        ("did:demo:dev:", DidError::InvalidNamespace { position: 12 }),
+        ("did:demo::dev", DidError::InvalidNamespace { position: 9 }),
+        ("did:demo:de r", DidError::InvalidNamespace { position: 11 }),
+        ("did:demo:dev/", DidError::InvalidNamespace { position: 12 }),
         (
-            "did:iota:smr?v=1",
+            "did:demo:dev?v=1",
             DidError::InvalidNamespace { position: 12 },
         ),
         (
-            "did:iota:smr#key-1",
+            "did:demo:dev#key-1",
             DidError::InvalidNamespace { position: 12 },
         ),
-        ("did:iota:smr~", DidError::InvalidNamespace { position: 12 }),
-        ("did:iota:smrä", DidError::InvalidNamespace { position: 12 }),
+        ("did:demo:dev~", DidError::InvalidNamespace { position: 12 }),
+        ("did:demo:devä", DidError::InvalidNamespace { position: 12 }),
         (
-            "did:iota:a%2",
+            "did:demo:a%2",
             DidError::InvalidPercentEncoding { position: 10 },
         ),
         (
-            "did:iota:a%G1",
+            "did:demo:a%G1",
             DidError::InvalidPercentEncoding { position: 10 },
         ),
         (
-            "did:iota:%",
+            "did:demo:%",
             DidError::InvalidPercentEncoding { position: 9 },
         ),
     ];
@@ -181,32 +181,32 @@ fn namespace_rejects_empty_second_segment_and_non_idchar() {
         assert_eq!(DidMethod::parse(input).as_ref(), Err(error), "{input}");
     }
 
-    let iota = method("did:iota");
+    let demo = method("did:demo");
     assert_eq!(
-        iota.clone().with_namespace(""),
+        demo.clone().with_namespace(""),
         Err(DidError::InvalidNamespace { position: 0 })
     );
     assert_eq!(
-        iota.clone().with_namespace("smr:x"),
+        demo.clone().with_namespace("dev:x"),
         Err(DidError::InvalidNamespace { position: 3 })
     );
     assert_eq!(
-        iota.clone().with_namespace("a%2"),
+        demo.clone().with_namespace("a%2"),
         Err(DidError::InvalidPercentEncoding { position: 1 })
     );
     // A namespace is not case-folded: the method name is lowercase, the namespace is any idchar.
     assert_eq!(
-        iota.with_namespace("SMR").map(|m| m.to_string()),
-        Ok("did:iota:SMR".into())
+        demo.with_namespace("DEV").map(|m| m.to_string()),
+        Ok("did:demo:DEV".into())
     );
 }
 
 #[test]
 fn with_namespace_replaces_an_existing_namespace() {
-    let shimmer = method("did:iota:smr");
-    let mainnet = shimmer.clone().with_namespace("iota").unwrap();
-    assert_eq!(mainnet.to_string(), "did:iota:iota");
-    assert_eq!(shimmer.namespace(), Some("smr"));
+    let namespaced = method("did:demo:dev");
+    let replaced = namespaced.clone().with_namespace("main").unwrap();
+    assert_eq!(replaced.to_string(), "did:demo:main");
+    assert_eq!(namespaced.namespace(), Some("dev"));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -215,13 +215,13 @@ fn with_namespace_replaces_an_existing_namespace() {
 
 #[test]
 fn parsing_forms_agree() {
-    for input in ["did:iota", "did:iota:smr", "did:web:example.com"] {
+    for input in ["did:demo", "did:demo:dev", "did:web:example.com"] {
         let parsed = method(input);
         assert_eq!(input.parse::<DidMethod>().as_ref(), Ok(&parsed));
         assert_eq!(DidMethod::try_from(input).as_ref(), Ok(&parsed));
         assert_eq!(DidMethod::try_from(input.to_owned()).as_ref(), Ok(&parsed));
     }
-    for input in ["iota", "did:Iota", "did:iota:"] {
+    for input in ["demo", "did:Demo", "did:demo:"] {
         assert!(input.parse::<DidMethod>().is_err(), "{input}");
         assert!(DidMethod::try_from(input).is_err(), "{input}");
         assert!(DidMethod::try_from(input.to_owned()).is_err(), "{input}");
@@ -230,64 +230,64 @@ fn parsing_forms_agree() {
 
 #[test]
 fn serde_round_trips_as_a_string() {
-    for input in ["did:iota", "did:iota:smr", "did:ebsi:zXYZ"] {
+    for input in ["did:demo", "did:demo:dev", "did:ebsi:zXYZ"] {
         let parsed = method(input);
         let json = serde_json::to_string(&parsed).unwrap();
         assert_eq!(json, format!("\"{input}\""));
         assert_eq!(serde_json::from_str::<DidMethod>(&json).unwrap(), parsed);
     }
 
-    let list: Vec<DidMethod> = serde_json::from_str(r#"["did:key", "did:iota:smr"]"#).unwrap();
-    assert_eq!(list, [method("did:key"), method("did:iota:smr")]);
+    let list: Vec<DidMethod> = serde_json::from_str(r#"["did:key", "did:demo:dev"]"#).unwrap();
+    assert_eq!(list, [method("did:key"), method("did:demo:dev")]);
 
     for input in [
-        r#""iota""#,
-        r#""did:Iota""#,
-        r#""did:iota:""#,
-        r#""did:iota:smr:x""#,
+        r#""demo""#,
+        r#""did:Demo""#,
+        r#""did:demo:""#,
+        r#""did:demo:dev:x""#,
         "5",
     ] {
         assert!(serde_json::from_str::<DidMethod>(input).is_err(), "{input}");
     }
 
-    let input: StrDeserializer<'_, ValueError> = "did:iota:smr".into_deserializer();
-    assert_eq!(DidMethod::deserialize(input), Ok(method("did:iota:smr")));
-    let input: StrDeserializer<'_, ValueError> = "did:iota:smr:x".into_deserializer();
+    let input: StrDeserializer<'_, ValueError> = "did:demo:dev".into_deserializer();
+    assert_eq!(DidMethod::deserialize(input), Ok(method("did:demo:dev")));
+    let input: StrDeserializer<'_, ValueError> = "did:demo:dev:x".into_deserializer();
     assert!(DidMethod::deserialize(input).is_err());
 }
 
 #[test]
 fn equality_ordering_and_hashing_follow_the_fields() {
-    let bare = method("did:iota");
-    let smr = method("did:iota:smr");
-    let rms = method("did:iota:rms");
+    let bare = method("did:demo");
+    let dev = method("did:demo:dev");
+    let alt = method("did:demo:alt");
     let web = method("did:web");
 
-    assert_eq!(bare, DidMethod::new("iota").unwrap());
-    assert_ne!(bare, smr);
-    assert_ne!(smr, rms);
-    assert_ne!(method("did:iota:SMR"), smr);
+    assert_eq!(bare, DidMethod::new("demo").unwrap());
+    assert_ne!(bare, dev);
+    assert_ne!(dev, alt);
+    assert_ne!(method("did:demo:DEV"), dev);
 
-    let ordered: BTreeSet<DidMethod> = [web.clone(), smr.clone(), rms.clone(), bare.clone()]
+    let ordered: BTreeSet<DidMethod> = [web.clone(), dev.clone(), alt.clone(), bare.clone()]
         .into_iter()
         .collect();
     assert_eq!(
         ordered.into_iter().collect::<Vec<_>>(),
-        [bare.clone(), rms.clone(), smr.clone(), web.clone()]
+        [bare.clone(), alt.clone(), dev.clone(), web.clone()]
     );
 
-    let set: HashSet<DidMethod> = [bare.clone(), bare.clone(), smr.clone(), smr.clone()]
+    let set: HashSet<DidMethod> = [bare.clone(), bare.clone(), dev.clone(), dev.clone()]
         .into_iter()
         .collect();
     assert_eq!(set.len(), 2);
 
     assert_eq!(
-        format!("{smr:?}"),
-        r#"DidMethod { name: "iota", namespace: Some("smr") }"#
+        format!("{dev:?}"),
+        r#"DidMethod { name: "demo", namespace: Some("dev") }"#
     );
     assert_eq!(
         format!("{bare:?}"),
-        r#"DidMethod { name: "iota", namespace: None }"#
+        r#"DidMethod { name: "demo", namespace: None }"#
     );
 }
 
@@ -297,21 +297,21 @@ fn equality_ordering_and_hashing_follow_the_fields() {
 
 #[test]
 fn matches_compares_the_name_and_the_first_segment() {
-    let shimmer = did("did:iota:smr:0xabc");
-    assert!(method("did:iota").matches(&shimmer));
-    assert!(method("did:iota:smr").matches(&shimmer));
-    assert!(!method("did:iota:rms").matches(&shimmer));
-    assert!(!method("did:iota:0xabc").matches(&shimmer));
-    assert!(!method("did:web").matches(&shimmer));
-    assert!(!method("did:web:smr").matches(&shimmer));
+    let namespaced = did("did:demo:dev:0xabc");
+    assert!(method("did:demo").matches(&namespaced));
+    assert!(method("did:demo:dev").matches(&namespaced));
+    assert!(!method("did:demo:alt").matches(&namespaced));
+    assert!(!method("did:demo:0xabc").matches(&namespaced));
+    assert!(!method("did:web").matches(&namespaced));
+    assert!(!method("did:web:dev").matches(&namespaced));
 
     // The namespace is the whole first segment, compared byte for byte.
-    assert!(!method("did:iota:sm").matches(&shimmer));
-    assert!(!method("did:iota:SMR").matches(&shimmer));
-    assert!(!method("did:iota:smr").matches(&did("did:iota:smr0:abc")));
+    assert!(!method("did:demo:de").matches(&namespaced));
+    assert!(!method("did:demo:DEV").matches(&namespaced));
+    assert!(!method("did:demo:dev").matches(&did("did:demo:dev0:abc")));
 
     // A DID whose method-specific id is a single segment: that segment is the namespace.
-    assert!(method("did:iota:smr").matches(&did("did:iota:smr")));
+    assert!(method("did:demo:dev").matches(&did("did:demo:dev")));
     assert!(method("did:key").matches(&did(
         "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
     )));
@@ -320,17 +320,17 @@ fn matches_compares_the_name_and_the_first_segment() {
     assert!(!method("did:web:example.com").matches(&did("did:web:example.com%3A8443")));
 
     // An empty inner segment is not a namespace.
-    assert!(!method("did:iota:smr").matches(&did("did:iota::smr")));
+    assert!(!method("did:demo:dev").matches(&did("did:demo::dev")));
 }
 
 #[test]
 fn from_did_takes_the_name_only() {
-    let shimmer = did("did:iota:smr:0xabc");
-    let from_did = DidMethod::from(&shimmer);
-    assert_eq!(from_did, method("did:iota"));
+    let namespaced = did("did:demo:dev:0xabc");
+    let from_did = DidMethod::from(&namespaced);
+    assert_eq!(from_did, method("did:demo"));
     assert_eq!(from_did.namespace(), None);
-    assert!(from_did.matches(&shimmer));
-    assert_eq!(from_did.to_string(), "did:iota");
+    assert!(from_did.matches(&namespaced));
+    assert_eq!(from_did.to_string(), "did:demo");
 
     assert_eq!(
         DidMethod::from(&did("did:web:example.com")),

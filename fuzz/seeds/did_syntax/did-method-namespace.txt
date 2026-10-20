@@ -1,1 +1,1 @@
-did:iota:smr
+did:demo:dev
