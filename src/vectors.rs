@@ -1,7 +1,7 @@
 //! The specification vectors the tests of this crate run against (feature `test-vectors`), so
 //! that a crate building on this one can test against the same examples: RFC 9901 (SD-JWT),
-//! SD-JWT VC, the Token Status List, the DIF Well Known DID Configuration and DIF Linked
-//! Verifiable Presentation.
+//! SD-JWT VC, the Token Status List, VC-JOSE-COSE presentations, the DIF Well Known DID
+//! Configuration and DIF Linked Verifiable Presentation.
 //!
 //! Every constant is the text of the specification's example exactly as published, with a
 //! trailing newline; a compact token is one line, call `trim` before parsing it. The JOSE,
@@ -251,7 +251,55 @@ pub mod status_list {
     }
 }
 
-/// DIF Well Known DID Configuration: the example resource and its credentials.
+/// VC-JOSE-COSE: VCDM 2.0 presentations secured with JOSE (`vp+jwt`) and credentials secured
+/// with SD-JWT (`vc+sd-jwt`).
+pub mod vc_jose_cose {
+    vectors! {
+        /// W3C VC-JOSE-COSE test suite input `credential-selective.json`: the credential of
+        /// [`SUITE_CREDENTIAL_SDJWT_SELECTIVE`] before securing.
+        SUITE_CREDENTIAL_SELECTIVE = "vc_jose_cose/suite-credential-selective.json";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-selective.txt` (test 20), a
+        /// `vc+sd-jwt` with `credentialSubject.firstName` and `lastName` selectively
+        /// disclosable, signed with [`SUITE_VM_P384`].
+        SUITE_CREDENTIAL_SDJWT_SELECTIVE = "vc_jose_cose/suite-credential-sdjwt-selective.txt";
+        /// W3C VC-JOSE-COSE test suite input `credential-nested-selective.json`: the credential
+        /// of [`SUITE_CREDENTIAL_SDJWT_NESTED`] before securing.
+        SUITE_CREDENTIAL_NESTED_SELECTIVE = "vc_jose_cose/suite-credential-nested-selective.json";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-nested.txt` (test 21), a
+        /// `vc+sd-jwt` with nested properties and an array element selectively disclosable,
+        /// signed with [`SUITE_VM_P521`].
+        SUITE_CREDENTIAL_SDJWT_NESTED = "vc_jose_cose/suite-credential-sdjwt-nested.txt";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-bad-signature.txt` (test 23):
+        /// [`SUITE_CREDENTIAL_SDJWT_SELECTIVE`] with its signature bytes rearranged.
+        SUITE_CREDENTIAL_SDJWT_BAD_SIGNATURE = "vc_jose_cose/suite-credential-sdjwt-bad-signature.txt";
+        /// W3C VC-JOSE-COSE test suite input `credential-sdjwt-bad-media-type.txt` (test 24),
+        /// `typ` `bad+typ`, signed with [`SUITE_VM_ED25519`].
+        SUITE_CREDENTIAL_SDJWT_BAD_MEDIA_TYPE = "vc_jose_cose/suite-credential-sdjwt-bad-media-type.txt";
+        /// The `vp+jwt` of the specification's "verifiable presentation secured with JOSE with
+        /// the EnvelopedVerifiablePresentation type" example, as its `data:` URL holds it.
+        ENVELOPED_PRESENTATION_JWT = "vc_jose_cose/enveloped_presentation_jwt.txt";
+        /// W3C VC-JOSE-COSE test suite input `presentation-jose-multiple.txt` (test 7), signed
+        /// with [`SUITE_VM_P384`]: a `vc+jwt`, an SD-JWT and a COSE credential enveloped.
+        SUITE_PRESENTATION_MULTIPLE = "vc_jose_cose/suite-presentation-jose-multiple.txt";
+        /// W3C VC-JOSE-COSE test suite input `presentation-jose-bad-media-type.txt` (test 14),
+        /// `typ` `bad+typ`, signed with [`SUITE_VM_ED25519`].
+        SUITE_PRESENTATION_BAD_MEDIA_TYPE = "vc_jose_cose/suite-presentation-jose-bad-media-type.txt";
+        /// W3C VC-JOSE-COSE test suite input `presentation-jose-bad-credential.txt` (test 16),
+        /// an envelope whose `id` is not a `data:` URL, signed with [`SUITE_VM_ED25519`].
+        SUITE_PRESENTATION_BAD_CREDENTIAL = "vc_jose_cose/suite-presentation-jose-bad-credential.txt";
+        /// The test suite's P-256 verification method (`vm-p256.json`, public part).
+        SUITE_VM_P256 = "vc_jose_cose/suite-vm-p256.json";
+        /// The test suite's P-384 verification method (`vm-p384.json`, public part).
+        SUITE_VM_P384 = "vc_jose_cose/suite-vm-p384.json";
+        /// The test suite's Ed25519 verification method (`vm-ed25519.json`, public part).
+        SUITE_VM_ED25519 = "vc_jose_cose/suite-vm-ed25519.json";
+        /// The test suite's P-521 verification method (`vm-p521.json`, public part).
+        SUITE_VM_P521 = "vc_jose_cose/suite-vm-p521.json";
+    }
+}
+
+/// DIF Well Known DID Configuration: the example resource and its credentials, and the example
+/// DID document with `LinkedDomains` services.
 pub mod did_configuration {
     vectors! {
         /// The example DID configuration resource, with a Linked Data Proof entry and a JSON
@@ -265,6 +313,9 @@ pub mod did_configuration {
         HEADER = "did_configuration/header.json";
         /// The payload of that JWT.
         PAYLOAD = "did_configuration/payload.json";
+        /// The example DID document with two `LinkedDomains` services, one listing two origins
+        /// in an `origins` object, one a single origin string.
+        DID_DOCUMENT = "did_configuration/did_document.json";
     }
 }
 

@@ -1,9 +1,10 @@
 //! JWT verifiable credentials (VCDM 1.1 §6.3.1, VCDM 2.0 enveloped): arbitrary tokens, claims
-//! sets and credential JSON never panic, and what the models accept maps to JWT claims and back
-//! unchanged.
+//! sets and credential JSON never panic, what the models accept maps to JWT claims and back
+//! unchanged, and a presentation that decodes, in either profile, decodes every credential.
 #![no_main]
 
 use chrono::Timelike as _;
+use identity_kit::vc::validation::{decode_presentation, decode_presentation_v2};
 use identity_kit::vc::{
     Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Presentation,
     PresentationV2,
@@ -73,6 +74,26 @@ fuzz_target!(|data: &[u8]| {
             let jws = jwt.decode().expect("a wrapped token decodes");
             if let Ok(claims) = serde_json::from_slice::<JwtClaims>(jws.payload()) {
                 exercise_claims(&claims);
+            }
+            if let Ok(decoded) = decode_presentation(&jwt) {
+                assert_eq!(
+                    decoded.credentials.len(),
+                    decoded.presentation.verifiable_credential.len()
+                );
+                // `iss` is the holder.
+                if let Some(iss) = decoded.claims.iss.as_deref() {
+                    assert_eq!(decoded.holder().map(|holder| holder.as_str()), Some(iss));
+                }
+            }
+            if let Ok(decoded) = decode_presentation_v2(&jwt) {
+                assert_eq!(
+                    decoded.credentials.len(),
+                    decoded.presentation.verifiable_credential.len()
+                );
+                // `iss`, when present, agrees with `holder`, or stands in for it.
+                if let Some(iss) = decoded.claims.iss.as_deref() {
+                    assert_eq!(decoded.holder().map(|holder| holder.as_str()), Some(iss));
+                }
             }
             let enveloped = EnvelopedVc::from_jwt(&jwt);
             assert_eq!(enveloped.data(), input);

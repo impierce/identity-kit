@@ -74,6 +74,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `Credential` and `Presentation` builders for the VCDM 1.1 JWT profile, `to_jwt_claims` mapping              |   ✅   | `vc`          | [VCDM 1.1 §6.3.1][vcdm11-jwt]                  | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `CredentialV2` and `EnvelopedVc` for VCDM 2.0 enveloped credentials                                         |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `JwtCredentialValidator`, `JwtPresentationValidator`: issuer and holder binding, clock-skew leeway, `FailFast`, `StatusCheck` hook |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VCDM 2.0][vcdm20]         | [#11](https://github.com/impierce/identity-kit/issues/11) |
+| `JwtPresentationValidator::validate_v2`, `decode_presentation_v2`: VCDM 2.0 `vp+jwt` presentations of enveloped `vc+jwt` credentials |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#36](https://github.com/impierce/identity-kit/issues/36) |
 | Additional accepted header `typ` values per validation (`additional_typ`)                                   |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 
 ### `sd_jwt_vc`: SD-JWT verifiable credentials
@@ -83,6 +84,10 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Builder with first-class `jti`, parser, `SdJwtCredentialValidator`   |   ✅   | `sd-jwt`      | [RFC 9901][rfc9901], [SD-JWT VC][sd-jwt-vc]    | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | `Status`, `StatusListRef`, `StatusMechanism`                         |   ✅   | `sd-jwt`      | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | Type metadata                                                        |   ✅   | `sd-jwt`      | [SD-JWT VC §6][sd-jwt-vc]                      | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `SdJwtCredentialV2`: a VCDM 2.0 credential secured with SD-JWT (`vc+sd-jwt`, `application/vc+sd-jwt`), told apart from an SD-JWT VC by `typ` and payload | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `SdJwtCredentialV2Builder`: conceal credential properties, decoys, `cnf`, `status`, `iat`/`exp` beside `validFrom`/`validUntil` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `SdJwtCredentialValidator::validate_v2`: issuer binding, validity period, key binding, `credentialStatus` and `status` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901 §7][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `JwtPresentationValidator::validate_v2` and `decode_presentation_v2` unwrap `application/vc+sd-jwt` envelopes (`EnvelopedVc::to_sd_jwt`, `PresentedCredentialV2`), key binding required per `PresentationValidationOptions::key_binding` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.2][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 
 ### `domain_linkage`: DID configuration
 
@@ -90,6 +95,10 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | ------------------------------------------------------------------------------------ | :----: | ---------------- | ------------------------------------------ | --------------------------------------------------------- |
 | `DomainLinkageConfiguration` and credential builder                                  |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | Validator: `iss == sub`, single `origin`, `exp` present, subject matches, at-least-one across DIDs |   ✅   | `domain-linkage` | [Well Known DID Configuration][did-config] | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `LinkedDomains` service entries: `service` builds one, `services` reads the origin string, `{"origins": [...]}` and array forms from a document, invalid entries reported | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
+| `fetch_configuration` over an `HttpClient` (HTTPS only): "not published" (`404`/`410`) told apart from failures, which keep their cause | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
+| `DomainLinkageClient`: fetches and validates an origin, one DID at an origin, or every origin of a DID document or resolved DID (at most `max_origins`, 32 by default, fetched), reporting per origin | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
+| `DomainLinkageValidator` validates at most `max_credentials` (32 by default) entries of a configuration; the rest report `TooManyCredentials` without resolving their issuer | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#45](https://github.com/impierce/identity-kit/issues/45) |
 
 ### `linked_vp`: linked presentations
 
@@ -99,6 +108,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `LinkedPresentationBuilder`: a VCDM 1.1 presentation JWT signed by the holder, `iss == sub == holder`, optional `exp`, no `aud` or `nonce` | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 | `LinkedVpValidator`: holder and `iss` are the linking DID, key under `authentication`, credentials' subject is the holder, the specification's `typ` values accepted | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 | `LinkedVpClient`: fetches over an `HttpClient` (HTTPS only), reports per URL; JSON-LD presentations, IPFS and hashlink verification unsupported | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
+| `LinkedVpClient` fetches at most `max_urls` (32 by default) URLs of a document; the rest report `TooManyUrls` without being fetched | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#45](https://github.com/impierce/identity-kit/issues/45) |
 
 ## Tooling and integration
 
@@ -127,7 +137,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [Controlled Identifiers 1.0][cid]            | W3C         | `did` (verification material types)       |
 | [VC Data Model 1.1][vcdm11]                  | W3C         | `vc`, `linked_vp`                         |
 | [VC Data Model 2.0][vcdm20]                  | W3C         | `vc`                                      |
-| [Securing VCs using JOSE and COSE][vc-jose-cose] | W3C     | `vc` (enveloped credentials)              |
+| [Securing VCs using JOSE and COSE][vc-jose-cose] | W3C     | `vc` (enveloped credentials), `sd_jwt_vc` (`vc+sd-jwt`) |
 | [did:key][did-key]                           | W3C CCG     | `methods::key`                            |
 | [did:web][did-web]                           | W3C CCG     | `methods::web`, `domain_linkage`, `linked_vp` |
 | [did:jwk][did-jwk]                           | Community   | `methods::jwk`                            |

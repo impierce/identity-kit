@@ -237,29 +237,43 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree);
   `CredentialV2`/`PresentationV2` as VC-JOSE-COSE JWT payloads (`typ: vc+jwt`/`vp+jwt`) and
   `EnvelopedVc`/`EnvelopedVp` over `data:` URLs; `chrono::DateTime<Utc>` timestamps serialized
-  RFC 3339; `vc::validation` with `JwtCredentialValidator` (1.1 and 2.0) and
-  `JwtPresentationValidator` over `JwsVerifier` + `KeyResolver` (implemented by `Resolver`,
-  resolving the `kid` under `assertionMethod` or `authentication`), `TimeOptions` (explicit
-  `now`, leeway), issuer and holder binding to the DID of `kid`, audience and nonce,
+  RFC 3339; `vc::validation` with `JwtCredentialValidator` and `JwtPresentationValidator`
+  (each with `validate` for 1.1 and `validate_v2` for 2.0, picked by the caller from `typ`)
+  over `JwsVerifier` + `KeyResolver` (implemented by `Resolver`, resolving the `kid` under
+  `assertionMethod` or `authentication`), `TimeOptions` (explicit `now`, leeway), issuer and
+  holder binding to the DID of `kid`, audience and nonce, accepted `typ` beyond the profile's,
   `SubjectHolderRelationship`, `FailFast`, a `StatusCheck` trait with a `StatusPolicy`,
   `extract_issuer`/`extract_holder` (ADR 0004).
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
   `SdJwt` (parse, `process` per §7.1, `disclose`/`select` for presentation, `sign_key_binding`),
   `SdJwtBuilder` concealing claims at `ClaimPath`s (recursive disclosures, decoys, pluggable
-  salts); `SdJwtVc` with `typ: dc+sd-jwt` (`vc+sd-jwt` accepted), `SdJwtVcClaims` with the
-  registered claims first-class and the non-disclosable ones enforced, `SdJwtVcBuilder`;
-  `Status`/`StatusListRef`/`StatusMechanism`, `StatusList` (ZLIB bit array) and
-  `StatusListToken` for the Token Status List; `TypeMetadata` with claim paths, `extends`
-  folding, claim validation and `Integrity` metadata; `SdJwtCredentialValidator` over
-  `KeyResolver` + `JwsVerifier` (issuer key under `assertionMethod`, `iss` bound to the DID of
-  `kid`, time claims, key binding with `KeyBindingOptions`, `SdJwtStatusCheck` with a
-  `StatusPolicy`, `StatusListCheck` over an `HttpClient`).
+  salts); `SdJwtVc` with `typ: dc+sd-jwt` (`vc+sd-jwt` accepted when the payload has `vct`),
+  `SdJwtVcClaims` with the registered claims first-class and the non-disclosable ones
+  enforced, `SdJwtVcBuilder`; `SdJwtCredentialV2` for a VCDM 2.0 credential secured with
+  SD-JWT (VC-JOSE-COSE §3.2.1: `typ: vc+sd-jwt`, the `CredentialV2` as the payload, `cnf` and
+  `status` beside it), `SdJwtCredentialV2Builder`, and `EnvelopedVc::to_sd_jwt` for the
+  `application/vc+sd-jwt` envelope of a VCDM 2.0 presentation; `Status`/`StatusListRef`/
+  `StatusMechanism`, `StatusList` (ZLIB bit array) and `StatusListToken` for the Token Status
+  List; `TypeMetadata` with claim paths, `extends` folding, claim validation and `Integrity`
+  metadata; `SdJwtCredentialValidator` over `KeyResolver` + `JwsVerifier` (`validate` an SD-JWT
+  VC, `validate_v2` a VCDM 2.0 credential: issuer key under `assertionMethod`, `iss` or
+  `issuer` bound to the DID of `kid`, time claims and validity period, key binding with
+  `KeyBindingOptions`, `SdJwtStatusCheck` for `status` and `StatusCheck` for
+  `credentialStatus` with a `StatusPolicy`, `StatusListCheck` over an `HttpClient`).
+  `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
+  (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
   Data Proof entries carried as data), `DomainLinkageCredentialBuilder`, `DomainLinkageValidator`
   implementing the DIF Well Known DID Configuration checks (`iss == sub ==
   credentialSubject.id`, one `origin` matching the requested one after normalization, `exp`
   present, no `id`, no extra header parameters or claims, signature under `assertionMethod`);
-  validation of a configuration is at-least-one, reporting the rest as errors.
+  validation of a configuration is at-least-one, reporting the rest as errors, and validates at
+  most `max_credentials` (32 by default) entries of one configuration.
+  `fetch_configuration` gets the resource over the injected `methods::web::HttpClient` (HTTPS
+  only; `404`/`410` is `NotPublished`, a state rather than a failure), `service`/`services`
+  build and read `LinkedDomains` entries, and `DomainLinkageClient` fetches and validates per
+  origin, per DID at an origin, or for every origin of a DID document or resolved DID, fetching
+  at most `max_origins` (32 by default) origins per document.
 - `linked_vp` (`linked-vp`): DIF Linked Verifiable Presentation v1.0.0. `service`/`services`
   for `LinkedVerifiablePresentation` entries (a map endpoint or a non-URL is an error, never
   skipped), `LinkedPresentationBuilder` (VCDM 1.1 JWT, `iss == sub == holder`, optional `exp`,
@@ -267,7 +281,8 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   `kid` checked against the linking DID before any key is resolved, key under
   `authentication`, `AlwaysSubject` by default, the specification's `vp+ld+jwt`/`vc+ld+jwt`
   `typ` values accepted through `additional_typ`), `LinkedVpClient` fetching over an
-  `HttpClient` (HTTPS only) with one report per URL. JSON-LD presentations are reported as
+  `HttpClient` (HTTPS only) with one report per URL, fetching at most `max_urls` (32 by
+  default) URLs per document. JSON-LD presentations are reported as
   unsupported; hashlinks are passed through unverified.
 
 ## Conformance and CI
