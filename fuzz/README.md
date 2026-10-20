@@ -11,7 +11,7 @@ One file per target in [`fuzz_targets/`](fuzz_targets/); the doc comment at the 
 
 | Target               | Surface                                                                                                   | Input                                                        |
 | -------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `did_syntax`         | `Did`, `DidUrl`, `DidUrlReference`, `Uri`: parse, print, `join`, `with_fragment`, `with_did`, `resolve`   | a DID, DID URL, relative reference or URI                    |
+| `did_syntax`         | `Did`, `DidUrl`, `DidUrlReference`, `Uri`, `DidMethod`: parse, print, `join`, `with_fragment`, `with_did`, `resolve`, `matches` | a DID, DID URL, relative reference, URI or DID method |
 | `did_document`       | `DidDocument` JSON: parse, serialize, re-parse equal; every method and reference resolved                 | a JSON document                                              |
 | `did_methods`        | `did:key`, `did:jwk`, `did:web`: the Read operations, a DID produced from a key resolves back to that key | a DID or HTTPS URL on the first line, then a JWK as JSON     |
 | `jose`               | `CompactJws::decode`, JWK JSON, Multikey and SPKI decoding, verification with any key                     | a compact JWS on the first line, then a JWK as JSON          |

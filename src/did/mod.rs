@@ -4,7 +4,9 @@
 //!
 //! - **Identifiers.** [`Did`] and [`DidUrl`] implement the DID and DID URL syntax, described
 //!   below; [`DidUrlReference`] is a DID URL or a relative reference such as `#key-1`; [`Uri`]
-//!   is any RFC 3986 URI, kept as written.
+//!   is any RFC 3986 URI, kept as written; [`DidMethod`] names a method, with an optional
+//!   namespace (`did:iota`, `did:iota:smr`), for parties that declare or negotiate which
+//!   methods they support.
 //! - **Documents.** [`DidDocument`] with [`VerificationMethod`], [`MethodRef`], [`Service`] and
 //!   the other types of DID Core §5, serialized deterministically with extension properties in
 //!   insertion order, plus the operations to edit and query a document.
@@ -67,6 +69,7 @@
 
 mod document;
 mod error;
+mod method;
 mod reference;
 mod resolution;
 mod syntax;
@@ -77,6 +80,7 @@ pub use document::{
     Service, ServiceEndpoint, VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 pub use error::DidError;
+pub use method::DidMethod;
 pub use reference::DidUrlReference;
 pub use resolution::{
     APPLICATION_DID_JSON, APPLICATION_DID_LD_JSON, DocumentMetadata, ResolutionError,
