@@ -11,17 +11,20 @@
 //!   [`testsuite`] (feature `test-vectors`) checks it.
 //! - Signatures are returned in their JWS form: 64 bytes for EdDSA, raw `r || s` for ECDSA.
 //!
-//! Two backends ship with the crate, for development and tests: [`InMemoryKeyStore`] (feature
-//! `in-memory`) and [`SoftwareKeyStore`] (feature `software`), a private JWK set file. Both
-//! sign EdDSA, ES256 and, with the `secp256k1` feature, ES256K. Neither signs with RSA, which
-//! stays outside the crate per `docs/adr/0001-rsa-verification-only.md`. Vendor-specific
-//! backends live in their own crates and implement [`KeyStore`]; `docs/key-stores.md` is the
-//! contract they follow.
+//! Three backends ship with the crate. [`InMemoryKeyStore`] (feature `in-memory`) and
+//! [`SoftwareKeyStore`] (feature `software`), a private JWK set file, are for development and
+//! tests: both sign EdDSA, ES256 and, with the `secp256k1` feature, ES256K, and neither signs
+//! with RSA, which stays outside the software backends per
+//! `docs/adr/0001-rsa-verification-only.md`. [`Pkcs11KeyStore`] (feature `pkcs11`) signs in a
+//! PKCS#11 module, an HSM or a software token, with whatever the module offers, RSA included.
+//! Vendor-specific backends live in their own crates and implement [`KeyStore`];
+//! `docs/key-stores.md` is the contract they follow.
 //!
 //! # Cargo features
 //!
 //! - `in-memory`: [`InMemoryKeyStore`].
 //! - `software` (default): [`SoftwareKeyStore`].
+//! - `pkcs11`: [`Pkcs11KeyStore`].
 //! - `test-vectors`: [`testsuite`].
 
 use core::fmt;
@@ -36,6 +39,8 @@ mod error;
 mod in_memory;
 #[cfg(any(feature = "in-memory", feature = "software"))]
 mod local;
+#[cfg(feature = "pkcs11")]
+mod pkcs11;
 mod signer;
 #[cfg(feature = "software")]
 mod software;
@@ -48,6 +53,11 @@ pub use error::KeyStoreError;
 #[cfg(feature = "in-memory")]
 #[cfg_attr(docsrs, doc(cfg(feature = "in-memory")))]
 pub use in_memory::InMemoryKeyStore;
+#[cfg(feature = "pkcs11")]
+#[cfg_attr(docsrs, doc(cfg(feature = "pkcs11")))]
+pub use pkcs11::{
+    Pkcs11Error, Pkcs11KeyStore, Pkcs11KeyStoreOptions, Pkcs11Token, STAGING_LABEL_PREFIX,
+};
 pub use signer::KeySigner;
 #[cfg(feature = "software")]
 #[cfg_attr(docsrs, doc(cfg(feature = "software")))]
