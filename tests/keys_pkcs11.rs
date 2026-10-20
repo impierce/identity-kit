@@ -66,6 +66,12 @@ fn open_with(token: &Token, options: Pkcs11KeyStoreOptions) -> Pkcs11KeyStore {
 /// The test suite uses fixed labels, so two runs of it must not overlap on one token.
 static SUITE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// The token, shared by the tests that go through the store and taken exclusively by those
+/// that run `pkcs11-tool` on it: the store serializes its own key generation and deletion,
+/// but SoftHSM2's file object store fails just as readily when another process writes to the
+/// token at the same time.
+static TOKEN: tokio::sync::RwLock<()> = tokio::sync::RwLock::const_new(());
+
 /// Deletes the keys `labels` name, if an earlier, interrupted run left them on the token.
 async fn remove(store: &Pkcs11KeyStore, labels: &[&str]) {
     for label in labels {
@@ -92,6 +98,7 @@ fn backend_error(error: &KeyStoreError) -> &Pkcs11Error {
 #[tokio::test]
 async fn the_suite_passes_against_the_token() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let _suite = SUITE.lock().await;
     let store = open(&token);
     remove(&store, &["identity-kit-testsuite-eddsa"]).await;
@@ -123,6 +130,7 @@ async fn the_suite_passes_against_the_token() {
 #[tokio::test]
 async fn ps256_is_the_other_rsa_algorithm() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let _suite = SUITE.lock().await;
     let store = open_with(
         &token,
@@ -187,6 +195,7 @@ async fn ps256_is_the_other_rsa_algorithm() {
 #[tokio::test]
 async fn keys_outlive_the_store_and_are_found_by_slot() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let label = "keys-outlive-the-store";
     let first = open(&token);
     remove(&first, &[label]).await;
@@ -226,6 +235,7 @@ async fn keys_outlive_the_store_and_are_found_by_slot() {
 #[tokio::test]
 async fn an_unlabelled_key_is_named_by_its_thumbprint() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let store = open(&token);
     let key = store
         .generate(KeySpec::new(KeyType::Ed25519, JwsAlgorithm::EdDSA))
@@ -241,6 +251,7 @@ async fn an_unlabelled_key_is_named_by_its_thumbprint() {
 #[tokio::test]
 async fn a_key_signer_signs_a_jws() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let store = open(&token);
     remove(&store, &["key-signer"]).await;
     let key = store
@@ -269,6 +280,7 @@ async fn a_key_signer_signs_a_jws() {
 #[tokio::test]
 async fn sessions_are_shared_between_concurrent_signers() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let store = open_with(&token, Pkcs11KeyStoreOptions::new().sessions(2));
     remove(&store, &["concurrent"]).await;
     let key = store
@@ -328,6 +340,7 @@ fn pkcs11_tool(token: &Token, args: &[&str]) -> Option<std::process::Output> {
 #[tokio::test]
 async fn a_key_made_by_pkcs11_tool_is_usable() {
     let token = token!();
+    let _exclusive = TOKEN.write().await;
     let label = "made-by-pkcs11-tool";
     let store = open(&token);
     remove(&store, &[label]).await;
@@ -361,6 +374,7 @@ async fn a_key_made_by_pkcs11_tool_is_usable() {
 #[tokio::test]
 async fn unusable_objects_are_invalid_keys() {
     let token = token!();
+    let _exclusive = TOKEN.write().await;
     let store = open(&token);
     remove(&store, &["odd-curve", "twice", "half-a-key"]).await;
 
@@ -470,6 +484,7 @@ async fn unusable_objects_are_invalid_keys() {
 #[tokio::test]
 async fn algorithms_can_be_narrowed() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let store = open_with(
         &token,
         Pkcs11KeyStoreOptions::new().algorithms([JwsAlgorithm::ES256, JwsAlgorithm::ES384]),
@@ -510,6 +525,7 @@ async fn algorithms_can_be_narrowed() {
 #[tokio::test]
 async fn a_missing_token_is_refused() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let error = Pkcs11KeyStore::open(&token.module, "no-such-token", Some(&token.pin)).unwrap_err();
     assert!(matches!(
         backend_error(&error),
@@ -530,6 +546,7 @@ async fn a_missing_token_is_refused() {
 #[tokio::test]
 async fn an_unknown_key_is_not_found() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let store = open(&token);
     let missing = KeyId::new("nothing-here");
     assert!(!store.exists(&missing).await.unwrap());
@@ -548,6 +565,7 @@ async fn an_unknown_key_is_not_found() {
 #[tokio::test]
 async fn the_store_describes_itself() {
     let token = token!();
+    let _shared = TOKEN.read().await;
     let store = open(&token);
     let debug = format!("{store:?}");
     assert!(debug.starts_with("Pkcs11KeyStore {"), "{debug}");
