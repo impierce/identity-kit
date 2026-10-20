@@ -20,7 +20,7 @@ Collection of primitives for SSI libraries and applications: decentralized ident
 - ✅ `DidResolver` and `DidProducer` traits with a `Resolver` registry, document cache and DID URL dereferencing
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
 - ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
-- ✅ SD-JWT (RFC 9901) and SD-JWT VC: issuing with selective disclosure, presenting with key binding, validating over any DID method, the Token Status List and type metadata
+- ✅ SD-JWT (RFC 9901), SD-JWT VC and VCDM 2.0 credentials secured with SD-JWT (`vc+sd-jwt`): issuing with selective disclosure, presenting with key binding, validating over any DID method, the Token Status List and type metadata
 - ✅ DIF Well Known DID Configuration: the DID configuration resource, its domain linkage credentials and their validation against an origin
 - ✅ DIF Linked Verifiable Presentation: `LinkedVerifiablePresentation` services, presentations signed for publishing, and fetching and validating what a DID document links
 
@@ -42,7 +42,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `resolver`) i
 | `software`       |   ✅    | `SoftwareKeyStore`: private keys in a JWK set file                                       |
 | `in-memory`      |         | `InMemoryKeyStore`: keys in memory, optionally derived from a seed                       |
 | `vc`             |   ✅    | Verifiable credentials and presentations as JWTs (`vc`); pulls in `chrono`               |
-| `sd-jwt`         |   ✅    | SD-JWT and SD-JWT VC (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide`                 |
+| `sd-jwt`         |   ✅    | SD-JWT, SD-JWT VC and `vc+sd-jwt` credentials (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide` |
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
 | `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |

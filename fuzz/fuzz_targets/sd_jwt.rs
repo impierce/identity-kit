@@ -1,9 +1,10 @@
-//! SD-JWT and SD-JWT VC parsing (RFC 9901 §4 and §7.1, SD-JWT VC §3): arbitrary serializations
-//! and disclosures never panic, parse exactly what they print, and a token that processes also
-//! processes the same after selecting all or none of its disclosures.
+//! SD-JWT, SD-JWT VC and `vc+sd-jwt` credential parsing (RFC 9901 §4 and §7.1, SD-JWT VC §3,
+//! VC-JOSE-COSE §3.2.1): arbitrary serializations and disclosures never panic, parse exactly
+//! what they print, and a token that processes also processes the same after selecting all or
+//! none of its disclosures.
 #![no_main]
 
-use identity_kit::sd_jwt_vc::{Disclosure, HashAlgorithm, SdJwt, SdJwtVc};
+use identity_kit::sd_jwt_vc::{Disclosure, HashAlgorithm, SdJwt, SdJwtCredentialV2, SdJwtVc};
 use libfuzzer_sys::fuzz_target;
 use serde_json::Value;
 
@@ -76,5 +77,18 @@ fuzz_target!(|data: &[u8]| {
     }
     if let Ok(credential) = SdJwtVc::parse(input) {
         assert_eq!(credential.to_string(), input);
+    }
+    if let Ok(credential) = SdJwtCredentialV2::parse(input) {
+        assert_eq!(credential.to_string(), input);
+        assert!(credential.credential().check().is_ok());
+        let _ = credential.header();
+        let _ = credential.claims();
+        let _ = credential.confirmation();
+        let _ = credential.status();
+        let _ = credential.holder_key();
+        let all = credential.select(|_| true).expect("selecting everything");
+        assert_eq!(all.processed(), credential.processed());
+        assert_eq!(all.credential(), credential.credential());
+        let _ = credential.select(|_| false).expect("selecting nothing");
     }
 });

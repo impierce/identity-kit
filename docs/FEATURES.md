@@ -83,6 +83,10 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Builder with first-class `jti`, parser, `SdJwtCredentialValidator`   |   ✅   | `sd-jwt`      | [RFC 9901][rfc9901], [SD-JWT VC][sd-jwt-vc]    | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | `Status`, `StatusListRef`, `StatusMechanism`                         |   ✅   | `sd-jwt`      | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | Type metadata                                                        |   ✅   | `sd-jwt`      | [SD-JWT VC §6][sd-jwt-vc]                      | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `SdJwtCredentialV2`: a VCDM 2.0 credential secured with SD-JWT (`vc+sd-jwt`, `application/vc+sd-jwt`), told apart from an SD-JWT VC by `typ` and payload | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `SdJwtCredentialV2Builder`: conceal credential properties, decoys, `cnf`, `status`, `iat`/`exp` beside `validFrom`/`validUntil` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `SdJwtCredentialValidator::validate_v2`: issuer binding, validity period, key binding, `credentialStatus` and `status` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901 §7][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `JwtPresentationValidator::validate_v2` and `decode_presentation_v2` unwrap `application/vc+sd-jwt` envelopes (`EnvelopedVc::to_sd_jwt`, `PresentedCredentialV2`), key binding required per `PresentationValidationOptions::key_binding` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.2][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 
 ### `domain_linkage`: DID configuration
 
@@ -132,7 +136,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [Controlled Identifiers 1.0][cid]            | W3C         | `did` (verification material types)       |
 | [VC Data Model 1.1][vcdm11]                  | W3C         | `vc`, `linked_vp`                         |
 | [VC Data Model 2.0][vcdm20]                  | W3C         | `vc`                                      |
-| [Securing VCs using JOSE and COSE][vc-jose-cose] | W3C     | `vc` (enveloped credentials)              |
+| [Securing VCs using JOSE and COSE][vc-jose-cose] | W3C     | `vc` (enveloped credentials), `sd_jwt_vc` (`vc+sd-jwt`) |
 | [did:key][did-key]                           | W3C CCG     | `methods::key`                            |
 | [did:web][did-web]                           | W3C CCG     | `methods::web`, `domain_linkage`, `linked_vp` |
 | [did:jwk][did-jwk]                           | Community   | `methods::jwk`                            |
