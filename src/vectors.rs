@@ -1,7 +1,7 @@
 //! The specification vectors the tests of this crate run against (feature `test-vectors`), so
 //! that a crate building on this one can test against the same examples: RFC 9901 (SD-JWT),
-//! SD-JWT VC, the Token Status List, the DIF Well Known DID Configuration and DIF Linked
-//! Verifiable Presentation.
+//! SD-JWT VC, the Token Status List, VC-JOSE-COSE presentations, the DIF Well Known DID
+//! Configuration and DIF Linked Verifiable Presentation.
 //!
 //! Every constant is the text of the specification's example exactly as published, with a
 //! trailing newline; a compact token is one line, call `trim` before parsing it. The JOSE,
@@ -248,6 +248,30 @@ pub mod status_list {
         C4_8BIT = "status_list/c4_8bit.json";
         /// Appendix C.4: the statuses of the eight-bit list, by index.
         C4_8BIT_STATUSES = "status_list/c4_8bit_statuses.json";
+    }
+}
+
+/// VC-JOSE-COSE: VCDM 2.0 presentations secured with JOSE (`vp+jwt`).
+pub mod vc_jose_cose {
+    vectors! {
+        /// The `vp+jwt` of the specification's "verifiable presentation secured with JOSE with
+        /// the EnvelopedVerifiablePresentation type" example, as its `data:` URL holds it.
+        ENVELOPED_PRESENTATION_JWT = "vc_jose_cose/enveloped_presentation_jwt.txt";
+        /// W3C VC-JOSE-COSE test suite input `presentation-jose-multiple.txt` (test 7), signed
+        /// with [`SUITE_VM_P384`]: a `vc+jwt`, an SD-JWT and a COSE credential enveloped.
+        SUITE_PRESENTATION_MULTIPLE = "vc_jose_cose/suite-presentation-jose-multiple.txt";
+        /// W3C VC-JOSE-COSE test suite input `presentation-jose-bad-media-type.txt` (test 14),
+        /// `typ` `bad+typ`, signed with [`SUITE_VM_ED25519`].
+        SUITE_PRESENTATION_BAD_MEDIA_TYPE = "vc_jose_cose/suite-presentation-jose-bad-media-type.txt";
+        /// W3C VC-JOSE-COSE test suite input `presentation-jose-bad-credential.txt` (test 16),
+        /// an envelope whose `id` is not a `data:` URL, signed with [`SUITE_VM_ED25519`].
+        SUITE_PRESENTATION_BAD_CREDENTIAL = "vc_jose_cose/suite-presentation-jose-bad-credential.txt";
+        /// The test suite's P-256 verification method (`vm-p256.json`, public part).
+        SUITE_VM_P256 = "vc_jose_cose/suite-vm-p256.json";
+        /// The test suite's P-384 verification method (`vm-p384.json`, public part).
+        SUITE_VM_P384 = "vc_jose_cose/suite-vm-p384.json";
+        /// The test suite's Ed25519 verification method (`vm-ed25519.json`, public part).
+        SUITE_VM_ED25519 = "vc_jose_cose/suite-vm-ed25519.json";
     }
 }
 

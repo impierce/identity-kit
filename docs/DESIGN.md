@@ -232,10 +232,11 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree);
   `CredentialV2`/`PresentationV2` as VC-JOSE-COSE JWT payloads (`typ: vc+jwt`/`vp+jwt`) and
   `EnvelopedVc`/`EnvelopedVp` over `data:` URLs; `chrono::DateTime<Utc>` timestamps serialized
-  RFC 3339; `vc::validation` with `JwtCredentialValidator` (1.1 and 2.0) and
-  `JwtPresentationValidator` over `JwsVerifier` + `KeyResolver` (implemented by `Resolver`,
-  resolving the `kid` under `assertionMethod` or `authentication`), `TimeOptions` (explicit
-  `now`, leeway), issuer and holder binding to the DID of `kid`, audience and nonce,
+  RFC 3339; `vc::validation` with `JwtCredentialValidator` and `JwtPresentationValidator`
+  (each with `validate` for 1.1 and `validate_v2` for 2.0, picked by the caller from `typ`)
+  over `JwsVerifier` + `KeyResolver` (implemented by `Resolver`, resolving the `kid` under
+  `assertionMethod` or `authentication`), `TimeOptions` (explicit `now`, leeway), issuer and
+  holder binding to the DID of `kid`, audience and nonce, accepted `typ` beyond the profile's,
   `SubjectHolderRelationship`, `FailFast`, a `StatusCheck` trait with a `StatusPolicy`,
   `extract_issuer`/`extract_holder` (ADR 0004).
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
