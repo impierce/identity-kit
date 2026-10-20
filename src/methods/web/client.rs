@@ -26,7 +26,7 @@ use super::{HttpClient, HttpError, HttpResponse};
 ///
 /// # Local development and tests
 ///
-/// With the feature `reqwest-local-network`, [`ReqwestClient::builder`] can let a client reach
+/// With the feature `local-network`, [`ReqwestClient::builder`] can let a client reach
 /// a `did:web` served from the local machine or a private network, such as a test server on
 /// `127.0.0.1` or a development deployment in a docker-compose network. It is for
 /// development and tests only; enable the feature under `[dev-dependencies]`, or behind a
@@ -47,7 +47,7 @@ use super::{HttpClient, HttpError, HttpResponse};
 pub struct ReqwestClient {
     client: reqwest::Client,
     max_body: usize,
-    #[cfg(feature = "reqwest-local-network")]
+    #[cfg(feature = "local-network")]
     local: LocalNetwork,
 }
 
@@ -78,7 +78,7 @@ impl ReqwestClient {
         Ok(Self {
             client,
             max_body: Self::DEFAULT_MAX_BODY,
-            #[cfg(feature = "reqwest-local-network")]
+            #[cfg(feature = "local-network")]
             local: LocalNetwork::NONE,
         })
     }
@@ -90,15 +90,15 @@ impl ReqwestClient {
         Self {
             client,
             max_body: Self::DEFAULT_MAX_BODY,
-            #[cfg(feature = "reqwest-local-network")]
+            #[cfg(feature = "local-network")]
             local: LocalNetwork::NONE,
         }
     }
 
     /// A builder for a client that may also reach the local network, for development and
     /// tests; see [Local development and tests](Self#local-development-and-tests).
-    #[cfg(feature = "reqwest-local-network")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "reqwest-local-network")))]
+    #[cfg(feature = "local-network")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "local-network")))]
     pub const fn builder() -> ReqwestClientBuilder {
         ReqwestClientBuilder {
             local: LocalNetwork::NONE,
@@ -126,7 +126,7 @@ impl ReqwestClient {
 #[async_trait::async_trait]
 impl HttpClient for ReqwestClient {
     async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-        #[cfg(feature = "reqwest-local-network")]
+        #[cfg(feature = "local-network")]
         if let Some(response) = self.get_local(url).await? {
             return Ok(response);
         }
@@ -175,10 +175,10 @@ async fn read(mut response: reqwest::Response, max_body: usize) -> Result<HttpRe
     Ok(HttpResponse::new(status, body))
 }
 
-#[cfg(feature = "reqwest-local-network")]
+#[cfg(feature = "local-network")]
 pub use local::{LocalNetwork, ReqwestClientBuilder};
 
-#[cfg(feature = "reqwest-local-network")]
+#[cfg(feature = "local-network")]
 mod local {
     use std::net::{IpAddr, SocketAddr};
 
@@ -400,7 +400,7 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "reqwest-local-network")]
+    #[cfg(feature = "local-network")]
     #[test]
     fn plain_http_keeps_the_port() {
         for (url, port, expected) in [

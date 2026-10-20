@@ -678,14 +678,14 @@ fn local_network_is_never_enabled_by_another_feature() {
         .and_then(|rest| rest.split("\n[").next())
         .unwrap();
     for line in features.lines() {
-        if line.starts_with('#') || line.starts_with("reqwest-local-network =") {
+        if line.starts_with('#') || line.starts_with("local-network =") {
             continue;
         }
-        assert!(!line.contains("reqwest-local-network"), "{line}");
+        assert!(!line.contains("local-network"), "{line}");
     }
 }
 
-#[cfg(feature = "reqwest-local-network")]
+#[cfg(feature = "local-network")]
 mod local_network {
     use std::net::IpAddr;
 

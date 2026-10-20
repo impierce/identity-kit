@@ -35,8 +35,8 @@ mod client;
 #[cfg(feature = "reqwest")]
 #[cfg_attr(docsrs, doc(cfg(feature = "reqwest")))]
 pub use client::ReqwestClient;
-#[cfg(feature = "reqwest-local-network")]
-#[cfg_attr(docsrs, doc(cfg(feature = "reqwest-local-network")))]
+#[cfg(feature = "local-network")]
+#[cfg_attr(docsrs, doc(cfg(feature = "local-network")))]
 pub use client::{LocalNetwork, ReqwestClientBuilder};
 
 /// The method name, `web`.
