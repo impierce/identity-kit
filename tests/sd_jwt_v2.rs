@@ -425,7 +425,20 @@ async fn registered_claims_cannot_be_concealed() {
     let (issuer, signer) = issuer();
     let (holder, _) = holder();
     for claim in [
-        "@context", "type", "issuer", "iss", "cnf", "status", "_sd_alg",
+        "@context",
+        "type",
+        "issuer",
+        "validFrom",
+        "validUntil",
+        "credentialStatus",
+        "credentialSchema",
+        "relatedResource",
+        "_sd_alg",
+        "iss",
+        "nbf",
+        "exp",
+        "cnf",
+        "status",
     ] {
         let builder = builder(credential(&issuer.did, &holder.did)).conceal([claim]);
         assert!(

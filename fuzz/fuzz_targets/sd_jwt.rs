@@ -89,6 +89,7 @@ fuzz_target!(|data: &[u8]| {
         let all = credential.select(|_| true).expect("selecting everything");
         assert_eq!(all.processed(), credential.processed());
         assert_eq!(all.credential(), credential.credential());
-        let _ = credential.select(|_| false).expect("selecting nothing");
+        // Withholding every disclosure may hide a property the credential needs.
+        let _ = credential.select(|_| false);
     }
 });

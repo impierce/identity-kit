@@ -112,11 +112,31 @@ impl SdJwtCredentialV2 {
     /// The media type, `application/vc+sd-jwt`.
     pub const MEDIA_TYPE: &'static str = "application/vc+sd-jwt";
 
-    /// The claims that, with their sub-claims, must not be selectively disclosed: those a
-    /// verifier needs before it can decide anything about the credential, and those SD-JWT
-    /// reserves.
-    pub const NON_DISCLOSABLE_CLAIMS: [&'static str; 7] = [
-        "@context", "type", "issuer", "_sd_alg", "iss", "cnf", "status",
+    /// The claims that, with their sub-claims, must not be selectively disclosed: what a
+    /// verifier needs to validate the credential (VC-JOSE-COSE §3.2.1 names `@context`,
+    /// `type`, `credentialStatus`, `credentialSchema` and `relatedResource`), the issuer,
+    /// the validity period and the registered claims that carry it, the holder's key, the
+    /// status, and what SD-JWT reserves.
+    ///
+    /// A holder withholds a disclosure at will, so a verifier that received the credential
+    /// without, say, `credentialStatus` could not tell a credential issued without one from
+    /// one whose revocation data was dropped. Keeping these claims out of the disclosures is
+    /// what makes their absence meaningful.
+    pub const NON_DISCLOSABLE_CLAIMS: [&'static str; 14] = [
+        "@context",
+        "type",
+        "issuer",
+        "validFrom",
+        "validUntil",
+        "credentialStatus",
+        "credentialSchema",
+        "relatedResource",
+        "_sd_alg",
+        "iss",
+        "nbf",
+        "exp",
+        "cnf",
+        "status",
     ];
 
     /// Parses the compact serialization and processes the disclosures.
