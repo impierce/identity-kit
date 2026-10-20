@@ -212,6 +212,7 @@ pub enum Pkcs11Error {
 }
 
 impl Pkcs11Error {
+    /// Wraps the error of the PKCS#11 function `function` as [`KeyStoreError::Backend`].
     fn call(function: &'static str) -> impl FnOnce(CryptokiError) -> KeyStoreError {
         move |source| KeyStoreError::backend(Self::Call { function, source })
     }
@@ -545,11 +546,16 @@ impl KeyStore for Pkcs11KeyStore {
 
 impl Inner {
     /// Opens a session on the token and logs in when the store has a PIN.
+    ///
+    /// A write-protected token refuses read/write sessions (`CKR_TOKEN_WRITE_PROTECTED`), and
+    /// signing needs none, so such a token gets read-only sessions.
     fn open_session(&self) -> Result<Session, KeyStoreError> {
-        let session = self
-            .context
-            .open_rw_session(self.slot)
-            .map_err(Pkcs11Error::call("C_OpenSession"))?;
+        let session = if self.write_protected {
+            self.context.open_ro_session(self.slot)
+        } else {
+            self.context.open_rw_session(self.slot)
+        }
+        .map_err(Pkcs11Error::call("C_OpenSession"))?;
         if let Some(pin) = &self.pin {
             match session.login(UserType::User, Some(pin)) {
                 // The login state is the application's, not the session's: once one session
@@ -593,6 +599,7 @@ impl Inner {
         }
     }
 
+    /// [`KeyStore::public_jwk`] on `session`.
     fn public_jwk(&self, session: &Session, key: &KeyId) -> Result<Jwk, KeyStoreError> {
         let Some(public) = find_key(session, ObjectClass::PUBLIC_KEY, key)? else {
             return Err(
@@ -646,7 +653,7 @@ impl Inner {
                 Jwk::from_rsa_public(&n, &e).map_err(|e| invalid(e.to_string()))?
             }
             KeyKind::Ed25519 | KeyKind::P256 | KeyKind::Secp256k1 => {
-                let point = ec_point(session, key, public)?;
+                let point = ec_point(session, key, public, kind)?;
                 match kind {
                     KeyKind::Ed25519 => {
                         Jwk::from_ed25519_public(&point).map_err(|e| invalid(e.to_string()))?
@@ -673,6 +680,7 @@ impl Inner {
             .with_alg(self.algorithm_of(kind).as_str()))
     }
 
+    /// [`KeyStore::sign`] on `session`.
     fn sign(
         &self,
         session: &Session,
@@ -747,6 +755,7 @@ impl Inner {
         Ok(signature)
     }
 
+    /// [`KeyStore::generate`] on `session`.
     fn generate(&self, session: &Session, spec: &KeySpec) -> Result<KeyId, KeyStoreError> {
         spec.validate()?;
         if !self.algorithms.contains(&spec.alg) {
@@ -893,6 +902,7 @@ impl Pool {
         self.available.notify_one();
     }
 
+    /// The pool's state, poison or not.
     fn lock(&self) -> MutexGuard<'_, PoolState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -1084,13 +1094,14 @@ fn key_kind(
     }
 }
 
-/// The public point of the EC public key object `object`: the content of its `CKA_EC_POINT`,
-/// a DER `OCTET STRING` holding the uncompressed SEC1 point (P-256, secp256k1) or the 32-byte
-/// public key (Ed25519).
+/// The public point of the EC public key object `object`, a key of `kind`: the content of its
+/// `CKA_EC_POINT`, a DER `OCTET STRING` holding the uncompressed SEC1 point (P-256, secp256k1)
+/// or the 32-byte public key (Ed25519), or that content bare, as some modules store it.
 fn ec_point(
     session: &Session,
     key: &KeyId,
     object: ObjectHandle,
+    kind: KeyKind,
 ) -> Result<Vec<u8>, KeyStoreError> {
     let attributes = session
         .get_attributes(object, &[AttributeType::EcPoint])
@@ -1102,9 +1113,27 @@ fn ec_point(
     let Some(Attribute::EcPoint(encoded)) = attributes.into_iter().next() else {
         return Err(invalid("the public key object has no CKA_EC_POINT"));
     };
-    der_octet_string(&encoded)
+    ec_point_bytes(&encoded, kind)
         .map(<[u8]>::to_vec)
-        .ok_or_else(|| invalid("CKA_EC_POINT is not a DER OCTET STRING"))
+        .ok_or_else(|| invalid("CKA_EC_POINT is neither a DER OCTET STRING nor a bare point"))
+}
+
+/// The point in a `CKA_EC_POINT` value: the content of the DER `OCTET STRING` the attribute
+/// should be, or the value itself when it is not one but is a point of the size `kind` has.
+///
+/// A DER content of the right size wins, so that a bare value which happens to parse as DER
+/// (a 32-byte key starting `04 1e`) is still read correctly whenever its content would not fit.
+fn ec_point_bytes(encoded: &[u8], kind: KeyKind) -> Option<&[u8]> {
+    let fits = |point: &[u8]| match kind {
+        KeyKind::Ed25519 => point.len() == 32,
+        KeyKind::P256 | KeyKind::Secp256k1 => point.len() == 65 && point[0] == 0x04,
+        KeyKind::Rsa => false,
+    };
+    match der_octet_string(encoded) {
+        Some(content) if fits(content) => Some(content),
+        _ if fits(encoded) => Some(encoded),
+        other => other,
+    }
 }
 
 /// The content of a DER `OCTET STRING` that spans exactly `der`.
@@ -1152,6 +1181,7 @@ fn low_s(signature: Vec<u8>) -> Vec<u8> {
     signature
 }
 
+/// [`Pkcs11Error::InvalidOptions`] as a [`KeyStoreError`].
 fn invalid_options(reason: impl Into<String>) -> KeyStoreError {
     KeyStoreError::backend(Pkcs11Error::InvalidOptions(reason.into()))
 }
@@ -1194,6 +1224,44 @@ mod tests {
             None
         );
         assert_eq!(der_octet_string(&[]), None);
+    }
+
+    #[test]
+    fn ec_points_are_read_wrapped_or_bare() {
+        let ed25519 = [7u8; 32];
+        let mut wrapped = vec![0x04, 0x20];
+        wrapped.extend_from_slice(&ed25519);
+        assert_eq!(
+            ec_point_bytes(&wrapped, KeyKind::Ed25519),
+            Some(&ed25519[..])
+        );
+        assert_eq!(
+            ec_point_bytes(&ed25519, KeyKind::Ed25519),
+            Some(&ed25519[..])
+        );
+        // A bare key that happens to parse as DER: its DER content is 30 bytes, which does
+        // not fit, so the bare reading wins.
+        let mut tricky = vec![0x04, 0x1e];
+        tricky.extend_from_slice(&[9u8; 30]);
+        assert_eq!(ec_point_bytes(&tricky, KeyKind::Ed25519), Some(&tricky[..]));
+
+        let mut sec1 = vec![0x04];
+        sec1.extend_from_slice(&[1u8; 64]);
+        let mut wrapped = vec![0x04, 0x41];
+        wrapped.extend_from_slice(&sec1);
+        for kind in [KeyKind::P256, KeyKind::Secp256k1] {
+            assert_eq!(ec_point_bytes(&wrapped, kind), Some(&sec1[..]));
+            assert_eq!(ec_point_bytes(&sec1, kind), Some(&sec1[..]));
+            // The wrong size for the kind: the DER content is handed on for the key
+            // constructor to refuse.
+            assert_eq!(ec_point_bytes(&[0x04, 0x01, 0xaa], kind), Some(&[0xaa][..]));
+        }
+        // A compressed point is not accepted bare, and nothing that is not DER is.
+        let mut compressed = vec![0x02];
+        compressed.extend_from_slice(&[1u8; 64]);
+        assert_eq!(ec_point_bytes(&compressed, KeyKind::P256), None);
+        assert_eq!(ec_point_bytes(&[0x05, 0x01, 0xaa], KeyKind::P256), None);
+        assert_eq!(ec_point_bytes(&ed25519, KeyKind::Rsa), None);
     }
 
     #[test]
