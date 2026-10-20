@@ -663,6 +663,10 @@ pub enum DomainLinkageError {
     /// limit, given here.
     #[error("the DID document lists more than {0} origins")]
     TooManyOrigins(usize),
+    /// The entry was not validated: the configuration holds more JWT entries, or more naming
+    /// the DID, than the validator's limit, given here.
+    #[error("the configuration holds more than {0} credentials to validate")]
+    TooManyCredentials(usize),
 }
 
 impl DomainLinkageError {
@@ -711,6 +715,11 @@ impl DomainLinkageReport {
 /// extra claims or header parameters, and its signature verifies under a key of the DID
 /// listed under `assertionMethod`.
 ///
+/// A configuration is written by whoever controls the origin, and every entry validated
+/// resolves its issuer's DID, so [`validate_configuration`](Self::validate_configuration) and
+/// [`validate_linkage`](Self::validate_linkage) validate at most
+/// [`max_credentials`](Self::max_credentials) entries of one configuration.
+///
 /// # Examples
 ///
 /// ```
@@ -729,19 +738,42 @@ impl DomainLinkageReport {
 #[derive(Debug)]
 pub struct DomainLinkageValidator<R, V = DefaultVerifier> {
     credentials: JwtCredentialValidator<R, V>,
+    max_credentials: usize,
+}
+
+impl<R, V> DomainLinkageValidator<R, V> {
+    /// The most entries of one configuration [`new`](Self::new) validates: 32.
+    pub const DEFAULT_MAX_CREDENTIALS: usize = 32;
 }
 
 impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
-    /// A validator resolving keys with `resolver` and verifying signatures with `verifier`.
+    /// A validator resolving keys with `resolver` and verifying signatures with `verifier`,
+    /// validating at most [`DEFAULT_MAX_CREDENTIALS`](Self::DEFAULT_MAX_CREDENTIALS) entries
+    /// of a configuration.
     pub fn new(resolver: R, verifier: V) -> Self {
+        Self::from_credential_validator(JwtCredentialValidator::new(resolver, verifier))
+    }
+
+    /// A validator over `credentials`, validating at most
+    /// [`DEFAULT_MAX_CREDENTIALS`](Self::DEFAULT_MAX_CREDENTIALS) entries of a configuration.
+    pub fn from_credential_validator(credentials: JwtCredentialValidator<R, V>) -> Self {
         Self {
-            credentials: JwtCredentialValidator::new(resolver, verifier),
+            credentials,
+            max_credentials: Self::DEFAULT_MAX_CREDENTIALS,
         }
     }
 
-    /// A validator over `credentials`.
-    pub fn from_credential_validator(credentials: JwtCredentialValidator<R, V>) -> Self {
-        Self { credentials }
+    /// This validator validating at most `max_credentials` entries of a configuration.
+    #[must_use]
+    pub fn with_max_credentials(mut self, max_credentials: usize) -> Self {
+        self.max_credentials = max_credentials;
+        self
+    }
+
+    /// The most entries of one configuration [`validate_configuration`](Self::validate_configuration)
+    /// and [`validate_linkage`](Self::validate_linkage) validate.
+    pub fn max_credentials(&self) -> usize {
+        self.max_credentials
     }
 
     /// The credential validator.
@@ -769,12 +801,14 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     }
 
     /// Validates the credential of `configuration` linking `did` to `origin`: the first JWT
-    /// entry issued by `did` that validates.
+    /// entry issued by `did` that validates. Entries naming `did` past the first
+    /// [`max_credentials`](Self::max_credentials) are not validated.
     ///
     /// # Errors
     ///
     /// [`DomainLinkageError::NoCredentialFor`] when no JWT entry names `did` as issuer,
-    /// [`DomainLinkageError::NoValidCredential`] with the error of each such entry otherwise.
+    /// [`DomainLinkageError::NoValidCredential`] with the error of each such entry otherwise,
+    /// [`DomainLinkageError::TooManyCredentials`] for those past the limit.
     pub async fn validate_linkage(
         &self,
         configuration: &DomainLinkageConfiguration,
@@ -784,10 +818,19 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     ) -> Result<DecodedCredential, DomainLinkageError> {
         configuration.check()?;
         let mut errors = BTreeMap::new();
+        let mut validated = 0;
         for (index, jwt) in configuration.jwts() {
             if issuer_of(jwt).as_ref() != Some(did) {
                 continue;
             }
+            if validated == self.max_credentials {
+                errors.insert(
+                    index,
+                    DomainLinkageError::TooManyCredentials(self.max_credentials),
+                );
+                continue;
+            }
+            validated += 1;
             match self.validate_credential(jwt, origin, options).await {
                 Ok(decoded) => return Ok(decoded),
                 Err(error) => {
@@ -802,7 +845,9 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     }
 
     /// Validates every JWT entry of `configuration` for `origin`: succeeds when at least one
-    /// does, reporting the rest as errors.
+    /// does, reporting the rest as errors. Entries past the first
+    /// [`max_credentials`](Self::max_credentials) are not validated and report
+    /// [`DomainLinkageError::TooManyCredentials`].
     ///
     /// # Errors
     ///
@@ -817,7 +862,14 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
         configuration.check()?;
         let mut linked = Vec::new();
         let mut failed = BTreeMap::new();
-        for (index, jwt) in configuration.jwts() {
+        for (position, (index, jwt)) in configuration.jwts().enumerate() {
+            if position >= self.max_credentials {
+                failed.insert(
+                    index,
+                    DomainLinkageError::TooManyCredentials(self.max_credentials),
+                );
+                continue;
+            }
             match self.validate_credential(jwt, origin, options).await {
                 Ok(decoded) => {
                     let did = Did::parse(decoded.credential.issuer.id().as_str())
