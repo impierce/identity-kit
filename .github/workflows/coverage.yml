@@ -38,6 +38,21 @@ jobs:
         with:
           tool: cargo-llvm-cov
           fallback: none
+      - name: Set up SoftHSM2
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y softhsm2 opensc
+          mkdir -p "$RUNNER_TEMP/softhsm/tokens"
+          printf 'directories.tokendir = %s/softhsm/tokens\nobjectstore.backend = file\n' "$RUNNER_TEMP" > "$RUNNER_TEMP/softhsm/softhsm2.conf"
+          export SOFTHSM2_CONF="$RUNNER_TEMP/softhsm/softhsm2.conf"
+          softhsm2-util --init-token --free --label identity-kit --so-pin 0102 --pin 1234
+          {
+            echo "SOFTHSM2_CONF=$SOFTHSM2_CONF"
+            echo "PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so"
+            echo "PKCS11_TOKEN_LABEL=identity-kit"
+            echo "PKCS11_PIN=1234"
+          } >> "$GITHUB_ENV"
       - run: cargo llvm-cov --all-features --locked --codecov --output-path codecov.json
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:

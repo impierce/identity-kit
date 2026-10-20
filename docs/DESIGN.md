@@ -67,7 +67,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `rsa`                | off     | `rsa`                                                         |
 | `in-memory`          | off     | test and development key store                                |
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
-| `pkcs11`             | off     | `cryptoki`                                                    |
+| `pkcs11`             | off     | `cryptoki`; `tokio` (`rt`) for the blocking pool; PKCS#11 key store |
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
 | `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |

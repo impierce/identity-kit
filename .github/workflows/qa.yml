@@ -62,6 +62,23 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # The PKCS#11 tests run against SoftHSM2 where it is a package install away, and skip
+      # themselves elsewhere.
+      - name: Set up SoftHSM2
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y softhsm2 opensc
+          mkdir -p "$RUNNER_TEMP/softhsm/tokens"
+          printf 'directories.tokendir = %s/softhsm/tokens\nobjectstore.backend = file\n' "$RUNNER_TEMP" > "$RUNNER_TEMP/softhsm/softhsm2.conf"
+          export SOFTHSM2_CONF="$RUNNER_TEMP/softhsm/softhsm2.conf"
+          softhsm2-util --init-token --free --label identity-kit --so-pin 0102 --pin 1234
+          {
+            echo "SOFTHSM2_CONF=$SOFTHSM2_CONF"
+            echo "PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so"
+            echo "PKCS11_TOKEN_LABEL=identity-kit"
+            echo "PKCS11_PIN=1234"
+          } >> "$GITHUB_ENV"
       - run: cargo test --all-features --locked
 
   docs:

@@ -24,6 +24,9 @@ rsa = ["dep:rsa"]
 in-memory = ["dep:getrandom"]
 # `SoftwareKeyStore`: a key store over a private JWK set file.
 software = ["dep:getrandom"]
+# `Pkcs11KeyStore`: a key store over a PKCS#11 module (an HSM, SoftHSM2), via `cryptoki`; the
+# blocking module calls run on `tokio`'s blocking pool.
+pkcs11 = ["dep:cryptoki", "dep:tokio", "tokio/rt"]
 # `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the
 # specification vectors the tests run against.
 test-vectors = []
@@ -55,6 +58,7 @@ async-trait = "0.1"
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 bs58 = "0.5"
 chrono = { version = "0.4", default-features = false, features = ["now", "serde", "std"], optional = true }
+cryptoki = { version = "0.12", optional = true }
 ed25519-dalek = { version = "3.0", features = ["pkcs8"] }
 getrandom = { version = "0.4", features = ["std"], optional = true }
 indexmap = { version = "2.0", features = ["serde"] }
@@ -79,7 +83,7 @@ boon = "0.6"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 proptest = "1.0"
 tempfile = "3.0"
-tokio = { version = "1.0", features = ["io-util", "macros", "net", "rt", "rt-multi-thread"] }
+tokio = { version = "1.0", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync"] }
 wiremock = "0.6"
 
 [workspace]
