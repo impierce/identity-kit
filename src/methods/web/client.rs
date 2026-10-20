@@ -23,10 +23,32 @@ use super::{HttpClient, HttpError, HttpResponse};
 /// [`ReqwestClient::from_client`] wraps a client the application configured itself, keeping
 /// only the HTTPS-only rule, the refusal of non-public IP literals and the body limit; the
 /// other protections are then the application's.
+///
+/// # Local development and tests
+///
+/// With the feature `local-network`, [`ReqwestClient::builder`] can let a client reach
+/// a `did:web` served from the local machine or a private network, such as a test server on
+/// `127.0.0.1` or a development deployment in a docker-compose network. It is for
+/// development and tests only; enable the feature under `[dev-dependencies]`, or behind a
+/// feature of the application's own, so that a release build does not contain it.
+///
+/// - [`dangerous_allow_loopback`](ReqwestClientBuilder::dangerous_allow_loopback) allows
+///   `127.0.0.0/8` and `::1`, and
+///   [`dangerous_allow_private_network`](ReqwestClientBuilder::dangerous_allow_private_network)
+///   allows RFC 1918 and `fc00::/7`. Neither takes a `bool`: the choice is made in code.
+/// - The client resolves the host first. When every address is in an allowed range, it fetches
+///   the URL over plain `http`, on the port the URL names (443 when it names none), connecting
+///   to exactly the addresses it checked. Otherwise the rules above apply unchanged: a host with
+///   public and local addresses is held to them.
+/// - Link-local addresses (including cloud metadata endpoints such as `169.254.169.254`) and
+///   every other non-public range stay refused; redirects, the timeout and the body limit are
+///   unchanged.
 #[derive(Debug, Clone)]
 pub struct ReqwestClient {
     client: reqwest::Client,
     max_body: usize,
+    #[cfg(feature = "local-network")]
+    local: LocalNetwork,
 }
 
 impl ReqwestClient {
@@ -56,6 +78,8 @@ impl ReqwestClient {
         Ok(Self {
             client,
             max_body: Self::DEFAULT_MAX_BODY,
+            #[cfg(feature = "local-network")]
+            local: LocalNetwork::NONE,
         })
     }
 
@@ -66,6 +90,18 @@ impl ReqwestClient {
         Self {
             client,
             max_body: Self::DEFAULT_MAX_BODY,
+            #[cfg(feature = "local-network")]
+            local: LocalNetwork::NONE,
+        }
+    }
+
+    /// A builder for a client that may also reach the local network, for development and
+    /// tests; see [Local development and tests](Self#local-development-and-tests).
+    #[cfg(feature = "local-network")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "local-network")))]
+    pub const fn builder() -> ReqwestClientBuilder {
+        ReqwestClientBuilder {
+            local: LocalNetwork::NONE,
         }
     }
 
@@ -90,6 +126,10 @@ impl ReqwestClient {
 #[async_trait::async_trait]
 impl HttpClient for ReqwestClient {
     async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
+        #[cfg(feature = "local-network")]
+        if let Some(response) = self.get_local(url).await? {
+            return Ok(response);
+        }
         if url.scheme() != "https" {
             return Err(HttpError::msg(format!("`{url}` is not an HTTPS URL")));
         }
@@ -102,33 +142,203 @@ impl HttpClient for ReqwestClient {
         if literal.is_some_and(|ip| !is_public(ip)) {
             return Err(HttpError::msg(format!("`{url}` is not a public address")));
         }
-        let mut response = self
+        let response = self
             .client
             .get(url.as_str())
             .send()
             .await
             .map_err(HttpError::new)?;
-        let status = response.status().as_u16();
-        if response
-            .content_length()
-            .is_some_and(|len| len > self.max_body as u64)
-        {
+        read(response, self.max_body).await
+    }
+}
+
+/// The status and at most `max_body` bytes of body of `response`.
+async fn read(mut response: reqwest::Response, max_body: usize) -> Result<HttpResponse, HttpError> {
+    let status = response.status().as_u16();
+    if response
+        .content_length()
+        .is_some_and(|len| len > max_body as u64)
+    {
+        return Err(HttpError::msg(format!(
+            "response body exceeds {max_body} bytes"
+        )));
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(HttpError::new)? {
+        if body.len() + chunk.len() > max_body {
             return Err(HttpError::msg(format!(
-                "response body exceeds {} bytes",
-                self.max_body
+                "response body exceeds {max_body} bytes"
             )));
         }
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(HttpError::new)? {
-            if body.len() + chunk.len() > self.max_body {
-                return Err(HttpError::msg(format!(
-                    "response body exceeds {} bytes",
-                    self.max_body
-                )));
-            }
-            body.extend_from_slice(&chunk);
+        body.extend_from_slice(&chunk);
+    }
+    Ok(HttpResponse::new(status, body))
+}
+
+#[cfg(feature = "local-network")]
+pub use local::{LocalNetwork, ReqwestClientBuilder};
+
+#[cfg(feature = "local-network")]
+mod local {
+    use std::net::{IpAddr, SocketAddr};
+
+    use url::{Host, Url};
+
+    use super::{HttpError, HttpResponse, ReqwestClient, is_public, read};
+
+    /// The local address ranges a [`ReqwestClient`] may reach besides the public internet.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct LocalNetwork {
+        /// `127.0.0.0/8` and `::1`.
+        pub loopback: bool,
+        /// RFC 1918 (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and `fc00::/7`.
+        pub private: bool,
+    }
+
+    impl LocalNetwork {
+        /// No local range: the public rules only.
+        pub const NONE: Self = Self {
+            loopback: false,
+            private: false,
+        };
+
+        /// Whether `ip` is in one of the allowed local ranges. Link-local and every other
+        /// non-public range never are.
+        pub fn allows(&self, ip: IpAddr) -> bool {
+            let ip = match ip {
+                IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+                IpAddr::V4(_) => ip,
+            };
+            let loopback = ip.is_loopback();
+            let private = match ip {
+                IpAddr::V4(v4) => v4.is_private(),
+                IpAddr::V6(v6) => v6.is_unique_local(),
+            };
+            (self.loopback && loopback) || (self.private && private)
         }
-        Ok(HttpResponse::new(status, body))
+
+        /// Whether every one of `addresses`, of which there is at least one, is in an allowed
+        /// local range: the host is fetched over plain `http`. Otherwise the public rules
+        /// apply.
+        pub fn all_local(&self, addresses: &[IpAddr]) -> bool {
+            !addresses.is_empty() && addresses.iter().all(|ip| self.allows(*ip))
+        }
+    }
+
+    /// Builds a [`ReqwestClient`] that may also reach the local network, for development and
+    /// tests; see [Local development and tests](ReqwestClient#local-development-and-tests).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use identity_kit::methods::web::ReqwestClient;
+    ///
+    /// let client = ReqwestClient::builder().dangerous_allow_loopback().build()?;
+    /// assert!(client.local_network().loopback && !client.local_network().private);
+    /// # Ok::<(), identity_kit::methods::web::HttpError>(())
+    /// ```
+    #[derive(Debug, Clone)]
+    #[must_use]
+    pub struct ReqwestClientBuilder {
+        pub(super) local: LocalNetwork,
+    }
+
+    impl ReqwestClientBuilder {
+        /// Lets the client reach `127.0.0.0/8` and `::1` over plain `http`. For development
+        /// and tests only.
+        pub const fn dangerous_allow_loopback(mut self) -> Self {
+            self.local.loopback = true;
+            self
+        }
+
+        /// Lets the client reach RFC 1918 addresses and `fc00::/7` over plain `http`. For
+        /// development and tests only.
+        pub const fn dangerous_allow_private_network(mut self) -> Self {
+            self.local.private = true;
+            self
+        }
+
+        /// The client: [`ReqwestClient::new`] plus the local ranges allowed here.
+        ///
+        /// # Errors
+        ///
+        /// [`HttpError`] when the TLS backend cannot be initialized.
+        pub fn build(self) -> Result<ReqwestClient, HttpError> {
+            let mut client = ReqwestClient::new()?;
+            client.local = self.local;
+            Ok(client)
+        }
+    }
+
+    impl ReqwestClient {
+        /// The local ranges this client may reach; [`LocalNetwork::NONE`] unless built with
+        /// [`ReqwestClient::builder`].
+        pub const fn local_network(&self) -> LocalNetwork {
+            self.local
+        }
+
+        /// Fetches `url` over plain `http` when every address of its host is in an allowed
+        /// local range; `None` when the public rules apply.
+        pub(super) async fn get_local(&self, url: &Url) -> Result<Option<HttpResponse>, HttpError> {
+            if self.local == LocalNetwork::NONE || !matches!(url.scheme(), "https" | "http") {
+                return Ok(None);
+            }
+            // An `http` or `https` URL always has a host and a port.
+            let port = url.port_or_known_default().unwrap_or(443);
+            let host = url.host().expect("an `http` or `https` URL has a host");
+            let (name, addresses): (Option<&str>, Vec<IpAddr>) = match host {
+                Host::Ipv4(ip) => (None, vec![IpAddr::V4(ip)]),
+                Host::Ipv6(ip) => (None, vec![IpAddr::V6(ip)]),
+                Host::Domain(name) => {
+                    let addresses = tokio::net::lookup_host((name, port))
+                        .await
+                        .map_err(HttpError::new)?
+                        .map(|address| address.ip())
+                        .collect();
+                    (Some(name), addresses)
+                }
+            };
+            if !self.local.all_local(&addresses) {
+                return Ok(None);
+            }
+            debug_assert!(addresses.iter().all(|ip| !is_public(*ip)));
+            let target = plain_http(url, port);
+            let mut builder = reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(ReqwestClient::DEFAULT_TIMEOUT)
+                .user_agent(concat!("identity-kit/", env!("CARGO_PKG_VERSION")));
+            if let Some(name) = name {
+                let pinned: Vec<SocketAddr> = addresses
+                    .iter()
+                    .map(|ip| SocketAddr::new(*ip, port))
+                    .collect();
+                builder = builder.resolve_to_addrs(name, &pinned);
+            }
+            let client = builder.build().map_err(HttpError::new)?;
+            let response = client
+                .get(target.as_str())
+                .send()
+                .await
+                .map_err(HttpError::new)?;
+            read(response, self.max_body).await.map(Some)
+        }
+    }
+
+    /// `url` with the `http` scheme on `port`, the port the URL names or the `https` default it
+    /// implies.
+    pub(super) fn plain_http(url: &Url, port: u16) -> Url {
+        let mut target = url.clone();
+        // Scheme first: `set_port` drops a port equal to the current scheme's default, so 443
+        // set while the URL is still `https` would leave `http` on port 80.
+        target
+            .set_scheme("http")
+            .expect("an `http` or `https` URL can be `http`");
+        target
+            .set_port(Some(port))
+            .expect("a URL with a host takes a port");
+        target
     }
 }
 
@@ -189,6 +399,53 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "local-network")]
+    #[test]
+    fn plain_http_keeps_the_port() {
+        for (url, port, expected) in [
+            // No port: the `https` default, 443, which `http` must name explicitly.
+            (
+                "https://localhost/.well-known/did.json",
+                443,
+                "http://localhost:443/.well-known/did.json",
+            ),
+            (
+                "https://issuer/user/alice/did.json",
+                443,
+                "http://issuer:443/user/alice/did.json",
+            ),
+            (
+                "https://127.0.0.1/did.json",
+                443,
+                "http://127.0.0.1:443/did.json",
+            ),
+            ("https://[::1]/did.json", 443, "http://[::1]:443/did.json"),
+            // An explicit port is kept, including 80.
+            (
+                "https://localhost:8443/did.json",
+                8443,
+                "http://localhost:8443/did.json",
+            ),
+            (
+                "https://localhost:80/did.json",
+                80,
+                "http://localhost/did.json",
+            ),
+            // A plain `http` URL is unchanged.
+            (
+                "http://localhost:8080/did.json",
+                8080,
+                "http://localhost:8080/did.json",
+            ),
+            ("http://localhost/did.json", 80, "http://localhost/did.json"),
+        ] {
+            let url = url::Url::parse(url).unwrap();
+            let rewritten = local::plain_http(&url, port);
+            assert_eq!(rewritten.as_str(), expected, "{url}");
+            assert_eq!(rewritten.port_or_known_default(), Some(port), "{url}");
+        }
+    }
 
     #[test]
     fn public_addresses() {

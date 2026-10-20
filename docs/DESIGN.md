@@ -62,6 +62,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `did-key`, `did-jwk` | on      | nothing: `bs58` and the multicodec header are always compiled in `jose` (ADR 0003) |
 | `did-web`            | on      | `url`; the method works over any injected `HttpClient`        |
 | `reqwest`            | on      | `reqwest` with `rustls` and `ring`: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
+| `local-network` | off  | Development and tests only: `ReqwestClient::builder` opt-ins for loopback and private addresses (implies `reqwest`) |
 | `secp256k1`          | on      | `k256`                                                        |
 | `rsa`                | off     | `rsa`                                                         |
 | `in-memory`          | off     | test and development key store                                |
@@ -222,7 +223,11 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   `https://host[:port]/<segments>/did.json`), resolver over an injected `HttpClient` trait
   (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only),
   producer taking the document URL and setting `@context` to `["https://www.w3.org/ns/did/v1",
-  "https://w3id.org/security/suites/jws-2020/v1"]`.
+  "https://w3id.org/security/suites/jws-2020/v1"]`. For development and tests only, the
+  `local-network` feature adds `ReqwestClient::builder` with
+  `dangerous_allow_loopback` and `dangerous_allow_private_network`: the host is resolved first,
+  plain `http` is used only when every address is in an allowed range, the connection is pinned
+  to the checked addresses, and link-local and the other non-public ranges stay refused.
 
 ## Upper layer
 

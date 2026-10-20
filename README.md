@@ -37,6 +37,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `resolver`) i
 | `did-jwk`        |   ✅    | The `did:jwk` method (`methods::jwk`)                                                    |
 | `did-web`        |   ✅    | The `did:web` method (`methods::web`) over any `HttpClient`; pulls in `url`              |
 | `reqwest`        |   ✅    | The hardened default `HttpClient` for `did:web` (`reqwest` with `rustls`); implies `did-web` |
+| `local-network` |  | Development and tests only: `ReqwestClient::builder` with opt-ins to reach loopback and private addresses over `http`; implies `reqwest` |
 | `secp256k1`      |   ✅    | ES256K signatures and `secp256k1` keys, via `k256`                                       |
 | `rsa`            |         | RS256 and PS256 signature verification, via `rsa`                                        |
 | `software`       |   ✅    | `SoftwareKeyStore`: private keys in a JWK set file                                       |
