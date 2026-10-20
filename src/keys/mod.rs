@@ -55,7 +55,9 @@ pub use error::KeyStoreError;
 pub use in_memory::InMemoryKeyStore;
 #[cfg(feature = "pkcs11")]
 #[cfg_attr(docsrs, doc(cfg(feature = "pkcs11")))]
-pub use pkcs11::{Pkcs11Error, Pkcs11KeyStore, Pkcs11KeyStoreOptions, Pkcs11Token};
+pub use pkcs11::{
+    Pkcs11Error, Pkcs11KeyStore, Pkcs11KeyStoreOptions, Pkcs11Token, STAGING_LABEL_PREFIX,
+};
 pub use signer::KeySigner;
 #[cfg(feature = "software")]
 #[cfg_attr(docsrs, doc(cfg(feature = "software")))]

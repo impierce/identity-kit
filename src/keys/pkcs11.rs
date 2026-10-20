@@ -3,6 +3,7 @@
 use core::fmt;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
@@ -29,6 +30,8 @@ const ED25519_PARAMS: &[u8] = &[0x06, 0x03, 0x2b, 0x65, 0x70];
 /// DER `PrintableString "edwards25519"`, the other `CKA_EC_PARAMS` form PKCS #11 v3.1 §2.3.3
 /// allows for Ed25519 and the one `pkcs11-tool` writes.
 const ED25519_NAME_PARAMS: &[u8] = b"\x13\x0cedwards25519";
+/// The label a key pair carries between its generation and its thumbprint being known.
+pub const STAGING_LABEL_PREFIX: &str = "identity-kit-staging-";
 /// The RSA public exponent of generated keys, 65537.
 const RSA_PUBLIC_EXPONENT: &[u8] = &[0x01, 0x00, 0x01];
 /// The DER `DigestInfo` prefix for SHA-256 (RFC 8017 §9.2, note 1): `CKM_RSA_PKCS` takes the
@@ -255,7 +258,10 @@ impl Pkcs11Error {
 /// generates and deletes keys unless the token is write-protected; a generated key is an
 /// Ed25519, P-256, secp256k1 or RSA (65537) key pair stored on the token, the private key
 /// sensitive and not extractable. The key id of a generated key is the spec's label when set
-/// and the RFC 7638 thumbprint of the public key otherwise.
+/// and the RFC 7638 thumbprint of the public key otherwise; such a key is generated under a
+/// label starting with [`STAGING_LABEL_PREFIX`] and relabelled once its thumbprint is known,
+/// so a generation interrupted in between leaves a key with that prefix on the token, to be
+/// removed with the module's tools.
 ///
 /// The module's functions block, so every operation runs on `tokio`'s blocking thread pool;
 /// the store needs a `tokio` runtime. It keeps a pool of logged-in sessions
@@ -826,6 +832,13 @@ impl Inner {
             }
             public_template.extend(label_attributes(label));
             private_template.extend(label_attributes(label));
+        } else {
+            // The key id will be the thumbprint, known only once the key exists; until then
+            // the objects carry a staging label, so that a key left behind by an interrupted
+            // generation can be recognized and removed.
+            let staging = staging_label();
+            public_template.extend(label_attributes(&staging));
+            private_template.extend(label_attributes(&staging));
         }
 
         let (public, private) = session
@@ -1045,6 +1058,19 @@ fn delete(session: &Session, key: &KeyId) -> Result<(), KeyStoreError> {
     Ok(())
 }
 
+/// A label for a key pair that is being generated without a label, unique within the process
+/// and unlikely to repeat across processes.
+fn staging_label() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos() as u64);
+    format!(
+        "{STAGING_LABEL_PREFIX}{nanos:016x}-{:x}",
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// `CKA_LABEL` and `CKA_ID`, both set to `label` so that tools pairing the objects of a key by
 /// id (`pkcs11-tool`, for one) see one key.
 fn label_attributes(label: &str) -> [Attribute; 2] {
@@ -1262,6 +1288,15 @@ mod tests {
         assert_eq!(ec_point_bytes(&compressed, KeyKind::P256), None);
         assert_eq!(ec_point_bytes(&[0x05, 0x01, 0xaa], KeyKind::P256), None);
         assert_eq!(ec_point_bytes(&ed25519, KeyKind::Rsa), None);
+    }
+
+    #[test]
+    fn staging_labels_are_distinct() {
+        let a = staging_label();
+        let b = staging_label();
+        assert!(a.starts_with(STAGING_LABEL_PREFIX) && b.starts_with(STAGING_LABEL_PREFIX));
+        assert_ne!(a, b);
+        assert!(a.len() <= 64, "fits the usual label limits: {a}");
     }
 
     #[test]
