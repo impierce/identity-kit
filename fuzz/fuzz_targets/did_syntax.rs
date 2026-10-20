@@ -1,8 +1,9 @@
-//! DID syntax (DID Core §3.1 and §3.2): `Did`, `DidUrl`, `DidUrlReference` and `Uri` never
-//! panic on arbitrary input, and whatever they accept survives a round trip through its string.
+//! DID syntax (DID Core §3.1 and §3.2): `Did`, `DidUrl`, `DidUrlReference`, `Uri` and
+//! `DidMethod` never panic on arbitrary input, and whatever they accept survives a round trip
+//! through its string.
 #![no_main]
 
-use identity_kit::did::{Did, DidError, DidUrl, DidUrlReference, Uri};
+use identity_kit::did::{Did, DidError, DidMethod, DidUrl, DidUrlReference, Uri};
 use libfuzzer_sys::fuzz_target;
 
 fn base() -> Did {
@@ -32,6 +33,44 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(DidUrl::parse(input).as_ref(), Ok(&url));
         assert_eq!(did.join("").as_ref(), Ok(&url));
         assert!(Uri::parse(input).is_ok_and(|uri| uri.is_did_url()));
+
+        // The method of a DID matches it, as does its first segment taken as a namespace.
+        let method = DidMethod::from(&did);
+        assert_eq!(method.name(), did.method());
+        assert_eq!(method.namespace(), None);
+        assert!(method.matches(&did));
+        assert_eq!(DidMethod::parse(&method.to_string()).as_ref(), Ok(&method));
+        let first = did.method_specific_id().split(':').next().unwrap_or("");
+        match method.clone().with_namespace(first) {
+            Ok(namespaced) => {
+                assert!(namespaced.matches(&did));
+                assert_eq!(
+                    DidMethod::parse(&namespaced.to_string()).as_ref(),
+                    Ok(&namespaced)
+                );
+            }
+            Err(DidError::InvalidNamespace { position: 0 }) => assert!(first.is_empty()),
+            Err(error) => panic!("a segment of a DID is a namespace: {error}"),
+        }
+    }
+
+    if let Ok(method) = DidMethod::parse(input) {
+        assert_eq!(method.to_string(), input);
+        assert_eq!(DidMethod::parse(&method.to_string()).as_ref(), Ok(&method));
+        assert_eq!(DidMethod::new(method.name()).map(|m| m.namespace().is_none()), Ok(true));
+        if let Some(namespace) = method.namespace() {
+            assert_eq!(
+                DidMethod::new(method.name())
+                    .and_then(|m| m.with_namespace(namespace))
+                    .as_ref(),
+                Ok(&method)
+            );
+            // `did:<name>:<namespace>` is itself a DID of that method and namespace.
+            let did = Did::parse(input).expect("a namespaced method is a DID");
+            assert!(method.matches(&did));
+        } else {
+            assert!(Did::parse(input).is_err());
+        }
     }
 
     if let Ok(url) = DidUrl::parse(input) {

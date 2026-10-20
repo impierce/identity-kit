@@ -657,7 +657,7 @@ fn check_pct_encoded(bytes: &[u8], position: usize) -> Result<(), DidError> {
     }
 }
 
-fn is_pct_encoded_at(bytes: &[u8], position: usize) -> bool {
+pub(super) fn is_pct_encoded_at(bytes: &[u8], position: usize) -> bool {
     matches!(
         bytes.get(position..position + 3),
         Some([b'%', hi, lo]) if hi.is_ascii_hexdigit() && lo.is_ascii_hexdigit()
@@ -699,12 +699,12 @@ fn invalid_char(s: &str, position: usize) -> DidError {
 }
 
 /// `method-char = %x61-7A / DIGIT`
-fn is_method_char(c: u8) -> bool {
+pub(super) fn is_method_char(c: u8) -> bool {
     c.is_ascii_lowercase() || c.is_ascii_digit()
 }
 
 /// `idchar = ALPHA / DIGIT / "." / "-" / "_"`, without `pct-encoded`, which the scanner handles.
-fn is_idchar(c: u8) -> bool {
+pub(super) fn is_idchar(c: u8) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-' | b'_')
 }
 

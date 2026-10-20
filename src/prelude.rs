@@ -15,7 +15,7 @@
 //! ```
 
 pub use crate::did::{
-    Context, Did, DidDocument, DidDocumentBuilder, DidError, DidUrl, DidUrlReference,
+    Context, Did, DidDocument, DidDocumentBuilder, DidError, DidMethod, DidUrl, DidUrlReference,
     DocumentMetadata, MethodRef, MethodType, OneOrMany, ResolutionError, ResolutionErrorKind,
     ResolutionMetadata, ResolutionOptions, ResolutionResult, Service, ServiceEndpoint, Uri,
     VerificationMaterial, VerificationMethod, VerificationRelationship,

@@ -40,7 +40,7 @@ identity-kit/
 ├── Cargo.toml                 # workspace
 ├── identity-kit/              # the published crate; lib name `identity_kit`
 │   └── src/
-│       ├── did/               # Did, DidUrl, DidDocument, VerificationMethod, Service, resolution metadata
+│       ├── did/               # Did, DidUrl, DidMethod, DidDocument, VerificationMethod, Service, resolution metadata
 │       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode
 │       ├── keys/              # KeyStore, KeySigner, KeyId, KeySpec; backends in_memory, software, pkcs11
 │       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing
@@ -90,6 +90,7 @@ impl Did {
     pub fn join(&self, fragment_or_path: &str) -> Result<DidUrl, DidError>;
 }
 pub struct DidUrl { did: Did, path: Option<String>, query: Option<String>, fragment: Option<String> }
+pub struct DidMethod { name: String, namespace: Option<String> }  // did:demo, did:demo:dev; `matches(&Did)`; serde as string
 
 pub struct DidDocument {
     pub context: Option<Context>,             // "@context", carried verbatim
