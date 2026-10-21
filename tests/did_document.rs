@@ -883,6 +883,9 @@ fn context_forms() {
         Err(DocumentError::InvalidContext)
     );
     assert_eq!(Context::new(json!(1)), Err(DocumentError::InvalidContext));
+    let single = Context::did_v1();
+    assert!(single.contains(Context::DID_V1));
+    assert!(!single.contains("https://www.w3.org/ns/did/v1.1"));
     let mixed: Context =
         serde_json::from_str(r#"["https://www.w3.org/ns/did/v1",{"a":"b"}]"#).unwrap();
     assert!(mixed.contains(Context::DID_V1));
@@ -1471,6 +1474,14 @@ fn uris_are_checked_and_kept_verbatim() {
         (
             "http://%zz",
             DidError::InvalidPercentEncoding { position: 7 },
+        ),
+        // The scan carries on after a percent-encoded triplet.
+        (
+            "http://%41 b",
+            DidError::InvalidChar {
+                position: 10,
+                ch: ' ',
+            },
         ),
         (
             "http://%2",
