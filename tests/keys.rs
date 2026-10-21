@@ -874,14 +874,17 @@ async fn the_suite_checks_the_signature_form() {
 }
 
 /// A store whose ES256K signatures carry `n - s`, the upper of the two valid `s` values.
+#[cfg(feature = "secp256k1")]
 struct HighS(InMemoryKeyStore);
 
 /// The order of the secp256k1 group (SEC 2 §2.4.1).
+#[cfg(feature = "secp256k1")]
 const SECP256K1_N: [u8; 32] = [
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
     0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
 ];
 
+#[cfg(feature = "secp256k1")]
 #[async_trait::async_trait]
 impl KeyStore for HighS {
     fn capabilities(&self) -> KeyStoreCapabilities {
