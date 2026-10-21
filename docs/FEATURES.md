@@ -25,7 +25,6 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Document operations: builder, insert/remove methods and services, relationship management, method resolution |   ✅   |               | [DID Core][did-core]                                                                              | [#6](https://github.com/impierce/identity-kit/issues/6) |
 | `ResolutionResult`, document and resolution metadata, error vocabulary                                       |   ✅   |               | [DID Resolution][did-resolution]                                                                  | [#6](https://github.com/impierce/identity-kit/issues/6) |
 | Deterministic JSON representation (`@context` first, empties omitted, insertion order kept)                  |   ✅   |               | [DID Core §6.2](https://www.w3.org/TR/did-core/#json)                                             | [#6](https://github.com/impierce/identity-kit/issues/6) |
-| `DidMethod`: method name with optional namespace, parsed and serialized as `did:<name>[:<namespace>]`           |   📋   |               | [DID Core §3.1](https://www.w3.org/TR/did-core/#identifier), [SIOPv2][siopv2]                    | [#51](https://github.com/impierce/identity-kit/issues/51) |
 
 ### `jose`: JWK and JWS
 
