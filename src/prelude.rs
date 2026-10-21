@@ -1,8 +1,8 @@
 //! The commonly used types and traits of each layer, for glob import.
 //!
 //! The crate has two layers (see the [crate documentation](crate)). This module is the lower
-//! layer's prelude: DIDs and DID documents, JOSE keys and signatures, key stores, DID
-//! resolution and the methods the enabled features provide. [`credentials`] is the upper
+//! layer's prelude: DIDs and DID documents, JOSE keys and signatures, key stores, the signing
+//! party, DID resolution and the methods the enabled features provide. [`credentials`] is the upper
 //! layer's: verifiable credentials as JWTs, SD-JWT VCs and domain linkage.
 //!
 //! ```
@@ -20,6 +20,7 @@ pub use crate::did::{
     ResolutionMetadata, ResolutionOptions, ResolutionResult, Service, ServiceEndpoint, Uri,
     VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
+pub use crate::identity::{Identifier, Identity, IdentityError, IdentityKind, KeyStoreIdentity};
 pub use crate::jose::{
     CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, JwtClaims, KeyType,
     Signer, encode_compact,

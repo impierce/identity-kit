@@ -17,6 +17,7 @@ Collection of primitives for SSI libraries and applications: decentralized ident
 - ✅ JWK and compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) with EdDSA, ECDSA and RSA verification
 - ✅ `KeyStore` trait designed for remote signers, with in-memory and file-based backends
 - ✅ PKCS#11 key store backend, tested against SoftHSM2
+- ✅ `Identity` trait for the signing party: the identifier, `kid` and signer for a negotiated identifier kind and algorithm, with `KeyStoreIdentity` over any key store
 - ✅ `DidResolver` and `DidProducer` traits with a `Resolver` registry, document cache and DID URL dereferencing
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
 - ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
@@ -29,7 +30,7 @@ The architecture is described in [`docs/DESIGN.md`](https://github.com/impierce/
 
 ## Cargo features
 
-All features are additive; the lower layer (`did`, `jose`, `keys`, `resolver`) is always compiled.
+All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `resolver`) is always compiled.
 
 | Feature          | Default | Enables                                                                                  |
 | ---------------- | :-----: | ---------------------------------------------------------------------------------------- |

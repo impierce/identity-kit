@@ -57,8 +57,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                                                  | Status | Cargo feature | Specification                                   | Issue                                                     |
 | -------------------------------------------------------------------------------------------------------- | :----: | ------------- | ----------------------------------------------- | --------------------------------------------------------- |
-| `Identity` trait, `IdentityKind` (`Did(DidMethod)`, `JwkThumbprint`), `Identifier` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   📋   |               | [RFC 7638][rfc7638], [SIOPv2][siopv2]           | [#52](https://github.com/impierce/identity-kit/issues/52) |
-| `KeyStoreIdentity`: vendor-agnostic implementation over any `KeyStore` and the registered `DidProducer`s, opt-in key generation |   📋   |               |                                                 | [#52](https://github.com/impierce/identity-kit/issues/52) |
+| `Identity` trait, `IdentityKind` (`Did(DidMethod)`, `JwkThumbprint`), `Identifier` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7638][rfc7638], [SIOPv2][siopv2]           | [#52](https://github.com/impierce/identity-kit/issues/52) |
+| `KeyStoreIdentity`: vendor-agnostic implementation over any `KeyStore` and the registered `DidProducer`s, opt-in key generation |   ✅   |               |                                                 | [#52](https://github.com/impierce/identity-kit/issues/52) |
 
 ### `resolver`: resolution and production
 
