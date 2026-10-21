@@ -152,6 +152,8 @@ impl Jwk {
     pub fn public(&self) -> Jwk;
     pub fn to_decoding_key(&self) -> Result<jsonwebtoken::DecodingKey>;
     pub fn from_spki_der(hint: KeyType, der: &[u8]) -> Result<Jwk>;   // what KMS/HSM backends return
+    pub fn from_pkcs1_der(der: &[u8]) -> Result<Jwk>;   // RSA `RSAPublicKey` (RFC 8017 A.1.1), what some vaults return
+    pub fn to_pkcs1_der(&self) -> Result<Vec<u8>>;      // the same parser `rsa-pub` Multikeys use
 }
 pub enum JwsAlgorithm { EdDSA, ES256, ES256K, ES384, RS256, PS256 }  // From/TryFrom jsonwebtoken::Algorithm
 pub trait JwsVerifier: Send + Sync {

@@ -446,34 +446,43 @@ fn ec_spki(curve_oid_prefix: &str, point: &[u8]) -> Vec<u8> {
     der
 }
 
-/// `SEQUENCE { SEQUENCE { rsaEncryption, NULL }, BIT STRING { RSAPublicKey } }` (RFC 8017 A.1.1).
-fn rsa_spki(n: &[u8], e: &[u8]) -> Vec<u8> {
-    fn len(n: usize) -> Vec<u8> {
-        match n {
-            0..=0x7f => vec![n as u8],
-            0x80..=0xff => vec![0x81, n as u8],
-            _ => vec![0x82, (n >> 8) as u8, n as u8],
-        }
+/// A DER TLV with a definite length in the fewest octets (X.690 §10.1), for contents up to
+/// 64 KiB.
+fn der_tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+    let n = content.len();
+    let mut out = vec![tag];
+    match n {
+        0..=0x7f => out.push(n as u8),
+        0x80..=0xff => out.extend([0x81, n as u8]),
+        _ => out.extend([0x82, (n >> 8) as u8, n as u8]),
     }
-    fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
-        let mut out = vec![tag];
-        out.extend(len(content.len()));
-        out.extend_from_slice(content);
-        out
-    }
+    out.extend_from_slice(content);
+    out
+}
+
+/// `RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }` (RFC 8017 A.1.1) for
+/// unsigned big-endian `n` and `e` without leading zeros.
+fn rsa_pkcs1(n: &[u8], e: &[u8]) -> Vec<u8> {
     fn integer(be: &[u8]) -> Vec<u8> {
         let mut content = Vec::with_capacity(be.len() + 1);
         if be[0] & 0x80 != 0 {
             content.push(0);
         }
         content.extend_from_slice(be);
-        tlv(0x02, &content)
+        der_tlv(0x02, &content)
     }
-    let rsa_public_key = tlv(0x30, &[integer(n), integer(e)].concat());
+    der_tlv(0x30, &[integer(n), integer(e)].concat())
+}
+
+/// `SEQUENCE { SEQUENCE { rsaEncryption, NULL }, BIT STRING { RSAPublicKey } }` (RFC 8017 A.1.1).
+fn rsa_spki(n: &[u8], e: &[u8]) -> Vec<u8> {
     let algorithm = hex("300d06092a864886f70d0101010500");
     let mut bit_string_content = vec![0];
-    bit_string_content.extend(rsa_public_key);
-    tlv(0x30, &[algorithm, tlv(0x03, &bit_string_content)].concat())
+    bit_string_content.extend(rsa_pkcs1(n, e));
+    der_tlv(
+        0x30,
+        &[algorithm, der_tlv(0x03, &bit_string_content)].concat(),
+    )
 }
 
 #[test]
@@ -581,6 +590,123 @@ fn rsa_spki_parses_or_is_feature_gated() {
             feature: "rsa"
         })
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// PKCS #1 `RSAPublicKey`
+// ---------------------------------------------------------------------------------------------
+
+/// A 4096-bit modulus: no published 4096-bit key is among the vectors, and PKCS #1 and SPKI
+/// parsing need only the size and the encoding, not a product of two primes. The top bit is set
+/// so that the modulus is 4096 bits long and its INTEGER needs a leading zero.
+fn modulus_4096() -> Vec<u8> {
+    let mut n: Vec<u8> = (0..512u32).map(|i| (i * 37 + 11) as u8).collect();
+    n[0] = 0xc5;
+    n[511] |= 1;
+    n
+}
+
+#[test]
+fn pkcs1_round_trips_2048_and_4096_bit_keys() {
+    let (n_2048, e) = rfc7638_rsa().rsa_public_components().unwrap();
+    for (n, header) in [
+        // 4 + 257 bytes of modulus INTEGER (with its leading zero) plus 5 of exponent: 266 = 0x10a.
+        (n_2048, [0x30, 0x82, 0x01, 0x0a]),
+        // 4 + 513 plus 5: 522 = 0x20a.
+        (modulus_4096(), [0x30, 0x82, 0x02, 0x0a]),
+    ] {
+        let der = rsa_pkcs1(&n, &e);
+        assert_eq!(der[..4], header);
+        let jwk = Jwk::from_pkcs1_der(&der).unwrap();
+        assert_eq!(jwk.rsa_public_components().unwrap(), (n.clone(), e.clone()));
+        assert_eq!(jwk, Jwk::from_rsa_public(&n, &e).unwrap());
+        assert_eq!(jwk.to_pkcs1_der().unwrap(), der);
+
+        // The same key as a `SubjectPublicKeyInfo` gives the same JWK.
+        #[cfg(feature = "rsa")]
+        {
+            let hint = if n.len() == 512 {
+                KeyType::Rsa4096
+            } else {
+                KeyType::Rsa2048
+            };
+            assert_eq!(Jwk::from_spki_der(hint, &rsa_spki(&n, &e)).unwrap(), jwk);
+        }
+    }
+    assert_eq!(
+        rfc7638_rsa().to_pkcs1_der().unwrap(),
+        rsa_pkcs1(&b64(RFC7638_RSA_N), &[1, 0, 1])
+    );
+}
+
+#[test]
+fn pkcs1_rejects_what_is_not_a_der_rsa_public_key() {
+    // `SEQUENCE { INTEGER 0x00c5, INTEGER 65537 }`.
+    let valid = hex("3009020200c50203010001");
+    assert_eq!(
+        Jwk::from_pkcs1_der(&valid)
+            .unwrap()
+            .rsa_public_components()
+            .unwrap(),
+        (vec![0xc5], vec![1, 0, 1])
+    );
+    let (n, e) = rfc7638_rsa().rsa_public_components().unwrap();
+    for (name, der) in [
+        (
+            "trailing bytes after the SEQUENCE",
+            "3009020200c502030100010000",
+        ),
+        (
+            "trailing bytes inside the SEQUENCE",
+            "300a020200c5020301000100",
+        ),
+        ("non-minimal length", "30820009020200c50203010001"),
+        ("long form of a short length", "308109020200c50203010001"),
+        ("negative INTEGER", "30080201c50203010001"),
+        ("leading zero octet", "300a02030000c50203010001"),
+        ("leading zero octet in e", "3009020200c50203000101"),
+        ("empty INTEGER", "300702000203010001"),
+        ("wrong outer tag", "3109020200c50203010001"),
+        ("BER indefinite length", "3080020200c502030100010000"),
+        ("empty input", ""),
+    ]
+    .map(|(name, der)| (name, hex(der)))
+    .into_iter()
+    .chain([("a SubjectPublicKeyInfo", rsa_spki(&n, &e))])
+    {
+        assert!(
+            matches!(
+                Jwk::from_pkcs1_der(&der),
+                Err(JwkError::InvalidKey { key: "RSA", .. })
+            ),
+            "{name}: {der:02x?}"
+        );
+    }
+
+    // Truncated at every byte offset.
+    let der = rsa_pkcs1(&n, &e);
+    for len in 0..der.len() {
+        assert!(
+            matches!(
+                Jwk::from_pkcs1_der(&der[..len]),
+                Err(JwkError::InvalidKey { key: "RSA", .. })
+            ),
+            "truncated to {len} bytes"
+        );
+    }
+}
+
+#[test]
+fn pkcs1_needs_an_rsa_key() {
+    assert!(matches!(
+        rfc8037_public().to_pkcs1_der(),
+        Err(JwkError::UnexpectedKeyType {
+            expected: "RSA",
+            ..
+        })
+    ));
+    let no_e: Jwk = serde_json::from_value(json!({ "kty": "RSA", "n": RFC7638_RSA_N })).unwrap();
+    assert_eq!(no_e.to_pkcs1_der(), Err(JwkError::MissingMember("e")));
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -1,8 +1,9 @@
-//! JOSE (RFC 7515, RFC 7517, RFC 7638, Multikey): compact JWS decoding, JWK deserialization,
-//! the key encodings and signature verification with any key never panic.
+//! JOSE (RFC 7515, RFC 7517, RFC 7638, Multikey, PKCS #1): compact JWS decoding, JWK
+//! deserialization, the key encodings and signature verification with any key never panic.
 //!
 //! The input is a compact JWS on the first line, followed by a JWK as JSON; either part may be
-//! absent.
+//! absent. The bytes after the first line are also tried as a DER `SubjectPublicKeyInfo` and a
+//! DER PKCS #1 `RSAPublicKey`.
 #![no_main]
 
 use std::str::FromStr as _;
@@ -102,5 +103,10 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(jwk) = Jwk::from_spki_der(key_type, rest) {
             exercise_jwk(&jwk);
         }
+    }
+    if let Ok(jwk) = Jwk::from_pkcs1_der(rest) {
+        // DER has one encoding per key, so whatever parses is re-encoded byte for byte.
+        assert_eq!(jwk.to_pkcs1_der().as_deref(), Ok(rest));
+        exercise_jwk(&jwk);
     }
 });
