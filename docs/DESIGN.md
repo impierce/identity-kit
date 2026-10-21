@@ -5,6 +5,9 @@ pluggable key store, and JWT-based verifiable credentials. It is published as **
 Cargo features. Consumers today are `impierce/openid4vc` and `impierce/ssi-agent` (UniCore); it
 replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did-*` and `did-key`.
 
+This document describes the target architecture. Parts of it are planned rather than
+implemented; [`FEATURES.md`](FEATURES.md) tracks the status of each feature and its issue.
+
 ## Principles
 
 1. **One crate, two layers, hard boundary.** Lower layer: `did`, `jose`, `keys`, `identity`,
@@ -210,7 +213,7 @@ pub enum Identifier { Did(Did), JwkThumbprint(String) }      // Display: the `is
 #[async_trait]
 pub trait Identity: Send + Sync {
     fn capabilities(&self) -> Vec<(IdentityKind, JwsAlgorithm)>;
-    async fn identifier(&self, kind: &IdentityKind) -> Result<Identifier, IdentityError>;
+    async fn identifier(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Identifier, IdentityError>;
     async fn public_jwk(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Jwk, IdentityError>;
     async fn signer(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Box<dyn Signer + '_>, IdentityError>;
 }
@@ -249,7 +252,7 @@ pub trait KeyResolver: Send + Sync {
     async fn resolve_key(&self, key: &KeyReference, role: KeyRole) -> Result<Jwk, KeyResolutionError>;   // Unsupported(reference) when it cannot
 }
 pub struct CompositeKeyResolver(..);   // first resolver that does not answer Unsupported
-// shipped: Resolver (DidUrl), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
+// in the crate: Resolver (DidUrl), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
 ```
 
 - `jose::multikey`: the multicodec table (`ed25519-pub 0xed`, `p256-pub 0x1200`, `secp256k1-pub
@@ -274,10 +277,11 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   to the checked addresses, and link-local and the other non-public ranges stay refused.
 - Key references (ADR 0006): a token names its key in one of several ways and `KeyReference`
   captures which; `from_jws` applies a fixed precedence, `sd_jwt_vc` builds one from `cnf`
-  (`jwk`, `kid`, `jku`). Resolving a reference says nothing about trust: after the signature
-  verifies, a validator checks that the key belongs to the claimed party (the DID of a DID
-  URL; `did:jwk` or the RFC 7638 thumbprint of a key by value; the issuer URL of a JWKS).
-  `X509Chain` and `Jku` are in the enum and resolve to `Unsupported` until implemented.
+  (`jwk`, `kid` as an absolute DID URL, `jku`). Resolving a reference says nothing about
+  trust: after the signature verifies, a validator checks that the key belongs to the claimed
+  party (the DID of a DID URL; `did:jwk` or the RFC 7638 thumbprint of a key by value; the
+  issuer URL of a JWKS). `X509Chain` and `Jku` are in the enum and resolve to `Unsupported`
+  until implemented.
 
 ## Upper layer
 
@@ -293,8 +297,8 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   `assertionMethod` or `authentication`), `TimeOptions` (explicit `now`, leeway), issuer and
   holder binding to the party the `KeyReference` names, audience and nonce, accepted `typ` beyond the profile's,
   `SubjectHolderRelationship`, `FailFast`, one format-agnostic `StatusCheck` trait over
-  `CredentialStatus::{Vcdm, SdJwt}` with a `StatusPolicy`, `extract_issuer`/`extract_holder`
-  (ADR 0004, ADR 0006); `ClaimPath` (SD-JWT VC §5.6.1, OID4VP §7 claims path pointer),
+  `CredentialStatus::Vcdm` (and `CredentialStatus::SdJwt` with `sd-jwt`) with a `StatusPolicy`,
+  `extract_issuer`/`extract_holder` (ADR 0004, ADR 0006); `ClaimPath` (SD-JWT VC §5.6.1, OID4VP §7 claims path pointer),
   re-exported from `sd_jwt_vc`.
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
   `SdJwt` (parse, `process` per §7.1, `disclose`/`select` for presentation, `sign_key_binding`),
