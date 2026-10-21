@@ -220,7 +220,7 @@ pub trait Identity: Send + Sync {
     async fn public_jwk(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Jwk, IdentityError>;
     async fn signer(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Box<dyn Signer + '_>, IdentityError>;
 }
-pub struct KeyStoreIdentity { .. }   // over any KeyStore + DidProducers; bind(kind, alg, key); generate_missing(bool), off by default
+pub struct KeyStoreIdentity { .. }   // over any KeyStore + DidProducers; bind(kind, alg, key), bind_did_url(..); generate_missing(bool), off by default
 ```
 
 - For a DID the signer's `kid()` is the absolute verification-method URL; for a thumbprint it is

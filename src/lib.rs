@@ -1,13 +1,13 @@
 //! DID, key management and verifiable credential primitives.
 //!
 //! The crate is organised in two layers. The lower layer holds the DID data model ([`did`]), JOSE
-//! keys and signatures ([`jose`]), key stores ([`keys`]), DID resolution and dereferencing
-//! ([`resolver`]) and the `did:key`, `did:jwk` and `did:web` methods ([`methods`]). The upper
-//! layer builds JWT-based verifiable credentials and presentations on top of it ([`vc`]),
-//! SD-JWT verifiable credentials ([`sd_jwt_vc`]), the DIF Well Known DID Configuration
-//! ([`domain_linkage`]) and DIF Linked Verifiable Presentations ([`linked_vp`]), and never
-//! leaks back into the lower layer. [`prelude`] gathers the
-//! common types of the lower layer, [`prelude::credentials`] those of the upper layer.
+//! keys and signatures ([`jose`]), key stores ([`keys`]), the signing party ([`identity`]), DID
+//! resolution and dereferencing ([`resolver`]) and the `did:key`, `did:jwk` and `did:web`
+//! methods ([`methods`]). The upper layer builds JWT-based verifiable credentials and
+//! presentations on top of it ([`vc`]), SD-JWT verifiable credentials ([`sd_jwt_vc`]), the DIF
+//! Well Known DID Configuration ([`domain_linkage`]) and DIF Linked Verifiable Presentations
+//! ([`linked_vp`]), and never leaks back into the lower layer. [`prelude`] gathers the common
+//! types of the lower layer, [`prelude::credentials`] those of the upper layer.
 //!
 //! # Cargo features
 //!
@@ -27,6 +27,7 @@ pub mod did;
 #[cfg(feature = "domain-linkage")]
 #[cfg_attr(docsrs, doc(cfg(feature = "domain-linkage")))]
 pub mod domain_linkage;
+pub mod identity;
 pub mod jose;
 pub mod keys;
 #[cfg(feature = "linked-vp")]
