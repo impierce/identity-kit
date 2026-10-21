@@ -1058,6 +1058,68 @@ async fn the_suite_checks_the_signature_form() {
     testsuite::run(&Truncating(InMemoryKeyStore::new())).await;
 }
 
+/// A store whose ES256K signatures carry `n - s`, the upper of the two valid `s` values.
+#[cfg(feature = "secp256k1")]
+struct HighS(InMemoryKeyStore);
+
+/// The order of the secp256k1 group (SEC 2 §2.4.1).
+#[cfg(feature = "secp256k1")]
+const SECP256K1_N: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+    0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
+];
+
+#[cfg(feature = "secp256k1")]
+#[async_trait::async_trait]
+impl KeyStore for HighS {
+    fn capabilities(&self) -> KeyStoreCapabilities {
+        self.0.capabilities()
+    }
+
+    async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError> {
+        self.0.public_jwk(key).await
+    }
+
+    async fn sign(
+        &self,
+        key: &KeyId,
+        alg: JwsAlgorithm,
+        data: &[u8],
+    ) -> Result<Vec<u8>, KeyStoreError> {
+        let mut signature = self.0.sign(key, alg, data).await?;
+        if alg == JwsAlgorithm::ES256K {
+            // s := n - s, big-endian with borrow.
+            let mut borrow = 0i16;
+            for i in (0..32).rev() {
+                let mut digit = i16::from(SECP256K1_N[i]) - i16::from(signature[32 + i]) - borrow;
+                borrow = i16::from(digit < 0);
+                digit += 256 * borrow;
+                signature[32 + i] = u8::try_from(digit).unwrap();
+            }
+        }
+        Ok(signature)
+    }
+
+    async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError> {
+        self.0.exists(key).await
+    }
+
+    async fn generate(&self, spec: KeySpec) -> Result<KeyId, KeyStoreError> {
+        self.0.generate(spec).await
+    }
+
+    async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> {
+        self.0.delete(key).await
+    }
+}
+
+#[cfg(feature = "secp256k1")]
+#[tokio::test]
+#[should_panic(expected = "has `s` in the upper half of the group order")]
+async fn the_suite_checks_that_es256k_signatures_have_a_low_s() {
+    testsuite::run(&HighS(InMemoryKeyStore::new())).await;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------------------------

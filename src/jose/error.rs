@@ -205,3 +205,41 @@ impl From<Box<dyn Error + Send + Sync + 'static>> for SignError {
         Self(error)
     }
 }
+
+/// Why an ECDSA signature cannot be put in its JWS form; see
+/// [`ecdsa_signature_from_der`](super::ecdsa_signature_from_der) and
+/// [`normalize_ecdsa_signature`](super::normalize_ecdsa_signature).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum EcdsaSignatureError {
+    /// The algorithm is not ECDSA.
+    #[error("{0} is not an ECDSA algorithm")]
+    NotEcdsa(JwsAlgorithm),
+    /// The algorithm needs a feature this build does not have: ES256K without `secp256k1`.
+    #[error("{0} signatures need the `secp256k1` feature")]
+    Unsupported(JwsAlgorithm),
+    /// The input is not a strict DER `ECDSA-Sig-Value`.
+    #[error("invalid DER ECDSA signature: {0}")]
+    InvalidDer(&'static str),
+    /// `r` or `s` is longer than the curve's size.
+    #[error("ECDSA signature component of {len} bytes is too long for {alg}")]
+    ComponentTooLong {
+        /// The algorithm.
+        alg: JwsAlgorithm,
+        /// The length of the component, without its sign byte.
+        len: usize,
+    },
+    /// A raw signature is not twice the curve's size.
+    #[error("{alg} signature must be {expected} bytes, got {actual}")]
+    InvalidLength {
+        /// The algorithm.
+        alg: JwsAlgorithm,
+        /// Twice the curve's size.
+        expected: usize,
+        /// The length of the signature.
+        actual: usize,
+    },
+    /// `r` or `s` is zero or not below the group order.
+    #[error("{0} signature component is out of range")]
+    OutOfRange(JwsAlgorithm),
+}
