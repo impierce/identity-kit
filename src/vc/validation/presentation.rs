@@ -14,6 +14,8 @@ use crate::vc::{
     PresentationV2, Subject,
 };
 
+#[cfg(feature = "sd-jwt")]
+use super::CredentialStatus;
 use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2};
 use super::{
     DecodedCredential, DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver, KeyRole,
@@ -268,13 +270,10 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     /// under `options.credentials`: an `application/vc+jwt` one with
     /// [`JwtCredentialValidator::validate_v2`]; with the `sd-jwt` feature, an
     /// `application/vc+sd-jwt` one as `SdJwtCredentialValidator::validate_v2` of `sd_jwt_vc`
-    /// does, with its `credentialStatus` checked by this validator's [`StatusCheck`] and the
-    /// key binding of `options.key_binding` required when set (none by default: the
-    /// presentation JWT already proves holder control). The `status` claim of such a
-    /// credential (Token Status List) is **not** checked here, because this validator has no
-    /// `SdJwtStatusCheck`; an application that relies on it validates the credential with
-    /// `SdJwtCredentialValidator` as well. An envelope of another media type (a COSE
-    /// credential) fails for that credential alone.
+    /// does, with its `credentialStatus` entries and its `status` claim checked by this
+    /// validator's [`StatusCheck`] and the key binding of `options.key_binding` required when
+    /// set (none by default: the presentation JWT already proves holder control). An envelope
+    /// of another media type (a COSE credential) fails for that credential alone.
     ///
     /// # Errors
     ///
@@ -345,8 +344,13 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
             let credential = validated.credential;
             self.credentials
                 .check_status(
-                    credential.credential().statuses(),
+                    credential
+                        .credential()
+                        .statuses()
+                        .map(CredentialStatus::Vcdm)
+                        .chain(credential.status().map(CredentialStatus::SdJwt)),
                     options.credentials.status,
+                    options.credentials.time.now(),
                 )
                 .await?;
             check_subject_holder(

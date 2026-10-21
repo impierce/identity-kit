@@ -4,11 +4,13 @@ use std::collections::BTreeSet;
 
 use crate::did::Uri;
 use crate::jose::{CompactJws, DefaultVerifier, Jwk, JwsHeader, JwsVerifier};
-use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party, TypedObject};
+use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party};
+
+use chrono::{DateTime, Utc};
 
 use super::{
-    CredentialValidationOptions, KeyReference, KeyResolver, KeyRole, StatusCheck, StatusError,
-    StatusPolicy, ValidationError,
+    CredentialStatus, CredentialValidationOptions, KeyReference, KeyResolver, KeyRole, StatusCheck,
+    StatusPolicy, ValidationError, check_statuses,
 };
 
 /// A validated or decoded VCDM 1.1 credential JWT: its header, its claims (custom ones
@@ -159,8 +161,16 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
             decoded.credential.expiration_date,
             None,
         )?;
-        self.check_status(decoded.credential.credential_status.iter(), options.status)
-            .await?;
+        self.check_status(
+            decoded
+                .credential
+                .credential_status
+                .iter()
+                .map(CredentialStatus::Vcdm),
+            options.status,
+            options.time.now(),
+        )
+        .await?;
         Ok(decoded)
     }
 
@@ -187,8 +197,12 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
             decoded.credential.valid_until,
             None,
         )?;
-        self.check_status(decoded.credential.statuses(), options.status)
-            .await?;
+        self.check_status(
+            decoded.credential.statuses().map(CredentialStatus::Vcdm),
+            options.status,
+            options.time.now(),
+        )
+        .await?;
         Ok(decoded)
     }
 
@@ -213,30 +227,14 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         Ok((reference, key))
     }
 
-    /// Checks every status entry per `policy`.
+    /// Checks every status entry with this validator's check, per `policy`, at `now`.
     pub(super) async fn check_status<'a>(
         &self,
-        statuses: impl Iterator<Item = &'a TypedObject>,
+        statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
         policy: StatusPolicy,
+        now: DateTime<Utc>,
     ) -> Result<(), ValidationError> {
-        if policy == StatusPolicy::SkipAll {
-            return Ok(());
-        }
-        for status in statuses {
-            let result = match &self.status {
-                Some(check) => check.check(status).await,
-                None => Err(StatusError::Unsupported(status.object_type().to_owned())),
-            };
-            match result {
-                Ok(()) => {}
-                Err(StatusError::Unsupported(_)) if policy == StatusPolicy::SkipUnsupported => {}
-                Err(StatusError::Unsupported(status_type)) => {
-                    return Err(ValidationError::StatusUnchecked(status_type));
-                }
-                Err(error) => return Err(ValidationError::Status(error)),
-            }
-        }
-        Ok(())
+        check_statuses(self.status.as_deref(), statuses, policy, now).await
     }
 }
 

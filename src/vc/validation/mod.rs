@@ -9,7 +9,8 @@
 //! resolves DID URLs; a [`CompositeKeyResolver`](crate::resolver::CompositeKeyResolver) adds
 //! keys by value ([`JwkResolver`](crate::resolver::JwkResolver)) or the key sets of HTTPS
 //! issuers (`JwksResolver`, feature `jwks`). A [`StatusCheck`] is a third, optional extension
-//! point, for `credentialStatus`.
+//! point, for `credentialStatus`, shared with the SD-JWT validators, which hand it the
+//! `status` claim.
 //!
 //! # What is checked
 //!
@@ -55,6 +56,7 @@
 
 use core::time::Duration;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 
@@ -80,24 +82,153 @@ pub use presentation::{
     decode_presentation, decode_presentation_v2,
 };
 
-/// Checks the `credentialStatus` of a credential: fetches the status list, bitmap or registry
-/// the entry points to and reports whether the credential is still good.
+/// A status entry of a credential, of either credential format, for a [`StatusCheck`].
 ///
-/// The crate ships no implementation; the status mechanisms live with the credential formats
-/// that define them. A check that does not understand the entry's type reports
-/// [`StatusError::Unsupported`], which the [`StatusPolicy`] decides about.
+/// # Examples
+///
+/// ```
+/// use identity_kit::vc::TypedObject;
+/// use identity_kit::vc::validation::CredentialStatus;
+///
+/// let entry: TypedObject = serde_json::from_value(serde_json::json!({
+///     "id": "https://example.com/credentials/status/3#94567",
+///     "type": "BitstringStatusListEntry",
+/// }))?;
+/// assert_eq!(CredentialStatus::Vcdm(&entry).mechanism(), "BitstringStatusListEntry");
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum CredentialStatus<'a> {
+    /// A `credentialStatus` entry of a VCDM credential.
+    Vcdm(&'a TypedObject),
+    /// The `status` claim of an SD-JWT VC, or of a VCDM 2.0 credential secured with SD-JWT
+    /// (IETF Token Status List and other mechanisms).
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    SdJwt(&'a crate::sd_jwt_vc::Status),
+}
+
+impl CredentialStatus<'_> {
+    /// What a check reports as [`StatusError::Unsupported`] for this entry: the `type` of a
+    /// `credentialStatus` entry, or the names of the mechanisms in a `status` claim
+    /// (`status_list`, and the members of other mechanisms), comma separated.
+    pub fn mechanism(&self) -> String {
+        match self {
+            Self::Vcdm(entry) => entry.object_type().to_owned(),
+            #[cfg(feature = "sd-jwt")]
+            Self::SdJwt(status) => status
+                .mechanisms()
+                .map(|mechanism| match mechanism {
+                    crate::sd_jwt_vc::StatusMechanism::StatusList(_) => "status_list",
+                    crate::sd_jwt_vc::StatusMechanism::Other { name, .. } => name,
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        }
+    }
+}
+
+/// Checks the status of a credential: fetches the status list, bitmap or registry an entry
+/// points to and reports whether the credential is still good.
+///
+/// One check serves both credential formats: the validators hand it every `credentialStatus`
+/// entry of a VCDM credential as [`CredentialStatus::Vcdm`] and the `status` claim of an
+/// SD-JWT credential as `CredentialStatus::SdJwt` (feature `sd-jwt`), so an application
+/// implements status checking once. A check that does not understand an entry reports
+/// [`StatusError::Unsupported`], which the [`StatusPolicy`] decides about. `StatusListCheck`
+/// of `sd_jwt_vc::validation` (features `sd-jwt` and `did-web`) checks the Token Status List
+/// and reports every VCDM entry as unsupported.
+///
+/// # Examples
+///
+/// A check that knows only the Token Status List, and only the list it was given:
+///
+/// ```
+/// use chrono::{DateTime, Utc};
+/// use identity_kit::vc::validation::{CredentialStatus, StatusCheck, StatusError};
+///
+/// struct Revoked;
+///
+/// #[async_trait::async_trait]
+/// impl StatusCheck for Revoked {
+///     async fn check(&self, status: CredentialStatus<'_>, _: DateTime<Utc>) -> Result<(), StatusError> {
+///         match status {
+///             #[cfg(feature = "sd-jwt")]
+///             CredentialStatus::SdJwt(status) if status.status_list.is_some() => {
+///                 Err(StatusError::Invalid("revoked".to_owned()))
+///             }
+///             other => Err(StatusError::Unsupported(other.mechanism())),
+///         }
+///     }
+/// }
+/// ```
 #[async_trait::async_trait]
 pub trait StatusCheck: Send + Sync {
-    /// Checks `status`.
+    /// Checks `status` at the validation time `now`, against which a check judges what it
+    /// fetched (the expiry of a status list token, for instance).
     ///
     /// # Errors
     ///
-    /// A [`StatusError`]: [`Unsupported`](StatusError::Unsupported) for a type the check does
-    /// not know, [`Invalid`](StatusError::Invalid) when the credential is revoked or suspended.
-    async fn check(&self, status: &TypedObject) -> Result<(), StatusError>;
+    /// A [`StatusError`]: [`Unsupported`](StatusError::Unsupported) for an entry or mechanism
+    /// the check does not know, [`Unavailable`](StatusError::Unavailable) when the status
+    /// could not be obtained, [`Invalid`](StatusError::Invalid) when the credential is revoked
+    /// or suspended.
+    async fn check(
+        &self,
+        status: CredentialStatus<'_>,
+        now: DateTime<Utc>,
+    ) -> Result<(), StatusError>;
 }
 
-/// What to do about a `credentialStatus` entry.
+macro_rules! forward_status_check {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            #[async_trait::async_trait]
+            impl<T: StatusCheck + ?Sized> StatusCheck for $ty {
+                async fn check(
+                    &self,
+                    status: CredentialStatus<'_>,
+                    now: DateTime<Utc>,
+                ) -> Result<(), StatusError> {
+                    (**self).check(status, now).await
+                }
+            }
+        )*
+    };
+}
+
+forward_status_check!(&T, Box<T>, Arc<T>);
+
+/// Checks every entry of `statuses` with `check` per `policy`, at `now`.
+pub(crate) async fn check_statuses<'a>(
+    check: Option<&dyn StatusCheck>,
+    statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
+    policy: StatusPolicy,
+    now: DateTime<Utc>,
+) -> Result<(), ValidationError> {
+    if policy == StatusPolicy::SkipAll {
+        return Ok(());
+    }
+    for status in statuses {
+        let result = match check {
+            Some(check) => check.check(status, now).await,
+            None => Err(StatusError::Unsupported(status.mechanism())),
+        };
+        match result {
+            Ok(()) => {}
+            Err(StatusError::Unsupported(_)) if policy == StatusPolicy::SkipUnsupported => {}
+            Err(StatusError::Unsupported(mechanism)) => {
+                return Err(ValidationError::StatusUnchecked(mechanism));
+            }
+            Err(error) => return Err(ValidationError::Status(error)),
+        }
+    }
+    Ok(())
+}
+
+/// What to do about a status entry: a `credentialStatus` entry, or the `status` claim of an
+/// SD-JWT credential.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StatusPolicy {

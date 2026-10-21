@@ -19,14 +19,14 @@ use identity_kit::resolver::Resolver;
 use identity_kit::sd_jwt_vc::{
     Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, SdJwt, SdJwtBuilder,
     SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error, SdJwtCredentialValidator,
-    SdJwtError, SdJwtStatusCheck, SdJwtValidationError, SdJwtValidationOptions, SdJwtVc,
-    SdJwtVcBuilder, SdJwtVcError, Status, StatusListRef,
+    SdJwtError, SdJwtValidationError, SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder,
+    SdJwtVcError, Status, StatusListRef,
 };
 use identity_kit::vc::validation::{
-    CredentialValidationOptions, FailFast, JwtPresentationValidator, KeyReference,
-    KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole, PresentationValidationError,
-    PresentationValidationOptions, PresentedCredentialV2, StatusCheck, StatusError, StatusPolicy,
-    TimeOptions, ValidationError, decode_presentation_v2,
+    CredentialStatus, CredentialValidationOptions, FailFast, JwtPresentationValidator,
+    KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
+    PresentationValidationError, PresentationValidationOptions, PresentedCredentialV2, StatusCheck,
+    StatusError, StatusPolicy, TimeOptions, ValidationError, decode_presentation_v2,
 };
 use identity_kit::vc::{
     CredentialError, CredentialV2, EnvelopedVc, Jwt, JwtClaims, PresentationV2, Subject,
@@ -848,39 +848,46 @@ async fn key_binding_errors() {
     }
 }
 
-/// A status check that finds every credential revoked.
-struct Revoked;
-
-#[async_trait::async_trait]
-impl StatusCheck for Revoked {
-    async fn check(&self, status: &TypedObject) -> Result<(), StatusError> {
-        assert_eq!(status.object_type(), "BitstringStatusListEntry");
-        Err(StatusError::Invalid("revoked".to_owned()))
-    }
+/// One status check for both formats, with a verdict per kind of entry: `Some(true)` valid,
+/// `Some(false)` revoked, `None` unsupported.
+#[derive(Debug, Clone, Copy)]
+struct Verdicts {
+    vcdm: Option<bool>,
+    sd_jwt: Option<bool>,
 }
 
-#[async_trait::async_trait]
-impl SdJwtStatusCheck for Revoked {
-    async fn check(&self, status: &Status, _now: DateTime<Utc>) -> Result<(), StatusError> {
-        assert_eq!(status.status_list.as_ref().unwrap().idx, 7);
-        Err(StatusError::Invalid("revoked".to_owned()))
-    }
-}
-
-/// A status check that finds every credential valid.
-struct Valid;
+const VALID: Verdicts = Verdicts {
+    vcdm: Some(true),
+    sd_jwt: Some(true),
+};
+const REVOKED: Verdicts = Verdicts {
+    vcdm: Some(false),
+    sd_jwt: Some(false),
+};
 
 #[async_trait::async_trait]
-impl StatusCheck for Valid {
-    async fn check(&self, _status: &TypedObject) -> Result<(), StatusError> {
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl SdJwtStatusCheck for Valid {
-    async fn check(&self, _status: &Status, _now: DateTime<Utc>) -> Result<(), StatusError> {
-        Ok(())
+impl StatusCheck for Verdicts {
+    async fn check(
+        &self,
+        status: CredentialStatus<'_>,
+        _now: DateTime<Utc>,
+    ) -> Result<(), StatusError> {
+        let verdict = match status {
+            CredentialStatus::Vcdm(entry) => {
+                assert_eq!(entry.object_type(), "BitstringStatusListEntry");
+                self.vcdm
+            }
+            CredentialStatus::SdJwt(status) => {
+                assert_eq!(status.status_list.as_ref().unwrap().idx, 7);
+                self.sd_jwt
+            }
+            _ => None,
+        };
+        match verdict {
+            Some(true) => Ok(()),
+            Some(false) => Err(StatusError::Invalid("revoked".to_owned())),
+            None => Err(StatusError::Unsupported(status.mechanism())),
+        }
     }
 }
 
@@ -923,77 +930,108 @@ async fn status_policies() {
     );
 
     // Under `Strict`, both must be checked; `credentialStatus` comes first.
-    let error = validator()
-        .validate_v2(credential.sd_jwt(), &options())
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        SdJwtValidationError::Validation(ValidationError::StatusUnchecked(kind))
-            if kind == "BitstringStatusListEntry"
-    ));
-    let error = validator()
-        .with_credential_status_check(Valid)
-        .validate_v2(credential.sd_jwt(), &options())
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        SdJwtValidationError::Validation(ValidationError::StatusUnchecked(kind))
-            if kind == "status_list"
-    ));
+    for (check, unchecked) in [
+        (None, "BitstringStatusListEntry"),
+        (
+            Some(Verdicts {
+                vcdm: None,
+                sd_jwt: Some(true),
+            }),
+            "BitstringStatusListEntry",
+        ),
+        (
+            Some(Verdicts {
+                vcdm: Some(true),
+                sd_jwt: None,
+            }),
+            "status_list",
+        ),
+    ] {
+        let validator = match check {
+            Some(check) => validator().with_status_check(check),
+            None => validator(),
+        };
+        let error = validator
+            .validate_v2(credential.sd_jwt(), &options())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                SdJwtValidationError::Validation(ValidationError::StatusUnchecked(kind))
+                    if kind == unchecked
+            ),
+            "{check:?}: {error:?}"
+        );
+        // `SkipUnsupported` lets what the check does not know pass.
+        validator
+            .validate_v2(
+                credential.sd_jwt(),
+                &options().with_status(StatusPolicy::SkipUnsupported),
+            )
+            .await
+            .unwrap();
+    }
     validator()
-        .with_credential_status_check(Valid)
-        .with_status_check(Valid)
+        .with_status_check(VALID)
         .validate_v2(credential.sd_jwt(), &options())
         .await
         .unwrap();
 
-    // Either check finding the credential revoked fails it.
+    // Either entry found revoked fails the credential, under every policy but `SkipAll`.
+    for check in [
+        Verdicts {
+            vcdm: Some(false),
+            sd_jwt: Some(true),
+        },
+        Verdicts {
+            vcdm: Some(true),
+            sd_jwt: Some(false),
+        },
+    ] {
+        for policy in [StatusPolicy::Strict, StatusPolicy::SkipUnsupported] {
+            let error = validator()
+                .with_status_check(check)
+                .validate_v2(credential.sd_jwt(), &options().with_status(policy))
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    SdJwtValidationError::Validation(ValidationError::Status(
+                        StatusError::Invalid(status)
+                    )) if status == "revoked"
+                ),
+                "{check:?} {policy:?}: {error:?}"
+            );
+        }
+    }
+    // Skipping what the check does not know never skips a revocation it reports.
     let error = validator()
-        .with_credential_status_check(Revoked)
-        .with_status_check(Valid)
-        .validate_v2(credential.sd_jwt(), &options())
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        SdJwtValidationError::Validation(ValidationError::Status(StatusError::Invalid(status)))
-            if status == "revoked"
-    ));
-    let error = validator()
-        .with_credential_status_check(Valid)
-        .with_status_check(Revoked)
-        .validate_v2(credential.sd_jwt(), &options())
+        .with_status_check(Verdicts {
+            vcdm: None,
+            sd_jwt: Some(false),
+        })
+        .validate_v2(
+            credential.sd_jwt(),
+            &options().with_status(StatusPolicy::SkipUnsupported),
+        )
         .await
         .unwrap_err();
     assert!(matches!(
         error,
         SdJwtValidationError::Validation(ValidationError::Status(StatusError::Invalid(_)))
     ));
-
-    // `SkipUnsupported` passes without checks, `SkipAll` even past a revocation.
     validator()
-        .validate_v2(
-            credential.sd_jwt(),
-            &options().with_status(StatusPolicy::SkipUnsupported),
-        )
-        .await
-        .unwrap();
-    validator()
-        .with_credential_status_check(Revoked)
-        .with_status_check(Revoked)
+        .with_status_check(REVOKED)
         .validate_v2(
             credential.sd_jwt(),
             &options().with_status(StatusPolicy::SkipAll),
         )
         .await
         .unwrap();
-    let validator = validator()
-        .with_credential_status_check(Valid)
-        .with_status_check(Valid);
+    let validator = validator().with_status_check(VALID);
     assert!(validator.has_status_check());
-    assert!(validator.has_credential_status_check());
     assert!(format!("{validator:?}").contains("StatusCheck"));
 }
 
@@ -1305,7 +1343,8 @@ async fn presentation_status_checks() {
     let credential = with_statuses().await;
     let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(credential.sd_jwt())]).await;
 
-    // `credentialStatus` goes through the presentation validator's check, per the policy.
+    // `credentialStatus` and the `status` claim go through the presentation validator's check,
+    // per the policy.
     let errors = credential_errors(
         presentation_validator()
             .validate_v2(&vp, &presentation_options())
@@ -1316,21 +1355,48 @@ async fn presentation_status_checks() {
         &errors[0],
         (0, ValidationError::StatusUnchecked(kind)) if kind == "BitstringStatusListEntry"
     ));
+    for (check, expected) in [
+        (REVOKED, "revoked"),
+        // The `status` claim goes through the same check.
+        (
+            Verdicts {
+                vcdm: Some(true),
+                sd_jwt: Some(false),
+            },
+            "revoked",
+        ),
+    ] {
+        let errors = credential_errors(
+            presentation_validator()
+                .with_status_check(check)
+                .validate_v2(&vp, &presentation_options())
+                .await
+                .unwrap_err(),
+        );
+        assert!(
+            matches!(
+                &errors[0],
+                (0, ValidationError::Status(StatusError::Invalid(status))) if status == expected
+            ),
+            "{check:?}: {errors:?}"
+        );
+    }
     let errors = credential_errors(
         presentation_validator()
-            .with_status_check(Revoked)
+            .with_status_check(Verdicts {
+                vcdm: Some(true),
+                sd_jwt: None,
+            })
             .validate_v2(&vp, &presentation_options())
             .await
             .unwrap_err(),
     );
     assert!(matches!(
         &errors[0],
-        (0, ValidationError::Status(StatusError::Invalid(_)))
+        (0, ValidationError::StatusUnchecked(kind)) if kind == "status_list"
     ));
-    // The `status` claim is not checked inside a presentation: with `credentialStatus`
-    // passing, the credential passes, and the claim is there for the application to check.
     let decoded = presentation_validator()
-        .with_status_check(Valid)
+        .with_status_check(VALID)
         .validate_v2(&vp, &presentation_options())
         .await
         .unwrap();

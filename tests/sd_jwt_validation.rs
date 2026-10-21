@@ -14,15 +14,15 @@ use identity_kit::did::{Did, DidUrl};
 use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
 use identity_kit::resolver::{KeyReference, KeyReferenceError, Resolver};
-use identity_kit::sd_jwt_vc::validation::{
-    KeyBindingOptions, SdJwtStatusCheck, SdJwtValidationOptions,
-};
+use identity_kit::sd_jwt_vc::validation::{KeyBindingOptions, SdJwtValidationOptions};
 use identity_kit::sd_jwt_vc::{
     Disclosure, KeyBinding, LEGACY_TYP, SdJwt, SdJwtCredentialValidator, SdJwtError,
     SdJwtValidationError, SdJwtVc, SdJwtVcBuilder, SdJwtVcError, Status, StatusList, StatusListRef,
     StatusListToken, StatusType,
 };
-use identity_kit::vc::validation::{StatusError, StatusPolicy, TimeOptions, ValidationError};
+use identity_kit::vc::validation::{
+    CredentialStatus, StatusCheck, StatusError, StatusPolicy, TimeOptions, ValidationError,
+};
 use identity_kit::vc::{CredentialError, Jwt, JwtClaims};
 use serde_json::json;
 
@@ -562,10 +562,18 @@ async fn validity_period() {
 struct FixedStatus(StatusList);
 
 #[async_trait::async_trait]
-impl SdJwtStatusCheck for FixedStatus {
-    async fn check(&self, status: &Status, _: DateTime<Utc>) -> Result<(), StatusError> {
-        let Some(reference) = &status.status_list else {
-            return Err(StatusError::Unsupported("other".into()));
+impl StatusCheck for FixedStatus {
+    async fn check(
+        &self,
+        status: CredentialStatus<'_>,
+        _: DateTime<Utc>,
+    ) -> Result<(), StatusError> {
+        let CredentialStatus::SdJwt(Status {
+            status_list: Some(reference),
+            ..
+        }) = status
+        else {
+            return Err(StatusError::Unsupported(status.mechanism()));
         };
         match self.0.get(reference.idx) {
             Some(status) if status.is_valid() => Ok(()),
@@ -659,6 +667,7 @@ mod status_list_check {
     use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
     use identity_kit::resolver::{CompositeKeyResolver, JwkResolver};
     use identity_kit::sd_jwt_vc::validation::StatusListCheck;
+    use identity_kit::vc::TypedObject;
     use url::Url;
 
     use super::*;
@@ -858,5 +867,34 @@ mod status_list_check {
                 "{uri}: {result:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn knows_the_token_status_list_only() {
+        let check = StatusListCheck::new(
+            Served(HashMap::new()),
+            Resolver::builder().with(DidKey::default()).build(),
+            DefaultVerifier,
+        );
+        let now = issued_at();
+        // A `credentialStatus` entry is another check's business, without a request.
+        let entry = TypedObject::new("BitstringStatusListEntry");
+        assert!(matches!(
+            check.check(CredentialStatus::Vcdm(&entry), now).await,
+            Err(StatusError::Unsupported(kind)) if kind == "BitstringStatusListEntry"
+        ));
+        // So is a `status` claim without a status list reference.
+        let other = Status::new().with_mechanism("other", json!({}));
+        assert!(matches!(
+            check.check(CredentialStatus::SdJwt(&other), now).await,
+            Err(StatusError::Unsupported(kind)) if kind == "other"
+        ));
+        // A reference is fetched: here, from nowhere.
+        let listed = Status::status_list(StatusListRef::new(LIST_URI, 0));
+        assert_eq!(CredentialStatus::SdJwt(&listed).mechanism(), "status_list");
+        assert!(matches!(
+            check.check(CredentialStatus::SdJwt(&listed), now).await,
+            Err(StatusError::Unavailable(_))
+        ));
     }
 }

@@ -29,8 +29,9 @@
 //!    holder's key is `cnf.jwk`, used as it is since the issuer signed it, or else the key
 //!    `cnf.kid` names, an absolute DID URL resolved for [`KeyRole::Subject`]
 //!    (`authentication`); see [`KeyReference::from_confirmation`].
-//! 5. `status` passes the [`SdJwtStatusCheck`], and the `credentialStatus` entries of a VCDM
-//!    2.0 credential the [`StatusCheck`], per the [`StatusPolicy`].
+//! 5. `status` (as [`CredentialStatus::SdJwt`]) and the `credentialStatus` entries of a VCDM
+//!    2.0 credential (as [`CredentialStatus::Vcdm`]) pass the [`StatusCheck`], per the
+//!    [`StatusPolicy`].
 //!
 //! Type metadata is a separate step the application runs when its policy asks for it:
 //! [`TypeMetadata::check_claims`](super::TypeMetadata::check_claims).
@@ -41,34 +42,18 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 
 use super::{
-    Confirmation, SdJwt, SdJwtCredentialV2, SdJwtCredentialV2Error, SdJwtVc, SdJwtVcError, Status,
+    Confirmation, SdJwt, SdJwtCredentialV2, SdJwtCredentialV2Error, SdJwtVc, SdJwtVcError,
 };
 use crate::did::Uri;
 use crate::jose::{DefaultVerifier, Jwk, JwsVerifier};
 use crate::resolver::{KeyReference, KeyReferenceError, KeyResolver, KeyRole};
-use crate::vc::validation::{StatusCheck, StatusError, StatusPolicy, TimeOptions, ValidationError};
-use crate::vc::{CredentialError, JwtClaims, TypedObject};
+use crate::vc::validation::{
+    CredentialStatus, StatusCheck, StatusPolicy, TimeOptions, ValidationError, check_statuses,
+};
+use crate::vc::{CredentialError, JwtClaims};
 
 #[cfg(feature = "did-web")]
 pub use status_list::StatusListCheck;
-
-/// Checks the `status` claim of an SD-JWT VC.
-///
-/// [`StatusListCheck`] implements it for the Token Status List over an HTTP client; an
-/// application implements it for other mechanisms or other ways of obtaining a list. A check
-/// that understands none of the mechanisms in `status` reports [`StatusError::Unsupported`],
-/// which the [`StatusPolicy`] decides about.
-#[async_trait::async_trait]
-pub trait SdJwtStatusCheck: Send + Sync {
-    /// Checks `status` at `now`.
-    ///
-    /// # Errors
-    ///
-    /// [`StatusError::Unsupported`] for mechanisms the check does not know,
-    /// [`StatusError::Unavailable`] when the status could not be obtained,
-    /// [`StatusError::Invalid`] when the credential is revoked or suspended.
-    async fn check(&self, status: &Status, now: DateTime<Utc>) -> Result<(), StatusError>;
-}
 
 /// What a key binding JWT must prove (RFC 9901 §7.3, step 5).
 ///
@@ -255,8 +240,7 @@ pub struct ValidatedSdJwtCredentialV2 {
 pub struct SdJwtCredentialValidator<R, V = DefaultVerifier> {
     resolver: R,
     verifier: V,
-    status: Option<Box<dyn SdJwtStatusCheck>>,
-    credential_status: Option<Box<dyn StatusCheck>>,
+    status: Option<Box<dyn StatusCheck>>,
 }
 
 impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
@@ -267,22 +251,14 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             resolver,
             verifier,
             status: None,
-            credential_status: None,
         }
     }
 
-    /// This validator checking the `status` claim with `check`.
+    /// This validator checking the `status` claim and, for a VCDM 2.0 credential, the
+    /// `credentialStatus` entries with `check`.
     #[must_use]
-    pub fn with_status_check(mut self, check: impl SdJwtStatusCheck + 'static) -> Self {
+    pub fn with_status_check(mut self, check: impl StatusCheck + 'static) -> Self {
         self.status = Some(Box::new(check));
-        self
-    }
-
-    /// This validator checking the `credentialStatus` entries of a VCDM 2.0 credential with
-    /// `check`.
-    #[must_use]
-    pub fn with_credential_status_check(mut self, check: impl StatusCheck + 'static) -> Self {
-        self.credential_status = Some(Box::new(check));
         self
     }
 
@@ -296,14 +272,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         &self.verifier
     }
 
-    /// Whether a check of the `status` claim is configured.
+    /// Whether a status check is configured.
     pub fn has_status_check(&self) -> bool {
         self.status.is_some()
-    }
-
-    /// Whether a check of `credentialStatus` entries is configured.
-    pub fn has_credential_status_check(&self) -> bool {
-        self.credential_status.is_some()
     }
 
     /// Validates `sd_jwt` as an SD-JWT VC.
@@ -361,9 +332,8 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             None => (None, None),
         };
 
-        if let Some(status) = &claims.status {
-            self.check_status(status, options).await?;
-        }
+        self.check_status(claims.status.iter().map(CredentialStatus::SdJwt), options)
+            .await?;
 
         Ok(ValidatedSdJwtVc {
             credential,
@@ -402,11 +372,16 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         let validated = self
             .validate_credential_v2_unchecked_status(credential, options)
             .await?;
-        self.check_credential_status(validated.credential.credential().statuses(), options.status)
-            .await?;
-        if let Some(status) = validated.credential.status() {
-            self.check_status(status, options).await?;
-        }
+        let credential = &validated.credential;
+        self.check_status(
+            credential
+                .credential()
+                .statuses()
+                .map(CredentialStatus::Vcdm)
+                .chain(credential.status().map(CredentialStatus::SdJwt)),
+            options,
+        )
+        .await?;
         Ok(validated)
     }
 
@@ -569,66 +544,20 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         Ok((claims, holder_key))
     }
 
-    /// Checks `status` per the policy.
-    async fn check_status(
+    /// Checks every status entry with this validator's check, per the policy, at the
+    /// validation time.
+    async fn check_status<'a>(
         &self,
-        status: &Status,
+        statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
         options: &SdJwtValidationOptions,
     ) -> Result<(), SdJwtValidationError> {
-        if options.status == StatusPolicy::SkipAll {
-            return Ok(());
-        }
-        let names = || {
-            status
-                .mechanisms()
-                .map(|m| match m {
-                    super::StatusMechanism::StatusList(_) => "status_list".to_owned(),
-                    super::StatusMechanism::Other { name, .. } => name.to_owned(),
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let result = match &self.status {
-            Some(check) => check.check(status, options.time.now()).await,
-            None => Err(StatusError::Unsupported(names())),
-        };
-        match result {
-            Ok(()) => Ok(()),
-            Err(StatusError::Unsupported(_)) if options.status == StatusPolicy::SkipUnsupported => {
-                Ok(())
-            }
-            Err(StatusError::Unsupported(mechanism)) => {
-                Err(ValidationError::StatusUnchecked(mechanism).into())
-            }
-            Err(error) => Err(ValidationError::Status(error).into()),
-        }
-    }
-
-    /// Checks every `credentialStatus` entry per `policy`, as the JWT credential validator
-    /// does.
-    async fn check_credential_status<'a>(
-        &self,
-        statuses: impl Iterator<Item = &'a TypedObject>,
-        policy: StatusPolicy,
-    ) -> Result<(), SdJwtValidationError> {
-        if policy == StatusPolicy::SkipAll {
-            return Ok(());
-        }
-        for status in statuses {
-            let result = match &self.credential_status {
-                Some(check) => check.check(status).await,
-                None => Err(StatusError::Unsupported(status.object_type().to_owned())),
-            };
-            match result {
-                Ok(()) => {}
-                Err(StatusError::Unsupported(_)) if policy == StatusPolicy::SkipUnsupported => {}
-                Err(StatusError::Unsupported(status_type)) => {
-                    return Err(ValidationError::StatusUnchecked(status_type).into());
-                }
-                Err(error) => return Err(ValidationError::Status(error).into()),
-            }
-        }
-        Ok(())
+        Ok(check_statuses(
+            self.status.as_deref(),
+            statuses,
+            options.status,
+            options.time.now(),
+        )
+        .await?)
     }
 }
 
@@ -652,11 +581,7 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for SdJwtCredent
         f.debug_struct("SdJwtCredentialValidator")
             .field("resolver", &self.resolver)
             .field("verifier", &self.verifier)
-            .field("status", &self.status.as_ref().map(|_| "SdJwtStatusCheck"))
-            .field(
-                "credential_status",
-                &self.credential_status.as_ref().map(|_| "StatusCheck"),
-            )
+            .field("status", &self.status.as_ref().map(|_| "StatusCheck"))
             .finish()
     }
 }
@@ -666,16 +591,16 @@ mod status_list {
     use chrono::{DateTime, Utc};
     use url::Url;
 
-    use super::SdJwtStatusCheck;
     use crate::jose::{DefaultVerifier, JwsVerifier};
     use crate::methods::web::HttpClient;
     use crate::resolver::{KeyReference, KeyResolver, KeyRole};
-    use crate::sd_jwt_vc::{Status, StatusListToken, StatusMechanism};
+    use crate::sd_jwt_vc::{StatusListToken, StatusMechanism};
     use crate::vc::Jwt;
-    use crate::vc::validation::StatusError;
+    use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError};
 
-    /// A [`SdJwtStatusCheck`] for the Token Status List: fetches the status list token from
-    /// the referenced URI with an [`HttpClient`], verifies it was signed by the key its header
+    /// A [`StatusCheck`] for the Token Status List: for the `status` claim of an SD-JWT
+    /// credential ([`CredentialStatus::SdJwt`]), fetches the status list token from the
+    /// referenced URI with an [`HttpClient`], verifies it was signed by the key its header
     /// names ([`KeyReference::from_jws`] with the token's `iss`), resolved for
     /// [`KeyRole::Issuer`], and reads the status at the referenced index (Token Status List
     /// §8).
@@ -757,8 +682,17 @@ mod status_list {
     }
 
     #[async_trait::async_trait]
-    impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> SdJwtStatusCheck for StatusListCheck<C, R, V> {
-        async fn check(&self, status: &Status, now: DateTime<Utc>) -> Result<(), StatusError> {
+    impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusCheck for StatusListCheck<C, R, V> {
+        /// Checks the Token Status List reference of a `status` claim; a `credentialStatus`
+        /// entry, or a `status` claim without one, is [`StatusError::Unsupported`].
+        async fn check(
+            &self,
+            status: CredentialStatus<'_>,
+            now: DateTime<Utc>,
+        ) -> Result<(), StatusError> {
+            let CredentialStatus::SdJwt(status) = status else {
+                return Err(StatusError::Unsupported(status.mechanism()));
+            };
             let Some(reference) = &status.status_list else {
                 let names: Vec<&str> = status
                     .mechanisms()
