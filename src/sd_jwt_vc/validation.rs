@@ -1,34 +1,46 @@
-//! Validation of SD-JWT VCs: issuer signature and binding, time claims, key binding, status.
+//! Validation of SD-JWT credentials: issuer signature and binding, time claims, key binding,
+//! status.
 //!
 //! [`SdJwtCredentialValidator`] is the SD-JWT counterpart of
 //! [`JwtCredentialValidator`](crate::vc::validation::JwtCredentialValidator), over the same
-//! [`KeyResolver`] and [`JwsVerifier`]. It checks, in order:
+//! [`KeyResolver`] and [`JwsVerifier`]. It validates both SD-JWT credential types
+//! ([two SD-JWT credential types](super#two-sd-jwt-credential-types)):
+//! [`validate`](SdJwtCredentialValidator::validate) an SD-JWT VC,
+//! [`validate_v2`](SdJwtCredentialValidator::validate_v2) a VCDM 2.0 credential secured with
+//! SD-JWT. Each checks, in order:
 //!
-//! 1. The SD-JWT parses as an [`SdJwtVc`]: `typ`, disclosures, claims (RFC 9901 §7.1 steps 3
-//!    to 5, SD-JWT VC §2.2).
+//! 1. The SD-JWT parses as an [`SdJwtVc`] (`typ`, disclosures, claims; RFC 9901 §7.1 steps 3
+//!    to 5, SD-JWT VC §2.2) or as an [`SdJwtCredentialV2`] (`typ` `vc+sd-jwt` when present,
+//!    or one of `options.additional_typ`; disclosures; the payload as a
+//!    [`CredentialV2`](crate::vc::CredentialV2) with its registered claims agreeing with it).
 //! 2. The `kid` of the issuer-signed JWT is a DID URL of the form `did:…#fragment` (a path or
 //!    DID parameters such as `versionId` are refused, as in the JWT validators, ADR 0004),
-//!    resolved under `assertionMethod`, and verifies the signature; `iss` is the DID of that
-//!    `kid`. (Issuers identified by an HTTPS `iss` with JWT VC issuer metadata, and `x5c`
-//!    chains, are not resolved by this crate.)
-//! 3. `nbf`, `exp` and `iat` hold at the validation time.
+//!    resolved under `assertionMethod`, and verifies the signature; the issuer (`iss`, or the
+//!    credential's `issuer`) is the DID of that `kid`. (Issuers identified by an HTTPS `iss`
+//!    with JWT VC issuer metadata, and `x5c` chains, are not resolved by this crate.)
+//! 3. `nbf`, `exp` and `iat` hold at the validation time, and so do `validFrom` and
+//!    `validUntil` of a VCDM 2.0 credential.
 //! 4. When the options require key binding (RFC 9901 §7.3): the SD-JWT+KB carries a key
 //!    binding JWT with `typ: kb+jwt`, signed by the key in `cnf`, for the expected audience
 //!    and nonce, issued within the window, with an `sd_hash` over the presented SD-JWT.
-//! 5. `status` passes the [`SdJwtStatusCheck`], per the [`StatusPolicy`].
+//! 5. `status` passes the [`SdJwtStatusCheck`], and the `credentialStatus` entries of a VCDM
+//!    2.0 credential the [`StatusCheck`], per the [`StatusPolicy`].
 //!
 //! Type metadata is a separate step the application runs when its policy asks for it:
 //! [`TypeMetadata::check_claims`](super::TypeMetadata::check_claims).
 
 use core::time::Duration;
+use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 
-use super::{SdJwt, SdJwtVc, SdJwtVcError, Status};
+use super::{SdJwt, SdJwtCredentialV2, SdJwtCredentialV2Error, SdJwtVc, SdJwtVcError, Status};
 use crate::did::{Did, DidUrl, Uri, VerificationRelationship};
-use crate::jose::{DefaultVerifier, JwsVerifier};
-use crate::vc::validation::{KeyResolver, StatusError, StatusPolicy, TimeOptions, ValidationError};
-use crate::vc::{CredentialError, JwtClaims};
+use crate::jose::{DefaultVerifier, Jwk, JwsVerifier};
+use crate::vc::validation::{
+    KeyResolver, StatusCheck, StatusError, StatusPolicy, TimeOptions, ValidationError,
+};
+use crate::vc::{CredentialError, JwtClaims, TypedObject};
 
 #[cfg(feature = "did-web")]
 pub use status_list::StatusListCheck;
@@ -100,10 +112,14 @@ pub struct SdJwtValidationOptions {
     pub time: TimeOptions,
     /// The key binding required, if any; a key binding JWT is not verified otherwise.
     pub key_binding: Option<KeyBindingOptions>,
-    /// What to do about `status`.
+    /// What to do about `status` (and `credentialStatus`).
     pub status: StatusPolicy,
-    /// Whether to reject the pre-standard `typ: vc+sd-jwt`.
+    /// Whether to reject the pre-standard `typ: vc+sd-jwt` on an SD-JWT VC.
     pub reject_legacy_typ: bool,
+    /// Header `typ` values accepted for a VCDM 2.0 credential besides `vc+sd-jwt`; none by
+    /// default. A token without `typ` is always accepted there. An SD-JWT VC's `typ` is fixed
+    /// by its specification and not affected.
+    pub additional_typ: BTreeSet<String>,
 }
 
 impl SdJwtValidationOptions {
@@ -134,21 +150,31 @@ impl SdJwtValidationOptions {
         self
     }
 
-    /// These options rejecting `typ: vc+sd-jwt`.
+    /// These options rejecting `typ: vc+sd-jwt` on an SD-JWT VC.
     #[must_use]
     pub fn rejecting_legacy_typ(mut self) -> Self {
         self.reject_legacy_typ = true;
         self
     }
+
+    /// These options also accepting a VCDM 2.0 credential whose header `typ` is `typ`.
+    #[must_use]
+    pub fn with_additional_typ(mut self, typ: impl Into<String>) -> Self {
+        self.additional_typ.insert(typ.into());
+        self
+    }
 }
 
-/// Why an SD-JWT VC did not validate.
+/// Why an SD-JWT credential did not validate.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SdJwtValidationError {
     /// The SD-JWT is not a well-formed SD-JWT VC.
     #[error(transparent)]
     Credential(#[from] SdJwtVcError),
+    /// The SD-JWT is not a well-formed VCDM 2.0 credential secured with SD-JWT.
+    #[error(transparent)]
+    CredentialV2(#[from] SdJwtCredentialV2Error),
     /// The issuer-signed JWT has the pre-standard `typ: vc+sd-jwt`, which the options reject.
     #[error("header `typ` is the pre-standard `vc+sd-jwt`")]
     LegacyTyp,
@@ -194,11 +220,24 @@ pub struct ValidatedSdJwtVc {
     pub key_binding: Option<JwtClaims>,
 }
 
-/// Validates SD-JWT VCs; see the [module documentation](self) for the checks.
+/// A validated VCDM 2.0 credential secured with SD-JWT.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ValidatedSdJwtCredentialV2 {
+    /// The credential, with the presented disclosures applied.
+    pub credential: SdJwtCredentialV2,
+    /// The verification method that signed it.
+    pub kid: DidUrl,
+    /// The claims of the key binding JWT, when key binding was required and verified.
+    pub key_binding: Option<JwtClaims>,
+}
+
+/// Validates SD-JWT credentials; see the [module documentation](self) for the checks.
 pub struct SdJwtCredentialValidator<R, V = DefaultVerifier> {
     resolver: R,
     verifier: V,
     status: Option<Box<dyn SdJwtStatusCheck>>,
+    credential_status: Option<Box<dyn StatusCheck>>,
 }
 
 impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
@@ -209,13 +248,22 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             resolver,
             verifier,
             status: None,
+            credential_status: None,
         }
     }
 
-    /// This validator checking `status` with `check`.
+    /// This validator checking the `status` claim with `check`.
     #[must_use]
     pub fn with_status_check(mut self, check: impl SdJwtStatusCheck + 'static) -> Self {
         self.status = Some(Box::new(check));
+        self
+    }
+
+    /// This validator checking the `credentialStatus` entries of a VCDM 2.0 credential with
+    /// `check`.
+    #[must_use]
+    pub fn with_credential_status_check(mut self, check: impl StatusCheck + 'static) -> Self {
+        self.credential_status = Some(Box::new(check));
         self
     }
 
@@ -229,9 +277,14 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         &self.verifier
     }
 
-    /// Whether a status check is configured.
+    /// Whether a check of the `status` claim is configured.
     pub fn has_status_check(&self) -> bool {
         self.status.is_some()
+    }
+
+    /// Whether a check of `credentialStatus` entries is configured.
+    pub fn has_credential_status_check(&self) -> bool {
+        self.credential_status.is_some()
     }
 
     /// Validates `sd_jwt` as an SD-JWT VC.
@@ -262,29 +315,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         if options.reject_legacy_typ && credential.has_legacy_typ() {
             return Err(SdJwtValidationError::LegacyTyp);
         }
-        let jws = credential
-            .sd_jwt()
-            .jwt()
-            .decode()
-            .map_err(ValidationError::from)?;
-        let kid = jws.kid().ok_or(ValidationError::MissingKid)?;
-        let kid = DidUrl::parse(kid).map_err(|source| ValidationError::InvalidKid {
-            kid: kid.to_owned(),
-            source,
-        })?;
-        if kid.path().is_some() || kid.query().is_some() {
-            return Err(ValidationError::KidWithParameters(kid).into());
-        }
-        let key = self
-            .resolver
-            .resolve_key(&kid, VerificationRelationship::AssertionMethod)
-            .await
-            .map_err(|source| ValidationError::KeyResolution {
-                kid: kid.clone(),
-                source,
-            })?;
-        jws.verify(&self.verifier, &key)
-            .map_err(ValidationError::from)?;
+        let kid = self.verify_issuer_signature(credential.sd_jwt()).await?;
 
         let claims = credential.claims();
         let issuer = claims
@@ -292,17 +323,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             .as_deref()
             .ok_or(CredentialError::MissingClaim("iss"))
             .map_err(ValidationError::from)?;
-        let issuer_did = Did::parse(issuer).map_err(|_| ValidationError::NotDid {
-            role: "issuer",
-            id: issuer.to_owned(),
-        })?;
-        if issuer_did != *kid.did() {
-            return Err(ValidationError::IssuerMismatch {
-                issuer: Uri::from(issuer_did),
-                kid,
-            }
-            .into());
-        }
+        check_issuer(issuer, &kid)?;
 
         let mut time_claims = JwtClaims::new();
         time_claims.nbf = claims.nbf;
@@ -311,7 +332,11 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         options.time.check_claims(&time_claims)?;
 
         let key_binding = match &options.key_binding {
-            Some(required) => Some(self.check_key_binding(&credential, required)?),
+            Some(required) => Some(self.check_key_binding(
+                credential.sd_jwt(),
+                credential.holder_key(),
+                required,
+            )?),
             None => None,
         };
 
@@ -326,19 +351,105 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         })
     }
 
-    /// RFC 9901 §7.3, step 5.
+    /// Validates `sd_jwt` as a VCDM 2.0 credential secured with SD-JWT (VC-JOSE-COSE §3.2.1).
+    ///
+    /// # Errors
+    ///
+    /// The first [`SdJwtValidationError`] found, in the order the [module
+    /// documentation](self) lists the checks.
+    pub async fn validate_v2(
+        &self,
+        sd_jwt: &SdJwt,
+        options: &SdJwtValidationOptions,
+    ) -> Result<ValidatedSdJwtCredentialV2, SdJwtValidationError> {
+        let credential =
+            SdJwtCredentialV2::from_sd_jwt_with(sd_jwt.clone(), &options.additional_typ)?;
+        self.validate_credential_v2(credential, options).await
+    }
+
+    /// Validates the parsed `credential`.
+    ///
+    /// # Errors
+    ///
+    /// As [`validate_v2`](Self::validate_v2).
+    pub async fn validate_credential_v2(
+        &self,
+        credential: SdJwtCredentialV2,
+        options: &SdJwtValidationOptions,
+    ) -> Result<ValidatedSdJwtCredentialV2, SdJwtValidationError> {
+        let validated = self
+            .validate_credential_v2_unchecked_status(credential, options)
+            .await?;
+        self.check_credential_status(validated.credential.credential().statuses(), options.status)
+            .await?;
+        if let Some(status) = validated.credential.status() {
+            self.check_status(status, options).await?;
+        }
+        Ok(validated)
+    }
+
+    /// Steps 2 to 4 of [`validate_credential_v2`](Self::validate_credential_v2): everything
+    /// but the status checks, which the presentation validator runs with its own check.
+    pub(crate) async fn validate_credential_v2_unchecked_status(
+        &self,
+        credential: SdJwtCredentialV2,
+        options: &SdJwtValidationOptions,
+    ) -> Result<ValidatedSdJwtCredentialV2, SdJwtValidationError> {
+        let kid = self.verify_issuer_signature(credential.sd_jwt()).await?;
+        let vc = credential.credential();
+        check_issuer(vc.issuer.id().as_str(), &kid)?;
+        options.time.check_claims(credential.claims())?;
+        options.time.check(vc.valid_from, vc.valid_until, None)?;
+        let key_binding = match &options.key_binding {
+            Some(required) => Some(self.check_key_binding(
+                credential.sd_jwt(),
+                credential.holder_key(),
+                required,
+            )?),
+            None => None,
+        };
+        Ok(ValidatedSdJwtCredentialV2 {
+            credential,
+            kid,
+            key_binding,
+        })
+    }
+
+    /// Resolves the `kid` of the issuer-signed JWT under `assertionMethod` and verifies the
+    /// signature; the `kid`.
+    async fn verify_issuer_signature(&self, sd_jwt: &SdJwt) -> Result<DidUrl, ValidationError> {
+        let jws = sd_jwt.jwt().decode()?;
+        let kid = jws.kid().ok_or(ValidationError::MissingKid)?;
+        let kid = DidUrl::parse(kid).map_err(|source| ValidationError::InvalidKid {
+            kid: kid.to_owned(),
+            source,
+        })?;
+        if kid.path().is_some() || kid.query().is_some() {
+            return Err(ValidationError::KidWithParameters(kid));
+        }
+        let key = self
+            .resolver
+            .resolve_key(&kid, VerificationRelationship::AssertionMethod)
+            .await
+            .map_err(|source| ValidationError::KeyResolution {
+                kid: kid.clone(),
+                source,
+            })?;
+        jws.verify(&self.verifier, &key)?;
+        Ok(kid)
+    }
+
+    /// RFC 9901 §7.3, step 5: the key binding JWT of `sd_jwt`, signed by `holder_key`.
     fn check_key_binding(
         &self,
-        credential: &SdJwtVc,
+        sd_jwt: &SdJwt,
+        holder_key: Option<&Jwk>,
         required: &KeyBindingOptions,
     ) -> Result<JwtClaims, SdJwtValidationError> {
-        let sd_jwt = credential.sd_jwt();
         let kb_jwt = sd_jwt
             .key_binding_jwt()
             .ok_or(SdJwtValidationError::KeyBindingRequired)?;
-        let holder_key = credential
-            .holder_key()
-            .ok_or(SdJwtValidationError::NoHolderKey)?;
+        let holder_key = holder_key.ok_or(SdJwtValidationError::NoHolderKey)?;
         let jws = kb_jwt.decode().map_err(ValidationError::from)?;
         match jws.header().typ.as_deref() {
             Some(super::KB_JWT_TYP) => {}
@@ -442,6 +553,48 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             Err(error) => Err(ValidationError::Status(error).into()),
         }
     }
+
+    /// Checks every `credentialStatus` entry per `policy`, as the JWT credential validator
+    /// does.
+    async fn check_credential_status<'a>(
+        &self,
+        statuses: impl Iterator<Item = &'a TypedObject>,
+        policy: StatusPolicy,
+    ) -> Result<(), SdJwtValidationError> {
+        if policy == StatusPolicy::SkipAll {
+            return Ok(());
+        }
+        for status in statuses {
+            let result = match &self.credential_status {
+                Some(check) => check.check(status).await,
+                None => Err(StatusError::Unsupported(status.object_type().to_owned())),
+            };
+            match result {
+                Ok(()) => {}
+                Err(StatusError::Unsupported(_)) if policy == StatusPolicy::SkipUnsupported => {}
+                Err(StatusError::Unsupported(status_type)) => {
+                    return Err(ValidationError::StatusUnchecked(status_type).into());
+                }
+                Err(error) => return Err(ValidationError::Status(error).into()),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Checks that `issuer` is the DID of `kid`, the controller of the signing key.
+fn check_issuer(issuer: &str, kid: &DidUrl) -> Result<(), ValidationError> {
+    let issuer_did = Did::parse(issuer).map_err(|_| ValidationError::NotDid {
+        role: "issuer",
+        id: issuer.to_owned(),
+    })?;
+    if issuer_did != *kid.did() {
+        return Err(ValidationError::IssuerMismatch {
+            issuer: Uri::from(issuer_did),
+            kid: kid.clone(),
+        });
+    }
+    Ok(())
 }
 
 impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for SdJwtCredentialValidator<R, V> {
@@ -450,6 +603,10 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for SdJwtCredent
             .field("resolver", &self.resolver)
             .field("verifier", &self.verifier)
             .field("status", &self.status.as_ref().map(|_| "SdJwtStatusCheck"))
+            .field(
+                "credential_status",
+                &self.credential_status.as_ref().map(|_| "StatusCheck"),
+            )
             .finish()
     }
 }

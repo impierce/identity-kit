@@ -644,3 +644,53 @@ enveloped!(
     "EnvelopedVerifiablePresentation",
     PresentationV2::JWT_MEDIA_TYPE
 );
+
+#[cfg(feature = "sd-jwt")]
+#[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+impl EnvelopedVc {
+    /// The media type of a credential secured with SD-JWT (VC-JOSE-COSE §3.2.1),
+    /// `application/vc+sd-jwt`.
+    pub const SD_JWT_MEDIA_TYPE: &'static str = crate::sd_jwt_vc::SdJwtCredentialV2::MEDIA_TYPE;
+
+    /// An envelope for `sd_jwt`, in its compact serialization.
+    pub fn from_sd_jwt(sd_jwt: &crate::sd_jwt_vc::SdJwt) -> Self {
+        Self::new(Self::SD_JWT_MEDIA_TYPE, &sd_jwt.to_string())
+            .expect("a compact SD-JWT is base64url, dots and tildes, all URI characters")
+    }
+
+    /// The SD-JWT the envelope holds, parsed but not processed; see
+    /// [`SdJwtCredentialV2::from_sd_jwt`](crate::sd_jwt_vc::SdJwtCredentialV2::from_sd_jwt)
+    /// for the credential it secures.
+    ///
+    /// # Errors
+    ///
+    /// [`CredentialError::UnsupportedMediaType`] when the media type is not
+    /// `application/vc+sd-jwt`, and [`CredentialError::InvalidClaim`] when the data is not
+    /// an SD-JWT.
+    pub fn to_sd_jwt(&self) -> Result<crate::sd_jwt_vc::SdJwt, CredentialError> {
+        let (media_type, base64, data) = parse_data_url(self.id.as_str())
+            .ok_or_else(|| CredentialError::NotDataUrl(self.id.to_string()))?;
+        if media_type != Self::SD_JWT_MEDIA_TYPE || base64 {
+            return Err(CredentialError::UnsupportedMediaType {
+                kind: "credential",
+                media_type: if base64 {
+                    format!("{media_type};base64")
+                } else {
+                    media_type.to_owned()
+                },
+                expected: Self::SD_JWT_MEDIA_TYPE,
+            });
+        }
+        crate::sd_jwt_vc::SdJwt::parse(data).map_err(|e| CredentialError::InvalidClaim {
+            claim: "id",
+            reason: e.to_string(),
+        })
+    }
+
+    /// Whether the envelope holds a credential secured with SD-JWT: its media type is
+    /// `application/vc+sd-jwt`.
+    pub fn is_sd_jwt(&self) -> bool {
+        parse_data_url(self.id.as_str())
+            .is_some_and(|(media_type, base64, _)| media_type == Self::SD_JWT_MEDIA_TYPE && !base64)
+    }
+}

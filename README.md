@@ -12,15 +12,15 @@ Collection of primitives for SSI libraries and applications: decentralized ident
 
 ## Features
 
-- ✅ `Did` and `DidUrl` parsing and validation per [W3C DID Core](https://www.w3.org/TR/did-core/)
+- ✅ `Did`, `DidUrl` and `DidMethod` parsing and validation per [W3C DID Core](https://www.w3.org/TR/did-core/)
 - ✅ `DidDocument` data model and [DID Resolution](https://www.w3.org/TR/did-resolution/) types
 - ✅ JWK and compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) with EdDSA, ECDSA and RSA verification
 - ✅ `KeyStore` trait designed for remote signers, with in-memory and file-based backends
-- 📋 PKCS#11 key store backend
+- ✅ PKCS#11 key store backend, tested against SoftHSM2
 - ✅ `DidResolver` and `DidProducer` traits with a `Resolver` registry, document cache and DID URL dereferencing
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
 - ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
-- ✅ SD-JWT (RFC 9901) and SD-JWT VC: issuing with selective disclosure, presenting with key binding, validating over any DID method, the Token Status List and type metadata
+- ✅ SD-JWT (RFC 9901), SD-JWT VC and VCDM 2.0 credentials secured with SD-JWT (`vc+sd-jwt`): issuing with selective disclosure, presenting with key binding, validating over any DID method, the Token Status List and type metadata
 - ✅ DIF Well Known DID Configuration: the DID configuration resource, its domain linkage credentials and their validation against an origin
 - ✅ DIF Linked Verifiable Presentation: `LinkedVerifiablePresentation` services, presentations signed for publishing, and fetching and validating what a DID document links
 
@@ -37,12 +37,14 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `resolver`) i
 | `did-jwk`        |   ✅    | The `did:jwk` method (`methods::jwk`)                                                    |
 | `did-web`        |   ✅    | The `did:web` method (`methods::web`) over any `HttpClient`; pulls in `url`              |
 | `reqwest`        |   ✅    | The hardened default `HttpClient` for `did:web` (`reqwest` with `rustls`); implies `did-web` |
+| `local-network` |  | Development and tests only: `ReqwestClient::builder` with opt-ins to reach loopback and private addresses over `http`; implies `reqwest` |
 | `secp256k1`      |   ✅    | ES256K signatures and `secp256k1` keys, via `k256`                                       |
 | `rsa`            |         | RS256 and PS256 signature verification, via `rsa`                                        |
 | `software`       |   ✅    | `SoftwareKeyStore`: private keys in a JWK set file                                       |
 | `in-memory`      |         | `InMemoryKeyStore`: keys in memory, optionally derived from a seed                       |
+| `pkcs11`         |         | `Pkcs11KeyStore`: keys in a PKCS#11 module (an HSM, SoftHSM2), via `cryptoki` and `tokio`'s blocking pool |
 | `vc`             |   ✅    | Verifiable credentials and presentations as JWTs (`vc`); pulls in `chrono`               |
-| `sd-jwt`         |   ✅    | SD-JWT and SD-JWT VC (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide`                 |
+| `sd-jwt`         |   ✅    | SD-JWT, SD-JWT VC and `vc+sd-jwt` credentials (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide` |
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
 | `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |
@@ -59,9 +61,9 @@ The crate ships vendor-neutral backends; a cloud KMS or HSM backend implements t
 | ------------------ | ----------- | -------------------------------------- | :-------: | :-----: | --------------------------------------- |
 | `InMemoryKeyStore` | `in-memory` | Process memory, zeroized on drop       |    ✅     |   ✅    | EdDSA, ES256, ES256K (`secp256k1`)      |
 | `SoftwareKeyStore` | `software`  | A private JWK set file, permission-checked, atomically rewritten |    ✅     |   ✅    | EdDSA, ES256, ES256K (`secp256k1`)      |
-| `Pkcs11KeyStore`   | `pkcs11`    | An HSM or software token               |  planned  | planned | Module dependent ([#13](https://github.com/impierce/identity-kit/issues/13)) |
+| `Pkcs11KeyStore`   | `pkcs11`    | A PKCS#11 token: an HSM, a smart card, SoftHSM2 | ✅ unless write-protected | ✅ unless write-protected | What the module offers: EdDSA, ES256, ES256K (`secp256k1`), RS256 or PS256 |
 
-Neither software backend signs with RSA: see [ADR 0001](https://github.com/impierce/identity-kit/blob/HEAD/docs/adr/0001-rsa-verification-only.md).
+Neither software backend signs with RSA: see [ADR 0001](https://github.com/impierce/identity-kit/blob/HEAD/docs/adr/0001-rsa-verification-only.md); the PKCS#11 backend signs RSA in the module.
 The full contract, with the error vocabulary and the algorithm matrix, is in [`docs/key-stores.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/key-stores.md).
 
 ## Extending

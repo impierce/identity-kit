@@ -304,6 +304,14 @@ pub enum SdJwtVcError {
     /// The `typ` is neither `dc+sd-jwt` nor `vc+sd-jwt`.
     #[error("header `typ` is {0:?}, not `{TYP}`")]
     UnexpectedTyp(String),
+    /// The `typ` is `vc+sd-jwt` and the payload has `@context` and no `vct`: a VCDM 2.0
+    /// credential secured with SD-JWT (VC-JOSE-COSE), which
+    /// [`SdJwtCredentialV2`](super::SdJwtCredentialV2) parses, not an SD-JWT VC.
+    #[error(
+        "header `typ` is `{LEGACY_TYP}` and the payload has `@context` and no `vct`: a VCDM 2.0 \
+         credential secured with SD-JWT, not an SD-JWT VC"
+    )]
+    VcdmPayload,
     /// A claim that must not be selectively disclosed came from a disclosure.
     #[error("`{0}` must not be selectively disclosed")]
     DisclosedRegisteredClaim(String),
@@ -610,11 +618,16 @@ impl SdJwtVc {
     /// Takes `sd_jwt` as an SD-JWT VC: checks `typ`, processes the disclosures, reads the
     /// claims and checks that none of [`NON_DISCLOSABLE_CLAIMS`] came from a disclosure.
     ///
+    /// `vc+sd-jwt` is also the `typ` of a VCDM 2.0 credential secured with SD-JWT
+    /// (VC-JOSE-COSE), so it is accepted only when the payload has `vct`; see the [module
+    /// documentation](super#two-sd-jwt-credential-types).
+    ///
     /// # Errors
     ///
     /// [`SdJwtVcError::MissingTyp`], [`SdJwtVcError::UnexpectedTyp`],
-    /// [`SdJwtVcError::DisclosedRegisteredClaim`], [`SdJwtVcError::Claims`],
-    /// [`SdJwtVcError::InvalidClaim`], or the [`SdJwtError`] of processing.
+    /// [`SdJwtVcError::VcdmPayload`], [`SdJwtVcError::DisclosedRegisteredClaim`],
+    /// [`SdJwtVcError::Claims`], [`SdJwtVcError::InvalidClaim`], or the [`SdJwtError`] of
+    /// processing.
     pub fn from_sd_jwt(sd_jwt: SdJwt) -> Result<Self, SdJwtVcError> {
         let header = sd_jwt
             .jwt()
@@ -628,6 +641,12 @@ impl SdJwtVc {
             Some(other) => return Err(SdJwtVcError::UnexpectedTyp(other.to_owned())),
         }
         let processed = sd_jwt.process()?;
+        if header.typ.as_deref() == Some(LEGACY_TYP)
+            && !processed.payload.contains_key("vct")
+            && processed.payload.contains_key("@context")
+        {
+            return Err(SdJwtVcError::VcdmPayload);
+        }
         for claim in &processed.disclosed {
             if let Some(PathComponent::Key(name)) = claim.path.components().first()
                 && NON_DISCLOSABLE_CLAIMS.contains(&name.as_str())

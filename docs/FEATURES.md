@@ -20,11 +20,11 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Feature                                                                                                      | Status | Cargo feature | Specification                                                                                     | Issue                                                   |
 | ------------------------------------------------------------------------------------------------------------ | :----: | ------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `Did` and `DidUrl`: parsing, validation, `join`, serde as strings                                            |   ✅   |               | [DID Core §3.1, §3.2](https://www.w3.org/TR/did-core/#identifier), [RFC 3986][rfc3986]           | [#5](https://github.com/impierce/identity-kit/issues/5) |
+| `DidMethod`: method name with optional namespace (`did:demo`, `did:demo:dev`), `matches` a `Did`, serde as string |   ✅   |               | [DID Core §3.1](https://www.w3.org/TR/did-core/#did-syntax)                                      | [#51](https://github.com/impierce/identity-kit/issues/51) |
 | `DidDocument`, `VerificationMethod`, `Service`, verification relationships, open extension properties        |   ✅   |               | [DID Core][did-core], [Controlled Identifiers 1.0][cid]                                           | [#6](https://github.com/impierce/identity-kit/issues/6) |
 | Document operations: builder, insert/remove methods and services, relationship management, method resolution |   ✅   |               | [DID Core][did-core]                                                                              | [#6](https://github.com/impierce/identity-kit/issues/6) |
 | `ResolutionResult`, document and resolution metadata, error vocabulary                                       |   ✅   |               | [DID Resolution][did-resolution]                                                                  | [#6](https://github.com/impierce/identity-kit/issues/6) |
 | Deterministic JSON representation (`@context` first, empties omitted, insertion order kept)                  |   ✅   |               | [DID Core §6.2](https://www.w3.org/TR/did-core/#json)                                             | [#6](https://github.com/impierce/identity-kit/issues/6) |
-| `DidMethod`: method name with optional namespace, parsed and serialized as `did:<name>[:<namespace>]`           |   📋   |               | [DID Core §3.1](https://www.w3.org/TR/did-core/#identifier), [SIOPv2][siopv2]                    | [#51](https://github.com/impierce/identity-kit/issues/51) |
 
 ### `jose`: JWK and JWS
 
@@ -48,7 +48,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `InMemoryKeyStore` with optional deterministic seed                                       |   ✅   | `in-memory`    |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `SoftwareKeyStore`: private JWK set file, permission check, `zeroize`, atomic writes       |   ✅   | `software`     | [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5) | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `keys::testsuite`: one behavioural suite every backend must pass                           |   ✅   | `test-vectors` |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
-| `Pkcs11KeyStore`, tested against SoftHSM2 in CI                                           |   📋   | `pkcs11`       | [PKCS #11 v3.1][pkcs11]                         | [#13](https://github.com/impierce/identity-kit/issues/13) |
+| `Pkcs11KeyStore`, tested against SoftHSM2 in CI                                           |   ✅   | `pkcs11`       | [PKCS #11 v3.1][pkcs11]                         | [#13](https://github.com/impierce/identity-kit/issues/13) |
 
 ### `identity`: the signing party
 
@@ -75,6 +75,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `did:key`: Ed25519, P-256, secp256k1, RSA and X25519 multicodec keys, base58btc multibase              |   ✅   | `did-key`     | [did:key][did-key], [multicodec][multicodec], [multibase][multibase] | [#10](https://github.com/impierce/identity-kit/issues/10) |
 | `did:jwk`: base64url JWK as method-specific id, created in JCS canonical form                          |   ✅   | `did-jwk`     | [did:jwk][did-jwk], [RFC 8785][rfc8785]                            | [#10](https://github.com/impierce/identity-kit/issues/10), [#30](https://github.com/impierce/identity-kit/issues/30) |
 | `did:web`: origin mapping, resolver over an injected `HttpClient`, hardened default client, producer   |   ✅   | `did-web`, `reqwest` | [did:web][did-web]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
+| `ReqwestClient::builder` for development and tests: `dangerous_allow_loopback`, `dangerous_allow_private_network`; plain `http` only when every address is local, link-local always refused | ✅ | `local-network` | [did:web][did-web] | [#37](https://github.com/impierce/identity-kit/issues/37) |
 
 ## Upper layer
 
@@ -97,6 +98,10 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Builder with first-class `jti`, parser, `SdJwtCredentialValidator`   |   ✅   | `sd-jwt`      | [RFC 9901][rfc9901], [SD-JWT VC][sd-jwt-vc]    | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | `Status`, `StatusListRef`, `StatusMechanism`                         |   ✅   | `sd-jwt`      | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | Type metadata                                                        |   ✅   | `sd-jwt`      | [SD-JWT VC §6][sd-jwt-vc]                      | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `SdJwtCredentialV2`: a VCDM 2.0 credential secured with SD-JWT (`vc+sd-jwt`, `application/vc+sd-jwt`), told apart from an SD-JWT VC by `typ` and payload | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `SdJwtCredentialV2Builder`: conceal credential properties, decoys, `cnf`, `status`, `iat`/`exp` beside `validFrom`/`validUntil` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `SdJwtCredentialValidator::validate_v2`: issuer binding, validity period, key binding, `credentialStatus` and `status` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901 §7][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
+| `JwtPresentationValidator::validate_v2` and `decode_presentation_v2` unwrap `application/vc+sd-jwt` envelopes (`EnvelopedVc::to_sd_jwt`, `PresentedCredentialV2`), key binding required per `PresentationValidationOptions::key_binding` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.2][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | Key binding with the holder key from `cnf.kid` (resolved through `KeyReference`)      |   📋   | `sd-jwt`      | [RFC 7800 §3.4][rfc7800]                       | [#50](https://github.com/impierce/identity-kit/issues/50), [#53](https://github.com/impierce/identity-kit/issues/53) |
 
 ### `domain_linkage`: DID configuration
@@ -147,7 +152,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [Controlled Identifiers 1.0][cid]            | W3C         | `did` (verification material types)       |
 | [VC Data Model 1.1][vcdm11]                  | W3C         | `vc`, `linked_vp`                         |
 | [VC Data Model 2.0][vcdm20]                  | W3C         | `vc`                                      |
-| [Securing VCs using JOSE and COSE][vc-jose-cose] | W3C     | `vc` (enveloped credentials)              |
+| [Securing VCs using JOSE and COSE][vc-jose-cose] | W3C     | `vc` (enveloped credentials), `sd_jwt_vc` (`vc+sd-jwt`) |
 | [did:key][did-key]                           | W3C CCG     | `methods::key`                            |
 | [did:web][did-web]                           | W3C CCG     | `methods::web`, `domain_linkage`, `linked_vp` |
 | [did:jwk][did-jwk]                           | Community   | `methods::jwk`                            |

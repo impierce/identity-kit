@@ -666,3 +666,247 @@ mod reqwest_client {
         let _ = wrapped.client();
     }
 }
+
+/// The local-network opt-in exists for development and tests only, so no other feature may
+/// switch it on.
+#[test]
+fn local_network_is_never_enabled_by_another_feature() {
+    let manifest = include_str!("../Cargo.toml");
+    let features = manifest
+        .split("[features]")
+        .nth(1)
+        .and_then(|rest| rest.split("\n[").next())
+        .unwrap();
+    for line in features.lines() {
+        if line.starts_with('#') || line.starts_with("local-network =") {
+            continue;
+        }
+        assert!(!line.contains("local-network"), "{line}");
+    }
+}
+
+#[cfg(feature = "local-network")]
+mod local_network {
+    use std::net::IpAddr;
+
+    use identity_kit::methods::web::{LocalNetwork, ReqwestClient};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    fn loopback() -> ReqwestClient {
+        ReqwestClient::builder()
+            .dangerous_allow_loopback()
+            .build()
+            .unwrap()
+    }
+
+    fn everything_local() -> ReqwestClient {
+        ReqwestClient::builder()
+            .dangerous_allow_loopback()
+            .dangerous_allow_private_network()
+            .build()
+            .unwrap()
+    }
+
+    /// A server on `127.0.0.1` serving the document of `did:web:localhost%3A<port>`.
+    async fn serving_a_document() -> (MockServer, Did) {
+        let server = MockServer::start().await;
+        let did = did(&format!("did:web:localhost%3A{}", server.address().port()));
+        Mock::given(method("GET"))
+            .and(path("/.well-known/did.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": did.as_str() })))
+            .mount(&server)
+            .await;
+        (server, did)
+    }
+
+    #[tokio::test]
+    async fn did_web_on_localhost() {
+        let (server, did) = serving_a_document().await;
+
+        let refusing = Resolver::builder()
+            .with(DidWeb::new(ReqwestClient::new().unwrap()))
+            .build();
+        assert!(refusing.resolve_document(&did).await.is_err());
+        assert!(server.received_requests().await.unwrap().is_empty());
+
+        let client = loopback();
+        assert_eq!(
+            client.local_network(),
+            ReqwestClient::builder()
+                .dangerous_allow_loopback()
+                .build()
+                .unwrap()
+                .local_network()
+        );
+        let resolver = Resolver::builder()
+            .with(DidWeb::new(client.clone()))
+            .build();
+        assert_eq!(resolver.resolve_document(&did).await.unwrap().id, did);
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.scheme(), "http");
+
+        // An IP literal is fetched the same way, and the body limit still holds.
+        let literal = url(&format!(
+            "https://127.0.0.1:{}/.well-known/did.json",
+            server.address().port()
+        ));
+        assert_eq!(client.get(&literal).await.unwrap().status, 200);
+        let error = client.with_max_body(4).get(&literal).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds 4 bytes"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_streamed_body_is_limited_too() {
+        // A body without `Content-Length`, sent in chunks, is counted as it arrives.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
+                      5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+        let error = loopback()
+            .with_max_body(6)
+            .get(&url(&format!(
+                "https://127.0.0.1:{port}/.well-known/did.json"
+            )))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn redirects_are_not_followed() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/.well-known/did.json"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/elsewhere"))
+            .mount(&server)
+            .await;
+        let response = loopback()
+            .get(&url(&format!(
+                "https://localhost:{}/.well-known/did.json",
+                server.address().port()
+            )))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 302);
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "the redirect target is never requested");
+    }
+
+    #[tokio::test]
+    async fn what_stays_refused() {
+        // Each of these is decided before any connection is attempted.
+        for (client, refused, reason) in [
+            // A private address needs its own opt-in.
+            (
+                loopback(),
+                "https://10.0.0.1/.well-known/did.json",
+                "not a public address",
+            ),
+            (
+                loopback(),
+                "http://192.168.1.1/.well-known/did.json",
+                "not an HTTPS URL",
+            ),
+            // Link-local, including cloud metadata endpoints, in every mode.
+            (
+                everything_local(),
+                "https://169.254.169.254/latest/meta-data",
+                "not a public address",
+            ),
+            (
+                everything_local(),
+                "http://169.254.169.254/latest/meta-data",
+                "not an HTTPS URL",
+            ),
+            (
+                everything_local(),
+                "https://[fe80::1]/.well-known/did.json",
+                "not a public address",
+            ),
+            // The other non-public ranges.
+            (
+                everything_local(),
+                "https://100.64.0.1/.well-known/did.json",
+                "not a public address",
+            ),
+            (
+                everything_local(),
+                "https://0.0.0.0/.well-known/did.json",
+                "not a public address",
+            ),
+            // A public host over `http`.
+            (
+                everything_local(),
+                "http://93.184.216.34/.well-known/did.json",
+                "not an HTTPS URL",
+            ),
+        ] {
+            let error = client.get(&url(refused)).await.unwrap_err();
+            assert!(error.to_string().contains(reason), "{refused}: {error}");
+        }
+    }
+
+    #[test]
+    fn local_ranges() {
+        let none = LocalNetwork::NONE;
+        let loopback = loopback().local_network();
+        let both = everything_local().local_network();
+        assert_eq!(ReqwestClient::new().unwrap().local_network(), none);
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+
+        for address in ["127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"] {
+            assert!(!none.allows(ip(address)), "{address}");
+            assert!(loopback.allows(ip(address)), "{address}");
+            assert!(both.allows(ip(address)), "{address}");
+        }
+        for address in [
+            "10.0.0.1",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.1.1",
+            "fc00::1",
+            "fd12::1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(!loopback.allows(ip(address)), "{address}");
+            assert!(both.allows(ip(address)), "{address}");
+        }
+        for address in [
+            "169.254.169.254",
+            "fe80::1",
+            "::ffff:169.254.169.254",
+            "0.0.0.0",
+            "::",
+            "100.64.0.1",
+            "224.0.0.1",
+            "255.255.255.255",
+            "2001:db8::1",
+            "93.184.216.34",
+        ] {
+            assert!(!both.allows(ip(address)), "{address}");
+        }
+
+        // Plain `http` only when every address is local; a mixed host keeps the public rules.
+        assert!(both.all_local(&[ip("127.0.0.1"), ip("::1"), ip("10.0.0.1")]));
+        assert!(!both.all_local(&[ip("127.0.0.1"), ip("93.184.216.34")]));
+        assert!(!both.all_local(&[ip("127.0.0.1"), ip("169.254.169.254")]));
+        assert!(!loopback.all_local(&[ip("127.0.0.1"), ip("10.0.0.1")]));
+        assert!(!both.all_local(&[]));
+    }
+}

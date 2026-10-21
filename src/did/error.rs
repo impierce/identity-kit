@@ -1,4 +1,4 @@
-/// Why a string is not a valid DID or DID URL.
+/// Why a string is not a valid DID, DID URL or DID method.
 ///
 /// Positions are byte offsets into the input that was parsed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -16,6 +16,13 @@ pub enum DidError {
     /// The method-specific id is missing, empty, or ends with `:`.
     #[error("method-specific id is empty or ends with `:`")]
     EmptyMethodSpecificId,
+    /// The namespace of a [`DidMethod`](super::DidMethod) is empty, has a second segment, or
+    /// contains a character that is not an `idchar`.
+    #[error("invalid method namespace: unexpected character or end of input at byte {position}")]
+    InvalidNamespace {
+        /// Byte offset of the offending character, or of the end of the input.
+        position: usize,
+    },
     /// A character that is not allowed at this position of a DID.
     #[error("invalid character {ch:?} at byte {position}")]
     InvalidChar {

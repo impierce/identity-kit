@@ -7,7 +7,12 @@ use serde_json::Value;
 
 use crate::did::{Uri, VerificationRelationship};
 use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
-use crate::vc::{CredentialError, Jwt, JwtClaims, Party, Presentation, PresentationV2, Subject};
+#[cfg(feature = "sd-jwt")]
+use crate::sd_jwt_vc::{SdJwtCredentialV2, SdJwtCredentialValidator, SdJwtValidationOptions};
+use crate::vc::{
+    CredentialError, CredentialV2, EnvelopedVc, Jwt, JwtClaims, Party, Presentation,
+    PresentationV2, Subject,
+};
 
 use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2};
 use super::{
@@ -50,14 +55,68 @@ pub struct DecodedPresentationV2 {
     /// The presentation, with `iss` and `jti` mapped into `holder` and `id` when those are
     /// absent.
     pub presentation: PresentationV2,
-    /// The presented credentials, in the order of `verifiableCredential`.
-    pub credentials: Vec<DecodedCredentialV2>,
+    /// The presented credentials, in the order of `verifiableCredential`, each in the form
+    /// its envelope held.
+    pub credentials: Vec<PresentedCredentialV2>,
 }
 
 impl DecodedPresentationV2 {
     /// The holder: `holder` of the presentation, or `iss` when it has none.
     pub fn holder(&self) -> Option<&Uri> {
         self.presentation.holder.as_ref().map(Party::id)
+    }
+}
+
+/// A credential unwrapped from an `EnvelopedVerifiableCredential` of a VCDM 2.0
+/// presentation: secured as a JWT (`application/vc+jwt`) or, with the `sd-jwt` feature, with
+/// SD-JWT (`application/vc+sd-jwt`).
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum PresentedCredentialV2 {
+    /// A `vc+jwt` credential, decoded.
+    Jwt(Box<DecodedCredentialV2>),
+    /// A `vc+sd-jwt` credential, with the disclosures it was presented with applied.
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    SdJwt(Box<SdJwtCredentialV2>),
+}
+
+impl PresentedCredentialV2 {
+    /// The credential, whichever way it was secured.
+    pub fn credential(&self) -> &CredentialV2 {
+        match self {
+            Self::Jwt(decoded) => &decoded.credential,
+            #[cfg(feature = "sd-jwt")]
+            Self::SdJwt(credential) => credential.credential(),
+        }
+    }
+
+    /// The header of the JWT securing it (the issuer-signed JWT, for SD-JWT).
+    pub fn header(&self) -> &JwsHeader {
+        match self {
+            Self::Jwt(decoded) => &decoded.header,
+            #[cfg(feature = "sd-jwt")]
+            Self::SdJwt(credential) => credential.header(),
+        }
+    }
+
+    /// The decoded JWT, when the credential was secured as one.
+    pub fn as_jwt(&self) -> Option<&DecodedCredentialV2> {
+        match self {
+            Self::Jwt(decoded) => Some(decoded),
+            #[cfg(feature = "sd-jwt")]
+            Self::SdJwt(_) => None,
+        }
+    }
+
+    /// The SD-JWT credential, when the credential was secured with SD-JWT.
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    pub fn as_sd_jwt(&self) -> Option<&SdJwtCredentialV2> {
+        match self {
+            Self::SdJwt(credential) => Some(credential),
+            Self::Jwt(_) => None,
+        }
     }
 }
 
@@ -205,9 +264,17 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     /// `typ`, when present, is `vp+jwt` (or one of `options.additional_typ`); the payload is
     /// the presentation, with `iss` and `jti` agreeing with `holder` and `id` and no `vp`
     /// claim; the holder, from `holder` or else `iss`, is required and is the DID of `kid`.
-    /// Each credential is unwrapped from its `EnvelopedVerifiableCredential` and validated with
-    /// [`JwtCredentialValidator::validate_v2`]; an envelope of another media type (an SD-JWT
-    /// or COSE credential) fails for that credential alone.
+    /// Each credential is unwrapped from its `EnvelopedVerifiableCredential` and validated
+    /// under `options.credentials`: an `application/vc+jwt` one with
+    /// [`JwtCredentialValidator::validate_v2`]; with the `sd-jwt` feature, an
+    /// `application/vc+sd-jwt` one as `SdJwtCredentialValidator::validate_v2` of `sd_jwt_vc`
+    /// does, with its `credentialStatus` checked by this validator's [`StatusCheck`] and the
+    /// key binding of `options.key_binding` required when set (none by default: the
+    /// presentation JWT already proves holder control). The `status` claim of such a
+    /// credential (Token Status List) is **not** checked here, because this validator has no
+    /// `SdJwtStatusCheck`; an application that relies on it validates the credential with
+    /// `SdJwtCredentialValidator` as well. An envelope of another media type (a COSE
+    /// credential) fails for that credential alone.
     ///
     /// # Errors
     ///
@@ -229,24 +296,10 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
             .iter()
             .enumerate()
         {
-            let result = match enveloped.to_jwt() {
-                Ok(credential) => self
-                    .credentials
-                    .validate_v2(&credential, &options.credentials)
-                    .await
-                    .and_then(|validated| {
-                        let credential = &validated.credential;
-                        check_subject_holder(
-                            &credential.properties,
-                            credential.credential_subject.iter(),
-                            holder.as_ref(),
-                            options.subject_holder,
-                        )?;
-                        Ok(validated)
-                    }),
-                Err(error) => Err(error.into()),
-            };
-            match result {
+            match self
+                .validate_enveloped(enveloped, holder.as_ref(), options)
+                .await
+            {
                 Ok(validated) => decoded.credentials.push(validated),
                 Err(error) => {
                     errors.insert(index, error);
@@ -261,6 +314,61 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
         } else {
             Err(PresentationValidationError::credentials(errors))
         }
+    }
+
+    /// Validates the credential `enveloped` holds, by its media type, and its subjects
+    /// against `holder`.
+    async fn validate_enveloped(
+        &self,
+        enveloped: &EnvelopedVc,
+        holder: Option<&Uri>,
+        options: &PresentationValidationOptions,
+    ) -> Result<PresentedCredentialV2, ValidationError> {
+        #[cfg(feature = "sd-jwt")]
+        if enveloped.is_sd_jwt() {
+            let sd_jwt = enveloped.to_sd_jwt()?;
+            let credential =
+                SdJwtCredentialV2::from_sd_jwt_with(sd_jwt, &options.credentials.additional_typ)
+                    .map_err(crate::sd_jwt_vc::SdJwtValidationError::from)?;
+            let sd_jwt_options = SdJwtValidationOptions {
+                time: options.credentials.time,
+                key_binding: options.key_binding.clone(),
+                status: options.credentials.status,
+                ..SdJwtValidationOptions::default()
+            };
+            let validated = SdJwtCredentialValidator::new(
+                self.credentials.resolver(),
+                self.credentials.verifier(),
+            )
+            .validate_credential_v2_unchecked_status(credential, &sd_jwt_options)
+            .await?;
+            let credential = validated.credential;
+            self.credentials
+                .check_status(
+                    credential.credential().statuses(),
+                    options.credentials.status,
+                )
+                .await?;
+            check_subject_holder(
+                &credential.credential().properties,
+                credential.credential().credential_subject.iter(),
+                holder,
+                options.subject_holder,
+            )?;
+            return Ok(PresentedCredentialV2::SdJwt(Box::new(credential)));
+        }
+        let jwt = enveloped.to_jwt()?;
+        let validated = self
+            .credentials
+            .validate_v2(&jwt, &options.credentials)
+            .await?;
+        check_subject_holder(
+            &validated.credential.properties,
+            validated.credential.credential_subject.iter(),
+            holder,
+            options.subject_holder,
+        )?;
+        Ok(PresentedCredentialV2::Jwt(Box::new(validated)))
     }
 
     /// Validates the presentation JWT itself; the credentials are left to decode.
@@ -392,13 +500,15 @@ pub(crate) fn decode_presentation_with(
 }
 
 /// Decodes a VCDM 2.0 presentation JWT and unwraps and decodes its credentials without
-/// verifying or validating anything.
+/// verifying or validating anything. A credential secured with SD-JWT (feature `sd-jwt`) has
+/// its disclosures processed, which checks the digests, but no signature is verified.
 ///
 /// # Errors
 ///
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
 /// or [`ValidationError::Credential`] when the token, or one of its credentials, does not
-/// decode; an envelope of a media type other than `application/vc+jwt` is a
+/// decode, and `ValidationError::SdJwt` when an SD-JWT credential does not; an envelope of
+/// a media type other than `application/vc+jwt` (or `application/vc+sd-jwt`) is a
 /// [`CredentialError::UnsupportedMediaType`].
 pub fn decode_presentation_v2(jwt: &Jwt) -> Result<DecodedPresentationV2, ValidationError> {
     let jws = jwt.decode()?;
@@ -406,7 +516,7 @@ pub fn decode_presentation_v2(jwt: &Jwt) -> Result<DecodedPresentationV2, Valida
     let credentials = presentation
         .verifiable_credential
         .iter()
-        .map(|enveloped| decode_v2(&enveloped.to_jwt()?.decode()?, &NO_TYP))
+        .map(decode_enveloped)
         .collect::<Result<_, _>>()?;
     Ok(DecodedPresentationV2 {
         header: jws.header().clone(),
@@ -414,6 +524,20 @@ pub fn decode_presentation_v2(jwt: &Jwt) -> Result<DecodedPresentationV2, Valida
         presentation,
         credentials,
     })
+}
+
+/// Decodes the credential `enveloped` holds, by its media type.
+fn decode_enveloped(enveloped: &EnvelopedVc) -> Result<PresentedCredentialV2, ValidationError> {
+    #[cfg(feature = "sd-jwt")]
+    if enveloped.is_sd_jwt() {
+        let credential = SdJwtCredentialV2::from_sd_jwt(enveloped.to_sd_jwt()?)
+            .map_err(crate::sd_jwt_vc::SdJwtValidationError::from)?;
+        return Ok(PresentedCredentialV2::SdJwt(Box::new(credential)));
+    }
+    Ok(PresentedCredentialV2::Jwt(Box::new(decode_v2(
+        &enveloped.to_jwt()?.decode()?,
+        &NO_TYP,
+    )?)))
 }
 
 /// The claims and presentation of a VCDM 2.0 presentation JWT whose `typ`, when present, is

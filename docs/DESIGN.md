@@ -45,7 +45,7 @@ identity-kit/
 ├── Cargo.toml                 # workspace
 ├── identity-kit/              # the published crate; lib name `identity_kit`
 │   └── src/
-│       ├── did/               # Did, DidUrl, DidDocument, VerificationMethod, Service, resolution metadata
+│       ├── did/               # Did, DidUrl, DidMethod, DidDocument, VerificationMethod, Service, resolution metadata
 │       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode, JwtClaims
 │       ├── keys/              # KeyStore, KeySigner, KeyId, KeySpec; backends in_memory, software, pkcs11
 │       ├── identity/          # Identity, IdentityKind, Identifier, KeyStoreIdentity
@@ -68,11 +68,12 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `did-key`, `did-jwk` | on      | nothing: `bs58` and the multicodec header are always compiled in `jose` (ADR 0003) |
 | `did-web`            | on      | `url`; the method works over any injected `HttpClient`        |
 | `reqwest`            | on      | `reqwest` with `rustls` and `ring`: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
+| `local-network` | off  | Development and tests only: `ReqwestClient::builder` opt-ins for loopback and private addresses (implies `reqwest`) |
 | `secp256k1`          | on      | `k256`                                                        |
 | `rsa`                | off     | `rsa`                                                         |
 | `in-memory`          | off     | test and development key store                                |
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
-| `pkcs11`             | off     | `cryptoki`                                                    |
+| `pkcs11`             | off     | `cryptoki`; `tokio` (`rt`) for the blocking pool; PKCS#11 key store |
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
 | `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |
@@ -96,6 +97,7 @@ impl Did {
     pub fn join(&self, fragment_or_path: &str) -> Result<DidUrl, DidError>;
 }
 pub struct DidUrl { did: Did, path: Option<String>, query: Option<String>, fragment: Option<String> }
+pub struct DidMethod { name: String, namespace: Option<String> }  // did:demo, did:demo:dev; `matches(&Did)`; serde as string
 
 pub struct DidDocument {
     pub context: Option<Context>,             // "@context", carried verbatim
@@ -265,7 +267,11 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   `https://host[:port]/<segments>/did.json`), resolver over an injected `HttpClient` trait
   (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only),
   producer taking the document URL and setting `@context` to `["https://www.w3.org/ns/did/v1",
-  "https://w3id.org/security/suites/jws-2020/v1"]`.
+  "https://w3id.org/security/suites/jws-2020/v1"]`. For development and tests only, the
+  `local-network` feature adds `ReqwestClient::builder` with
+  `dangerous_allow_loopback` and `dangerous_allow_private_network`: the host is resolved first,
+  plain `http` is used only when every address is in an allowed range, the connection is pinned
+  to the checked addresses, and link-local and the other non-public ranges stay refused.
 - Key references (ADR 0006): a token names its key in one of several ways and `KeyReference`
   captures which; `from_jws` applies a fixed precedence, `sd_jwt_vc` builds one from `cnf`
   (`jwk`, `kid`, `jku`). Resolving a reference says nothing about trust: after the signature
@@ -293,15 +299,22 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
   `SdJwt` (parse, `process` per §7.1, `disclose`/`select` for presentation, `sign_key_binding`),
   `SdJwtBuilder` concealing claims at `ClaimPath`s (recursive disclosures, decoys, pluggable
-  salts); `SdJwtVc` with `typ: dc+sd-jwt` (`vc+sd-jwt` accepted), `SdJwtVcClaims` with the
-  registered claims first-class and the non-disclosable ones enforced, `SdJwtVcBuilder`;
-  `Status`/`StatusListRef`/`StatusMechanism`, `StatusList` (ZLIB bit array) and
-  `StatusListToken` for the Token Status List; `TypeMetadata` with claim paths, `extends`
-  folding, claim validation and `Integrity` metadata; `SdJwtCredentialValidator` over
-  `KeyResolver` + `JwsVerifier` (issuer key from the token's `KeyReference` under
-  `assertionMethod`, `iss` bound to the party it names, time claims, key binding with
-  `KeyBindingOptions` and the holder key from `cnf` (`jwk` or `kid`) under `authentication`,
-  the `vc` `StatusCheck` with a `StatusPolicy`, `StatusListCheck` over an `HttpClient`).
+  salts); `SdJwtVc` with `typ: dc+sd-jwt` (`vc+sd-jwt` accepted when the payload has `vct`),
+  `SdJwtVcClaims` with the registered claims first-class and the non-disclosable ones
+  enforced, `SdJwtVcBuilder`; `SdJwtCredentialV2` for a VCDM 2.0 credential secured with
+  SD-JWT (VC-JOSE-COSE §3.2.1: `typ: vc+sd-jwt`, the `CredentialV2` as the payload, `cnf` and
+  `status` beside it), `SdJwtCredentialV2Builder`, and `EnvelopedVc::to_sd_jwt` for the
+  `application/vc+sd-jwt` envelope of a VCDM 2.0 presentation; `Status`/`StatusListRef`/
+  `StatusMechanism`, `StatusList` (ZLIB bit array) and `StatusListToken` for the Token Status
+  List; `TypeMetadata` with claim paths, `extends` folding, claim validation and `Integrity`
+  metadata; `SdJwtCredentialValidator` over `KeyResolver` + `JwsVerifier` (`validate` an SD-JWT
+  VC, `validate_v2` a VCDM 2.0 credential: issuer key from the token's `KeyReference` under
+  `assertionMethod`, `iss` or `issuer` bound to the party it names, time claims and validity
+  period, key binding with `KeyBindingOptions` and the holder key from `cnf` (`jwk` or `kid`)
+  under `authentication`, the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
+  `credentialStatus`, `StatusListCheck` over an `HttpClient`).
+  `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
+  (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
   Data Proof entries carried as data), `DomainLinkageCredentialBuilder`, `DomainLinkageValidator`
   implementing the DIF Well Known DID Configuration checks (`iss == sub ==
