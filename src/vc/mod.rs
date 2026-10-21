@@ -11,6 +11,8 @@
 //!   presentation as an [`EnvelopedVc`] holding a `data:application/vc+jwt,…` URL.
 //!
 //! Both are plain data with open extension properties; `@context` is carried, never processed.
+//! [`JwtClaims`] lives in [`jose`](crate::jose) and is re-exported here; this module adds its
+//! conversions between `NumericDate` values and `chrono` times.
 //! [`Jwt`] is a compact JWS as a string, signed with any [`Signer`](crate::jose::Signer) through
 //! [`Jwt::sign`]. The [`validation`] module verifies and validates the JWTs: signature through
 //! a [`KeyResolver`](validation::KeyResolver) and a [`JwsVerifier`](crate::jose::JwsVerifier),
@@ -73,9 +75,13 @@ pub mod validation;
 
 pub use credential::Credential;
 pub use error::CredentialError;
-pub use jwt::{Jwt, JwtClaims};
+pub use jwt::Jwt;
 #[cfg(feature = "sd-jwt")]
-pub(crate) use jwt::{numeric_date, required_numeric_date};
+pub(crate) use jwt::required_numeric_date;
+
+pub use crate::jose::JwtClaims;
+#[cfg(feature = "sd-jwt")]
+pub(crate) use crate::jose::numeric_date;
 pub use model::{CONTEXT_V1, CONTEXT_V2, Party, Subject, TypedObject};
 pub use presentation::Presentation;
 pub use v2::{CredentialV2, EnvelopedVc, EnvelopedVp, PresentationV2};

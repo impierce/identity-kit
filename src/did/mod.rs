@@ -76,8 +76,8 @@ mod syntax;
 mod uri;
 
 pub use document::{
-    Context, DidDocument, DidDocumentBuilder, DocumentError, MethodRef, MethodType, OneOrMany,
-    Service, ServiceEndpoint, VerificationMaterial, VerificationMethod, VerificationRelationship,
+    Context, DidDocument, DidDocumentBuilder, DocumentError, MethodRef, MethodType, Service,
+    ServiceEndpoint, VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 pub use error::DidError;
 pub use method::DidMethod;
@@ -88,3 +88,5 @@ pub use resolution::{
 };
 pub use syntax::{DEFAULT_MAX_LEN, Did, DidUrl};
 pub use uri::Uri;
+
+pub use crate::jose::OneOrMany;
