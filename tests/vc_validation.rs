@@ -18,9 +18,10 @@ use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, FailFast, JwtCredentialValidator, JwtPresentationValidator,
-    KeyResolutionError, KeyResolver, PresentationValidationError, PresentationValidationOptions,
-    StatusCheck, StatusError, StatusPolicy, SubjectHolderRelationship, TimeOptions,
-    ValidationError, extract_holder, extract_issuer,
+    KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
+    PresentationValidationError, PresentationValidationOptions, StatusCheck, StatusError,
+    StatusPolicy, SubjectHolderRelationship, TimeOptions, ValidationError, extract_holder,
+    extract_issuer,
 };
 use identity_kit::vc::{
     Credential, CredentialError, CredentialV2, Jwt, JwtClaims, Presentation, Subject, TypedObject,
@@ -383,7 +384,7 @@ async fn signature_and_key_errors() {
         validator
             .validate(&sign(JwsHeader::new(JwsAlgorithm::EdDSA)).await, &at(now()))
             .await,
-        Err(ValidationError::MissingKid)
+        Err(ValidationError::KeyReference(KeyReferenceError::Missing))
     ));
     let error = validator
         .validate(
@@ -393,7 +394,7 @@ async fn signature_and_key_errors() {
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, ValidationError::InvalidKid { kid, .. } if kid == "https://example.edu/keys/1")
+        matches!(&error, ValidationError::KeyReference(KeyReferenceError::InvalidKid { kid, .. }) if kid == "https://example.edu/keys/1")
     );
     assert!(
         error
@@ -412,7 +413,7 @@ async fn signature_and_key_errors() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "resolving key `did:example:abfe13f712120431c276e12ecab#keys-1`: resolving `did:example:abfe13f712120431c276e12ecab`: DID method not supported: no resolver is registered for `did:example`"
+        "resolving key did:example:abfe13f712120431c276e12ecab#keys-1: resolving `did:example:abfe13f712120431c276e12ecab`: DID method not supported: no resolver is registered for `did:example`"
     );
     let missing_method = sign(
         JwsHeader::new(JwsAlgorithm::EdDSA).with_kid(issuer.did.join("#keys-1").unwrap().as_str()),
@@ -420,7 +421,8 @@ async fn signature_and_key_errors() {
     .await;
     assert!(matches!(
         validator.validate(&missing_method, &at(now())).await,
-        Err(ValidationError::KeyResolution { kid, .. }) if kid.fragment() == Some("keys-1")
+        Err(ValidationError::KeyResolution { key, .. })
+            if matches!(&*key, KeyReference::DidUrl(kid) if kid.fragment() == Some("keys-1"))
     ));
 
     // A `kid` with DID parameters could select an old document version that still lists a
@@ -435,7 +437,7 @@ async fn signature_and_key_errors() {
         validator
             .validate(&sign(header(JwsAlgorithm::EdDSA, &versioned)).await, &at(now()))
             .await,
-        Err(ValidationError::KidWithParameters(kid)) if kid == versioned
+        Err(ValidationError::KeyReference(KeyReferenceError::KidWithParameters(kid))) if kid == versioned
     ));
 
     // A registered claim under `additional` would put the member in the payload twice.
@@ -477,11 +479,11 @@ async fn issuer_must_control_the_signing_key() {
     let jwt = issue(&issuer, &claimed, |_| {}).await;
     assert!(matches!(
         validator.validate(&jwt, &at(now())).await,
-        Err(ValidationError::IssuerMismatch { issuer: id, kid })
-            if id.as_str() == holder.did.as_str() && kid == issuer.kid
+        Err(ValidationError::IssuerMismatch { issuer: id, key })
+            if id.as_str() == holder.did.as_str() && *key == KeyReference::DidUrl(issuer.kid.clone())
     ));
 
-    // An issuer that is not a DID has no resolvable key.
+    // An HTTPS issuer does not control the key of a DID, whatever the DID URL in `kid`.
     let https = credential(&issuer.did, &holder.did);
     let jwt = issue(&issuer, &https, |claims| {
         claims.iss = Some("https://example.edu/issuers/565049".to_owned());
@@ -490,7 +492,10 @@ async fn issuer_must_control_the_signing_key() {
     let error = validator.validate(&jwt, &at(now())).await.unwrap_err();
     assert_eq!(
         error.to_string(),
-        "issuer `https://example.edu/issuers/565049` is not a DID"
+        format!(
+            "issuer `https://example.edu/issuers/565049` does not control signing key {}",
+            issuer.kid
+        )
     );
     assert!(matches!(
         extract_issuer(&jwt),
@@ -521,27 +526,32 @@ async fn key_must_be_usable_for_the_relationship() {
         .validate(&jwt, &at(now()))
         .await
         .unwrap_err();
-    assert!(matches!(&error, ValidationError::KeyResolution { kid: k, .. } if *k == kid));
+    assert!(
+        matches!(&error, ValidationError::KeyResolution { key, .. } if **key == KeyReference::DidUrl(kid.clone()))
+    );
     assert!(
         error
             .to_string()
             .ends_with("is not listed under `assertionMethod`")
     );
 
-    // The resolver's `KeyResolver` implementation is `resolve_public_key` with the relationship.
+    // The resolver's `KeyResolver` implementation is `resolve_public_key` with the
+    // relationship of the role.
     let resolver = resolver();
     assert!(
         resolver
-            .resolve_key(&kid, VerificationRelationship::KeyAgreement)
+            .resolve_public_key(&kid, Some(VerificationRelationship::KeyAgreement))
             .await
             .is_ok()
     );
-    assert!(
-        resolver
-            .resolve_key(&kid, VerificationRelationship::Authentication)
-            .await
-            .is_err()
-    );
+    for role in [KeyRole::Issuer, KeyRole::Subject] {
+        assert!(
+            resolver
+                .resolve_key(&KeyReference::DidUrl(kid.clone()), role)
+                .await
+                .is_err()
+        );
+    }
 }
 
 /// A status check that knows one status type.
@@ -908,8 +918,8 @@ async fn presentation_errors() {
             .unwrap_err(),
     );
     assert!(
-        matches!(&error, ValidationError::HolderMismatch { holder: h, kid }
-        if h.as_str() == issuer.did.as_str() && *kid == holder.kid)
+        matches!(&error, ValidationError::HolderMismatch { holder: h, key }
+        if h.as_str() == issuer.did.as_str() && **key == KeyReference::DidUrl(holder.kid.clone()))
     );
     assert!(error.to_string().starts_with("holder `did:key:"));
 
@@ -1074,8 +1084,8 @@ async fn fail_fast_collects_or_stops() {
         "credential 0: expired at 2018-12-31T23:59:59+00:00 (now is 2019-01-01T00:00:00+00:00); credential 2: signature: signature verification failed"
     );
     assert_eq!(
-        PresentationValidationError::presentation(ValidationError::MissingKid).to_string(),
-        "presentation: the JWS header has no `kid`"
+        PresentationValidationError::presentation(KeyReferenceError::Missing.into()).to_string(),
+        "presentation: the token names no key: no `kid`, `jwk`, `x5c` or `jku`"
     );
 }
 
@@ -1088,11 +1098,10 @@ struct Trusted(HashMap<DidUrl, Jwk>);
 
 #[async_trait::async_trait]
 impl KeyResolver for Trusted {
-    async fn resolve_key(
-        &self,
-        url: &DidUrl,
-        _: VerificationRelationship,
-    ) -> Result<Jwk, KeyResolutionError> {
+    async fn resolve_key(&self, key: &KeyReference, _: KeyRole) -> Result<Jwk, KeyResolutionError> {
+        let KeyReference::DidUrl(url) = key else {
+            return Err(KeyResolutionError::unsupported(key));
+        };
         self.0
             .get(url)
             .cloned()
@@ -1115,11 +1124,12 @@ async fn custom_key_resolver() {
     assert_eq!(
         error.to_string(),
         format!(
-            "resolving key `{}`: `{}` is not a trusted key",
+            "resolving key {}: `{}` is not a trusted key",
             issuer.kid, issuer.kid
         )
     );
     let source = KeyResolutionError::new(std::io::Error::other("offline"));
     assert_eq!(source.to_string(), "offline");
-    assert!(source.inner().is::<std::io::Error>());
+    assert!(source.inner().unwrap().is::<std::io::Error>());
+    assert!(!source.is_unsupported());
 }

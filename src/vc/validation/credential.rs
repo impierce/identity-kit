@@ -2,13 +2,13 @@
 
 use std::collections::BTreeSet;
 
-use crate::did::{Did, DidUrl, Uri, VerificationRelationship};
-use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
+use crate::did::Uri;
+use crate::jose::{CompactJws, DefaultVerifier, Jwk, JwsHeader, JwsVerifier};
 use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party, TypedObject};
 
 use super::{
-    CredentialValidationOptions, KeyResolver, StatusCheck, StatusError, StatusPolicy,
-    ValidationError,
+    CredentialValidationOptions, KeyReference, KeyResolver, KeyRole, StatusCheck, StatusError,
+    StatusPolicy, ValidationError,
 };
 
 /// A validated or decoded VCDM 1.1 credential JWT: its header, its claims (custom ones
@@ -148,10 +148,11 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     ) -> Result<DecodedCredential, ValidationError> {
         let jws = jwt.decode()?;
         let decoded = decode(&jws, &options.additional_typ)?;
-        let kid = self
-            .verify(&jws, VerificationRelationship::AssertionMethod)
+        let issuer = &decoded.credential.issuer;
+        let (reference, key) = self
+            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()))
             .await?;
-        check_controller(&decoded.credential.issuer, &kid, "issuer")?;
+        check_controller(issuer, &reference, &key, "issuer")?;
         options.time.check_claims(&decoded.claims)?;
         options.time.check(
             Some(decoded.credential.issuance_date),
@@ -175,10 +176,11 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     ) -> Result<DecodedCredentialV2, ValidationError> {
         let jws = jwt.decode()?;
         let decoded = decode_v2(&jws, &options.additional_typ)?;
-        let kid = self
-            .verify(&jws, VerificationRelationship::AssertionMethod)
+        let issuer = &decoded.credential.issuer;
+        let (reference, key) = self
+            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()))
             .await?;
-        check_controller(&decoded.credential.issuer, &kid, "issuer")?;
+        check_controller(issuer, &reference, &key, "issuer")?;
         options.time.check_claims(&decoded.claims)?;
         options.time.check(
             decoded.credential.valid_from,
@@ -190,30 +192,25 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         Ok(decoded)
     }
 
-    /// Resolves the key of `jws` under `relationship` and verifies the signature; the `kid`.
+    /// Resolves the key `jws` names, `iss` being its issuer, for `role` and verifies the
+    /// signature; the reference and the key.
     pub(super) async fn verify(
         &self,
         jws: &CompactJws,
-        relationship: VerificationRelationship,
-    ) -> Result<DidUrl, ValidationError> {
-        let kid = jws.kid().ok_or(ValidationError::MissingKid)?;
-        let kid = DidUrl::parse(kid).map_err(|source| ValidationError::InvalidKid {
-            kid: kid.to_owned(),
-            source,
-        })?;
-        if kid.path().is_some() || kid.query().is_some() {
-            return Err(ValidationError::KidWithParameters(kid));
-        }
+        role: KeyRole,
+        iss: Option<&str>,
+    ) -> Result<(KeyReference, Jwk), ValidationError> {
+        let reference = KeyReference::from_jws(jws, iss)?;
         let key = self
             .resolver
-            .resolve_key(&kid, relationship)
+            .resolve_key(&reference, role)
             .await
             .map_err(|source| ValidationError::KeyResolution {
-                kid: kid.clone(),
+                key: Box::new(reference.clone()),
                 source,
             })?;
         jws.verify(&self.verifier, &key)?;
-        Ok(kid)
+        Ok((reference, key))
     }
 
     /// Checks every status entry per `policy`.
@@ -327,28 +324,32 @@ pub(super) fn check_typ(
     }
 }
 
-/// Checks that `party` is the DID of `kid`, the controller of the signing key.
+/// Checks that `key`, which `reference` resolved to, belongs to `party`
+/// ([`KeyReference::binds_to`]).
 pub(super) fn check_controller(
     party: &Party,
-    kid: &DidUrl,
+    reference: &KeyReference,
+    key: &Jwk,
     role: &'static str,
 ) -> Result<(), ValidationError> {
     let id = party.id();
-    let did = Did::parse(id.as_str()).map_err(|_| ValidationError::NotDid {
-        role,
-        id: id.to_string(),
-    })?;
-    if did != *kid.did() {
-        return Err(mismatch(role, id.clone(), kid.clone()));
+    if !reference.binds_to(Some(id.as_str()), key) {
+        return Err(mismatch(role, id.clone(), reference.clone()));
     }
     Ok(())
 }
 
 /// The mismatch error for `role`.
-fn mismatch(role: &'static str, id: Uri, kid: DidUrl) -> ValidationError {
+fn mismatch(role: &'static str, id: Uri, key: KeyReference) -> ValidationError {
     if role == "holder" {
-        ValidationError::HolderMismatch { holder: id, kid }
+        ValidationError::HolderMismatch {
+            holder: id,
+            key: Box::new(key),
+        }
     } else {
-        ValidationError::IssuerMismatch { issuer: id, kid }
+        ValidationError::IssuerMismatch {
+            issuer: id,
+            key: Box::new(key),
+        }
     }
 }

@@ -69,7 +69,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | Feature              | Default | Pulls in                                                      |
 | -------------------- | ------- | ------------------------------------------------------------- |
 | `did-key`, `did-jwk` | on      | nothing: `bs58` and the multicodec header are always compiled in `jose` (ADR 0003) |
-| `did-web`            | on      | `url`; the method works over any injected `HttpClient`        |
+| `did-web`            | on      | nothing; the method works over any injected `HttpClient`      |
 | `reqwest`            | on      | `reqwest` with `rustls` and `ring`: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
 | `local-network` | off  | Development and tests only: `ReqwestClient::builder` opt-ins for loopback and private addresses (implies `reqwest`) |
 | `secp256k1`          | on      | `k256`                                                        |
@@ -79,8 +79,8 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `pkcs11`             | off     | `cryptoki`; `tokio` (`rt`) for the blocking pool; PKCS#11 key store |
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
 | `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
-| `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |
-| `linked-vp`          | on      | implies `vc` and `did-web` (for `url` and `HttpClient`)       |
+| `domain-linkage`     | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
+| `linked-vp`          | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
 | `jwks`               | off     | implies `did-web` (for `HttpClient`); `JwksResolver` over JWT VC issuer metadata |
 | `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
 | `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |

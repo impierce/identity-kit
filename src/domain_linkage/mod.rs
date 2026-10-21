@@ -95,8 +95,8 @@ use crate::jose::{DefaultVerifier, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError};
 use crate::resolver::Resolver;
 use crate::vc::validation::{
-    CredentialValidationOptions, DecodedCredential, JwtCredentialValidator, KeyResolver,
-    ValidationError, decode_credential,
+    CredentialValidationOptions, DecodedCredential, JwtCredentialValidator, KeyReferenceError,
+    KeyResolver, ValidationError, decode_credential,
 };
 use crate::vc::{Credential, CredentialError, Jwt, JwtClaims, Subject};
 
@@ -1130,7 +1130,7 @@ fn check_format(
         return Err(DomainLinkageError::TypPresent(typ.clone()));
     }
     if header.kid.is_none() {
-        return Err(ValidationError::MissingKid.into());
+        return Err(ValidationError::KeyReference(KeyReferenceError::Missing).into());
     }
     for (name, present) in [
         ("cty", header.cty.is_some()),

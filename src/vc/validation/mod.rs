@@ -1,33 +1,42 @@
 //! Validation of credential and presentation JWTs: signature, binding to the issuer or holder,
 //! validity period, audience, nonce and status.
 //!
-//! The validators take two extension points: a [`KeyResolver`], which turns the `kid` of a JWT
-//! into the public key of its signer and is implemented by the crate's
-//! [`Resolver`], and a [`JwsVerifier`](crate::jose::JwsVerifier), which checks the signature
-//! and is [`DefaultVerifier`](crate::jose::DefaultVerifier) unless an application substitutes
-//! its own. A [`StatusCheck`] is a third, optional one for `credentialStatus`.
+//! The validators take two extension points: a [`KeyResolver`] (from
+//! [`resolver`](crate::resolver), re-exported here), which turns the [`KeyReference`] of a JWT
+//! into the public key of its signer, and a [`JwsVerifier`](crate::jose::JwsVerifier), which
+//! checks the signature and is [`DefaultVerifier`](crate::jose::DefaultVerifier) unless an
+//! application substitutes its own. The crate's [`Resolver`](crate::resolver::Resolver)
+//! resolves DID URLs; a [`CompositeKeyResolver`](crate::resolver::CompositeKeyResolver) adds
+//! keys by value ([`JwkResolver`](crate::resolver::JwkResolver)) or the key sets of HTTPS
+//! issuers (`JwksResolver`, feature `jwks`). A [`StatusCheck`] is a third, optional extension
+//! point, for `credentialStatus`.
 //!
 //! # What is checked
 //!
 //! For a credential ([`JwtCredentialValidator`]):
 //!
-//! 1. The token is a compact JWS whose header has a `kid` that is a DID URL of the form
-//!    `did:…#fragment`: a path or DID parameters such as `versionId` are refused, so the signer
-//!    cannot pick the document version its key is looked up in (ADR 0004). When `typ` is
-//!    present it names the profile: `JWT` for VCDM 1.1, `vc+jwt` for VCDM 2.0, or one of the
-//!    values the options add (`CredentialValidationOptions::additional_typ`).
+//! 1. The token is a compact JWS whose header names its key
+//!    ([`KeyReference::from_jws`], with the issuer as `iss`): a `kid` that is a DID URL of the
+//!    form `did:…#fragment`, a `#fragment` relative to a DID issuer, a `kid` into the key set of
+//!    an HTTPS issuer, or a `jwk`, `x5c` or `jku` header. A path or DID parameters such as
+//!    `versionId` in a DID URL are refused, so the signer cannot pick the document version its
+//!    key is looked up in (ADR 0004). When `typ` is present it names the profile: `JWT` for
+//!    VCDM 1.1, `vc+jwt` for VCDM 2.0, or one of the values the options add
+//!    (`CredentialValidationOptions::additional_typ`).
 //! 2. The payload is a claims set that maps to a [`Credential`](crate::vc::Credential) (or a
 //!    [`CredentialV2`](crate::vc::CredentialV2)), with its registered claims agreeing with the
 //!    credential.
-//! 3. The key `kid` names is resolved under the `assertionMethod` relationship and verifies the
-//!    signature.
-//! 4. The issuer is the DID of `kid`: the key that signed is the issuer's.
+//! 3. The key the reference names is resolved for [`KeyRole::Issuer`] (`assertionMethod` in a
+//!    DID document) and verifies the signature.
+//! 4. The key belongs to the issuer ([`KeyReference::binds_to`]): the issuer is the DID of the
+//!    DID URL, the `did:jwk` or thumbprint of a key by value, or the HTTPS issuer of the key
+//!    set.
 //! 5. `nbf`, `exp` and `iat`, and the credential's own validity period, hold at the validation
 //!    time, within the leeway.
 //! 6. `credentialStatus` passes the [`StatusCheck`], per the [`StatusPolicy`].
 //!
 //! For a presentation ([`JwtPresentationValidator`]): the same for the presentation JWT, with
-//! the key resolved under `authentication` and the holder as the signer, plus the expected
+//! the key resolved for [`KeyRole::Subject`] (`authentication`) and bound to the holder, plus the expected
 //! audience and nonce; then every credential it carries is validated as above, and its subject
 //! is checked against the holder per the [`SubjectHolderRelationship`]. A VCDM 1.1
 //! presentation (`typ` `JWT`, [`validate`](JwtPresentationValidator::validate)) carries
@@ -46,13 +55,13 @@
 
 use core::time::Duration;
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use chrono::{DateTime, TimeDelta, Utc};
 
-use crate::did::{Did, DidUrl, VerificationRelationship};
-use crate::jose::Jwk;
-use crate::resolver::Resolver;
+use crate::did::Did;
+pub use crate::resolver::{
+    KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
+};
 use crate::vc::{Jwt, JwtClaims, TypedObject, claims};
 
 mod credential;
@@ -63,63 +72,13 @@ pub use credential::{
     DecodedCredential, DecodedCredentialV2, JwtCredentialValidator, decode_credential,
     decode_credential_v2,
 };
-pub use error::{KeyResolutionError, PresentationValidationError, StatusError, ValidationError};
+pub use error::{PresentationValidationError, StatusError, ValidationError};
 #[cfg(feature = "linked-vp")]
 pub(crate) use presentation::decode_presentation_with;
 pub use presentation::{
     DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, PresentedCredentialV2,
     decode_presentation, decode_presentation_v2,
 };
-
-/// Finds the public key a JWT was signed with, given the DID URL in its `kid`.
-///
-/// [`Resolver`] implements it by dereferencing the URL; an application can implement it over a
-/// cache, a JWKS, or a fixed set of trusted keys.
-#[async_trait::async_trait]
-pub trait KeyResolver: Send + Sync {
-    /// The public key of the verification method `url` names, which must be usable for
-    /// `relationship`: `assertionMethod` for a credential, `authentication` for a presentation.
-    ///
-    /// # Errors
-    ///
-    /// A [`KeyResolutionError`] when the DID does not resolve, the method does not exist or is
-    /// not usable for `relationship`, or its material cannot be read as a JWK.
-    async fn resolve_key(
-        &self,
-        url: &DidUrl,
-        relationship: VerificationRelationship,
-    ) -> Result<Jwk, KeyResolutionError>;
-}
-
-#[async_trait::async_trait]
-impl KeyResolver for Resolver {
-    async fn resolve_key(
-        &self,
-        url: &DidUrl,
-        relationship: VerificationRelationship,
-    ) -> Result<Jwk, KeyResolutionError> {
-        self.resolve_public_key(url, Some(relationship))
-            .await
-            .map_err(KeyResolutionError::from)
-    }
-}
-
-macro_rules! forward_key_resolver {
-    ($($ty:ty),* $(,)?) => {$(
-        #[async_trait::async_trait]
-        impl<T: KeyResolver + ?Sized> KeyResolver for $ty {
-            async fn resolve_key(
-                &self,
-                url: &DidUrl,
-                relationship: VerificationRelationship,
-            ) -> Result<Jwk, KeyResolutionError> {
-                (**self).resolve_key(url, relationship).await
-            }
-        }
-    )*};
-}
-
-forward_key_resolver!(&T, Box<T>, Arc<T>);
 
 /// Checks the `credentialStatus` of a credential: fetches the status list, bitmap or registry
 /// the entry points to and reports whether the credential is still good.
