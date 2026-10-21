@@ -49,9 +49,16 @@ impl Jwk {
     ///
     /// The errors of [`Jwk::rsa_public_components`]: [`JwkError::UnexpectedKeyType`] for any
     /// other key, [`JwkError::MissingMember`] or [`JwkError::InvalidBase64Url`] for a broken `n`
-    /// or `e`.
+    /// or `e`; [`JwkError::InvalidKey`] when `n` or `e` is zero, which no `RSAPublicKey` that
+    /// [`Jwk::from_pkcs1_der`] reads can hold.
     pub fn to_pkcs1_der(&self) -> Result<Vec<u8>, JwkError> {
         let (n, e) = self.rsa_public_components()?;
+        if [&n, &e].iter().any(|value| value.iter().all(|&b| b == 0)) {
+            return Err(JwkError::InvalidKey {
+                key: "RSA",
+                reason: "modulus and exponent must not be zero".to_owned(),
+            });
+        }
         Ok(encode(&n, &e))
     }
 }

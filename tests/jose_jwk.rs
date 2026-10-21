@@ -707,6 +707,22 @@ fn pkcs1_needs_an_rsa_key() {
     ));
     let no_e: Jwk = serde_json::from_value(json!({ "kty": "RSA", "n": RFC7638_RSA_N })).unwrap();
     assert_eq!(no_e.to_pkcs1_der(), Err(JwkError::MissingMember("e")));
+
+    // An empty or zero `n` or `e` would encode as `INTEGER 0`, which `from_pkcs1_der` refuses.
+    for (n, e) in [
+        ("", "AQAB"),
+        ("AA", "AQAB"),
+        (RFC7638_RSA_N, ""),
+        (RFC7638_RSA_N, "AAA"),
+    ] {
+        let jwk: Jwk = serde_json::from_value(json!({ "kty": "RSA", "n": n, "e": e })).unwrap();
+        let zero = Err(JwkError::InvalidKey {
+            key: "RSA",
+            reason: "modulus and exponent must not be zero".to_owned(),
+        });
+        assert_eq!(jwk.to_pkcs1_der(), zero, "n {n:?}, e {e:?}");
+        assert_eq!(jwk.to_multikey(), zero.map(|_: Vec<u8>| String::new()));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
