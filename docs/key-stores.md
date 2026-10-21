@@ -11,7 +11,7 @@ remote signers (an HSM, a cloud KMS), and a software backend follows the same ru
 | Operation      | Contract                                                                                                                                               |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `capabilities` | Truthful and stable. Every algorithm listed signs; `generate` and `delete` succeed only when `can_generate` / `can_delete` is set. No duplicate algorithms. |
-| `public_jwk`   | The public key, never private parameters. `alg` is set to the key's algorithm when the backend knows it; `kid` is the key id for the shipped backends.   |
+| `public_jwk`   | The public key, never private parameters. `alg` is set to the key's algorithm when the backend knows it; `kid` is the key id for the shipped backends. A backend whose vault returns DER builds the JWK with `Jwk::from_spki_der` (a `SubjectPublicKeyInfo`) or, for an RSA key returned as a PKCS #1 `RSAPublicKey`, `Jwk::from_pkcs1_der`. |
 | `sign`         | Takes the raw signing input (the backend hashes) and returns the JWS form of the signature: 64 bytes for EdDSA, raw `r \|\| s` for ECDSA (never DER), the modulus-sized octet string for RSA. |
 | `exists`       | `Ok(false)` for an unknown key, never an error.                                                                                                        |
 | `generate`     | Rejects a spec whose algorithm does not fit the key type (`InvalidSpec`), a key type or algorithm the backend cannot make (`UnsupportedKeyType`, `UnsupportedAlgorithm`) and a taken label (`AlreadyExists`). Default: `Unsupported("generate")`. |
@@ -29,7 +29,12 @@ any other algorithm, supported by the store or not, is `AlgorithmMismatch`. An u
 
 Callers cache the public key. `KeySigner` fetches it once, on construction, checks that the
 key's `alg` (if the public JWK carries one) is the algorithm asked for, and then implements
-`jose::Signer`; `encode_compact` never asks the store for anything but signatures.
+`jose::Signer`; `encode_compact` never asks the store for anything but signatures. A caller that
+already has the public key, stored next to the DID document it published for instance, builds
+the signer with `KeySigner::from_public_jwk` and saves the lookup, a network round trip for a
+remote backend. `KeySigner` holds the store by whatever handle it is given: a reference, or an
+`Arc<dyn KeyStore>` for a `'static` signer that moves into a spawned task or lives in shared
+application state.
 
 ### Errors
 

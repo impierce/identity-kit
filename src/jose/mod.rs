@@ -37,6 +37,7 @@ mod error;
 mod jwk;
 mod multikey;
 mod one_or_many;
+mod pkcs1;
 mod verifier;
 
 pub use algorithm::{JwsAlgorithm, UnknownAlgorithm};

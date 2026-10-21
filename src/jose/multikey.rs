@@ -129,10 +129,7 @@ impl Jwk {
                 key: "secp256k1",
                 feature: "secp256k1",
             }),
-            KeyCodec::Rsa => {
-                let (n, e) = pkcs1::decode(&raw)?;
-                Self::from_rsa_public(&n, &e)
-            }
+            KeyCodec::Rsa => Self::from_pkcs1_der(&raw),
         }
     }
 
@@ -161,10 +158,7 @@ impl Jwk {
                 let point = self.secp256k1_public_key()?.to_sec1_point(true);
                 (KeyCodec::Secp256k1, point.as_bytes().to_vec())
             }
-            ("RSA", _) => {
-                let (n, e) = self.rsa_public_components()?;
-                (KeyCodec::Rsa, pkcs1::encode(&n, &e))
-            }
+            ("RSA", _) => (KeyCodec::Rsa, self.to_pkcs1_der()?),
             _ => return Err(self.unsupported()),
         };
         Ok(encode(codec, &raw))
@@ -233,111 +227,6 @@ mod varint {
     }
 }
 
-/// The DER encoding of PKCS #1 `RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent
-/// INTEGER }` (RFC 8017 Appendix A.1.1), which `rsa-pub` carries.
-mod pkcs1 {
-    use crate::jose::JwkError;
-
-    const SEQUENCE: u8 = 0x30;
-    const INTEGER: u8 = 0x02;
-
-    pub(super) fn encode(n: &[u8], e: &[u8]) -> Vec<u8> {
-        let mut body = integer(n);
-        body.extend(integer(e));
-        tlv(SEQUENCE, &body)
-    }
-
-    /// The big-endian `n` and `e` of `der`, without leading zero octets.
-    pub(super) fn decode(der: &[u8]) -> Result<(Vec<u8>, Vec<u8>), JwkError> {
-        let (body, rest) = read_tlv(der, SEQUENCE)?;
-        if !rest.is_empty() {
-            return Err(invalid("trailing bytes after RSAPublicKey"));
-        }
-        let (n, body) = read_tlv(body, INTEGER)?;
-        let (e, body) = read_tlv(body, INTEGER)?;
-        if !body.is_empty() {
-            return Err(invalid("trailing bytes inside RSAPublicKey"));
-        }
-        Ok((unsigned(n)?.to_vec(), unsigned(e)?.to_vec()))
-    }
-
-    /// A DER INTEGER holding the unsigned big-endian `value`.
-    fn integer(value: &[u8]) -> Vec<u8> {
-        let first = value.iter().position(|&b| b != 0).unwrap_or(value.len());
-        let trimmed = &value[first..];
-        let mut body = Vec::with_capacity(trimmed.len() + 1);
-        if trimmed.first().is_none_or(|&b| b & 0x80 != 0) {
-            body.push(0);
-        }
-        body.extend_from_slice(trimmed);
-        tlv(INTEGER, &body)
-    }
-
-    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
-        let mut out = vec![tag];
-        let len = body.len();
-        if len < 0x80 {
-            out.push(len as u8);
-        } else {
-            let be = len.to_be_bytes();
-            let first = be.iter().position(|&b| b != 0).unwrap_or(be.len() - 1);
-            out.push(0x80 | (be.len() - first) as u8);
-            out.extend_from_slice(&be[first..]);
-        }
-        out.extend_from_slice(body);
-        out
-    }
-
-    /// The body of the TLV at the start of `der`, which must have tag `tag`, and what follows.
-    fn read_tlv(der: &[u8], tag: u8) -> Result<(&[u8], &[u8]), JwkError> {
-        let (&found, rest) = der.split_first().ok_or_else(|| invalid("unexpected end"))?;
-        if found != tag {
-            return Err(invalid("unexpected ASN.1 tag"));
-        }
-        let (&first, rest) = rest
-            .split_first()
-            .ok_or_else(|| invalid("unexpected end"))?;
-        let (len, rest) = if first < 0x80 {
-            (usize::from(first), rest)
-        } else {
-            let count = usize::from(first & 0x7f);
-            if count == 0 || count > size_of::<usize>() || rest.len() < count {
-                return Err(invalid("invalid length"));
-            }
-            let (len_bytes, rest) = rest.split_at(count);
-            if len_bytes[0] == 0 || (count == 1 && len_bytes[0] < 0x80) {
-                return Err(invalid("length is not minimally encoded"));
-            }
-            let len = len_bytes
-                .iter()
-                .fold(0usize, |acc, &b| (acc << 8) | usize::from(b));
-            (len, rest)
-        };
-        if rest.len() < len {
-            return Err(invalid("length exceeds input"));
-        }
-        Ok(rest.split_at(len))
-    }
-
-    /// The magnitude of a non-negative, minimally encoded INTEGER body.
-    fn unsigned(body: &[u8]) -> Result<&[u8], JwkError> {
-        match body {
-            [] => Err(invalid("empty INTEGER")),
-            [first, ..] if first & 0x80 != 0 => Err(invalid("negative INTEGER")),
-            [0, second, ..] if second & 0x80 == 0 => Err(invalid("INTEGER has a leading zero")),
-            [0, rest @ ..] => Ok(rest),
-            _ => Ok(body),
-        }
-    }
-
-    fn invalid(reason: &str) -> JwkError {
-        JwkError::InvalidKey {
-            key: "RSA",
-            reason: format!("malformed RSAPublicKey: {reason}"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,38 +245,5 @@ mod tests {
         assert!(varint::decode(&[0x80]).is_err(), "truncated");
         assert!(varint::decode(&[0xed, 0x80, 0x00]).is_err(), "not minimal");
         assert!(varint::decode(&[0x80; 10]).is_err(), "too long");
-    }
-
-    #[test]
-    fn pkcs1_round_trips_and_is_minimal() {
-        // RFC 8017: INTEGERs are two's complement, so a high bit needs a leading zero.
-        let n = [0x80, 0x01];
-        let e = [0x01, 0x00, 0x01];
-        let der = pkcs1::encode(&n, &e);
-        assert_eq!(
-            der,
-            [
-                0x30, 0x0a, 0x02, 0x03, 0x00, 0x80, 0x01, 0x02, 0x03, 0x01, 0x00, 0x01
-            ]
-        );
-        assert_eq!(pkcs1::decode(&der).unwrap(), (n.to_vec(), e.to_vec()));
-        // Leading zeros of the input are dropped.
-        assert_eq!(pkcs1::encode(&[0, 0, 0x80, 0x01], &[0, 1, 0, 1]), der);
-        // Long-form lengths.
-        let big = vec![0x7f; 300];
-        let der = pkcs1::encode(&big, &e);
-        // 1 + 3 + 300 bytes of modulus INTEGER plus 5 of exponent: 309 = 0x135.
-        assert_eq!(&der[..4], [0x30, 0x82, 0x01, 0x35]);
-        assert_eq!(pkcs1::decode(&der).unwrap().0, big);
-        for broken in [
-            &[0x30, 0x00][..],
-            &[0x30, 0x04, 0x02, 0x01, 0xff, 0x02][..],
-            &[0x30, 0x06, 0x02, 0x01, 0x80, 0x02, 0x01, 0x01][..],
-            &[0x30, 0x07, 0x02, 0x02, 0x00, 0x01, 0x02, 0x01, 0x01][..],
-            &[0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01, 0x00][..],
-            &[0x30, 0x81, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01][..],
-        ] {
-            assert!(pkcs1::decode(broken).is_err(), "{broken:02x?}");
-        }
     }
 }
