@@ -91,7 +91,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `JwtCredentialValidator`, `JwtPresentationValidator`: issuer and holder binding, clock-skew leeway, `FailFast`, `StatusCheck` hook |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VCDM 2.0][vcdm20]         | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `JwtPresentationValidator::validate_v2`, `decode_presentation_v2`: VCDM 2.0 `vp+jwt` presentations of enveloped `vc+jwt` credentials |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#36](https://github.com/impierce/identity-kit/issues/36) |
 | Additional accepted header `typ` values per validation (`additional_typ`)                                   |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose] | [#34](https://github.com/impierce/identity-kit/issues/34) |
-| One format-agnostic `StatusCheck` over `CredentialStatus::{Vcdm, SdJwt}`, replacing `SdJwtStatusCheck`      |   📋   | `vc`          | [VCDM 1.1][vcdm11], [Token Status List][status-list] | [#55](https://github.com/impierce/identity-kit/issues/55) |
+| One format-agnostic `StatusCheck` over `CredentialStatus::{Vcdm, SdJwt}`, replacing `SdJwtStatusCheck`      |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [Token Status List][status-list] | [#55](https://github.com/impierce/identity-kit/issues/55) |
 | `ClaimPath` moved out of the `sd-jwt` feature, `utoipa` schema                                               |   ✅   | `vc`, `utoipa` | [SD-JWT VC §5.6.1][sd-jwt-vc], [OID4VP §7][oid4vp] | [#56](https://github.com/impierce/identity-kit/issues/56) |
 
 ### `sd_jwt_vc`: SD-JWT verifiable credentials
