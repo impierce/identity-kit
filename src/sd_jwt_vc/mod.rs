@@ -87,6 +87,6 @@ pub use type_metadata::{
     SdPolicy, TypeMetadata, TypeMetadataError,
 };
 pub use validation::{
-    KeyBindingOptions, SdJwtCredentialValidator, SdJwtStatusCheck, SdJwtValidationError,
-    SdJwtValidationOptions, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
+    KeyBindingOptions, SdJwtCredentialValidator, SdJwtValidationError, SdJwtValidationOptions,
+    ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
 };

@@ -81,15 +81,16 @@ pub mod credentials {
     pub use crate::sd_jwt_vc::{
         Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, Processed, SdJwt, SdJwtBuilder,
         SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
-        SdJwtCredentialValidator, SdJwtError, SdJwtStatusCheck, SdJwtValidationError,
-        SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, Status,
-        StatusList, StatusListToken, TypeMetadata, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
+        SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtValidationOptions,
+        SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, Status, StatusList, StatusListToken,
+        TypeMetadata, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
     };
     pub use crate::vc::validation::{
-        CredentialValidationOptions, DecodedCredential, DecodedCredentialV2, DecodedPresentation,
-        DecodedPresentationV2, FailFast, JwtCredentialValidator, JwtPresentationValidator,
-        KeyResolver, PresentationValidationOptions, PresentedCredentialV2, StatusCheck,
-        StatusPolicy, SubjectHolderRelationship, TimeOptions, ValidationError,
+        CredentialStatus, CredentialValidationOptions, DecodedCredential, DecodedCredentialV2,
+        DecodedPresentation, DecodedPresentationV2, FailFast, JwtCredentialValidator,
+        JwtPresentationValidator, KeyResolver, PresentationValidationOptions,
+        PresentedCredentialV2, StatusCheck, StatusPolicy, SubjectHolderRelationship, TimeOptions,
+        ValidationError,
     };
     pub use crate::vc::{
         ClaimPath, Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt,

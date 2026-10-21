@@ -5,6 +5,7 @@
 #![cfg(all(feature = "vc", feature = "did-key", feature = "did-jwk"))]
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -17,10 +18,10 @@ use identity_kit::jose::{
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
-    CredentialValidationOptions, FailFast, JwtCredentialValidator, JwtPresentationValidator,
-    KeyResolutionError, KeyResolver, PresentationValidationError, PresentationValidationOptions,
-    StatusCheck, StatusError, StatusPolicy, SubjectHolderRelationship, TimeOptions,
-    ValidationError, extract_holder, extract_issuer,
+    CredentialStatus, CredentialValidationOptions, FailFast, JwtCredentialValidator,
+    JwtPresentationValidator, KeyResolutionError, KeyResolver, PresentationValidationError,
+    PresentationValidationOptions, StatusCheck, StatusError, StatusPolicy,
+    SubjectHolderRelationship, TimeOptions, ValidationError, extract_holder, extract_issuer,
 };
 use identity_kit::vc::{
     Credential, CredentialError, CredentialV2, Jwt, JwtClaims, Presentation, Subject, TypedObject,
@@ -549,7 +550,14 @@ struct Checker;
 
 #[async_trait::async_trait]
 impl StatusCheck for Checker {
-    async fn check(&self, status: &TypedObject) -> Result<(), StatusError> {
+    async fn check(
+        &self,
+        status: CredentialStatus<'_>,
+        _: DateTime<Utc>,
+    ) -> Result<(), StatusError> {
+        let CredentialStatus::Vcdm(status) = status else {
+            return Err(StatusError::Unsupported(status.mechanism()));
+        };
         match status.object_type() {
             "CredentialStatusList2017" => match status.properties.get("revoked") {
                 Some(serde_json::Value::Bool(true)) => {
@@ -649,6 +657,27 @@ async fn status_policies() {
             .await,
         Err(ValidationError::Status(StatusError::Unavailable(_)))
     ));
+
+    // A shared or boxed check is a check too.
+    let shared: Arc<dyn StatusCheck> = Arc::new(Checker);
+    let boxed: Box<dyn StatusCheck> = Box::new(Arc::clone(&shared));
+    for validator in [
+        credential_validator().with_status_check(Arc::clone(&shared)),
+        credential_validator().with_status_check(boxed),
+    ] {
+        assert!(
+            validator
+                .validate(&good, &options(StatusPolicy::Strict))
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            validator
+                .validate(&revoked, &options(StatusPolicy::Strict))
+                .await,
+            Err(ValidationError::Status(StatusError::Invalid(_)))
+        ));
+    }
 }
 
 #[tokio::test]
