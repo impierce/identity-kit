@@ -13,7 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use super::{Did, DidUrl, DidUrlReference, Uri};
-use crate::jose::Jwk;
+use crate::jose::{Jwk, OneOrMany};
 
 /// Why a [`DidDocument`] operation was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -60,85 +60,9 @@ pub enum DocumentError {
 // Building blocks
 // ---------------------------------------------------------------------------------------------
 
-/// A value that is either one `T` or a list of them, serialized without the list when single.
-///
-/// DID Core uses this for `controller` and `type` of a service.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum OneOrMany<T> {
-    /// A single value.
-    One(T),
-    /// A list of values, kept as a list even when it holds one.
-    Many(Vec<T>),
-}
-
-impl<T> OneOrMany<T> {
-    /// The values, in order.
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        match self {
-            Self::One(one) => core::slice::from_ref(one).iter(),
-            Self::Many(many) => many.iter(),
-        }
-    }
-
-    /// The values, mutably.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        match self {
-            Self::One(one) => core::slice::from_mut(one).iter_mut(),
-            Self::Many(many) => many.iter_mut(),
-        }
-    }
-
-    /// The number of values.
-    pub fn len(&self) -> usize {
-        match self {
-            Self::One(_) => 1,
-            Self::Many(many) => many.len(),
-        }
-    }
-
-    /// Whether there are no values (an empty list).
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// The first value, if any.
-    pub fn first(&self) -> Option<&T> {
-        self.iter().next()
-    }
-
-    /// Whether `value` is among the values.
-    pub fn contains(&self, value: &T) -> bool
-    where
-        T: PartialEq,
-    {
-        self.iter().any(|v| v == value)
-    }
-
-    /// The values as a `Vec`.
-    pub fn into_vec(self) -> Vec<T> {
-        match self {
-            Self::One(one) => vec![one],
-            Self::Many(many) => many,
-        }
-    }
-}
-
 /// `skip_serializing_if` for optional lists: `None` and empty lists are omitted alike.
 fn is_none_or_empty<T>(value: &Option<OneOrMany<T>>) -> bool {
     value.as_ref().is_none_or(OneOrMany::is_empty)
-}
-
-impl<T> From<T> for OneOrMany<T> {
-    fn from(value: T) -> Self {
-        Self::One(value)
-    }
-}
-
-impl<T> From<Vec<T>> for OneOrMany<T> {
-    fn from(values: Vec<T>) -> Self {
-        Self::Many(values)
-    }
 }
 
 /// The `@context` of a DID document, carried verbatim: a string, a map or a non-empty array of
@@ -752,12 +676,6 @@ impl Service {
     /// Whether `service_type` is among the service's types.
     pub fn has_type(&self, service_type: &str) -> bool {
         self.service_type.iter().any(|t| t == service_type)
-    }
-}
-
-impl From<&str> for OneOrMany<String> {
-    fn from(value: &str) -> Self {
-        Self::One(value.to_owned())
     }
 }
 

@@ -21,8 +21,8 @@ pub use crate::did::{
     VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 pub use crate::jose::{
-    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, KeyType, Signer,
-    encode_compact,
+    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, JwtClaims, KeyType,
+    Signer, encode_compact,
 };
 #[cfg(feature = "in-memory")]
 #[cfg_attr(docsrs, doc(cfg(feature = "in-memory")))]

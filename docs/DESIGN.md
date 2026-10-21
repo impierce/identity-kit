@@ -158,10 +158,11 @@ pub trait JwsVerifier: Send + Sync {
     fn verify(&self, alg: JwsAlgorithm, signing_input: &[u8], signature: &[u8], key: &Jwk) -> Result<(), VerificationError>;
 }
 pub struct DefaultVerifier;                    // ed25519-dalek, p256, k256 (secp256k1), rsa (rsa)
-pub struct CompactJws { .. }                   // decode(token); header(), kid(), alg(), signing_input(), payload(), signature()
+pub struct CompactJws { .. }                   // decode(token); header(), kid(), alg(), signing_input(), payload(), signature(), claims::<T>() (unverified)
 pub async fn encode_compact(header: &Header, payload: &[u8], signer: &dyn Signer) -> Result<String>;
 #[async_trait] pub trait Signer: Send + Sync { fn alg(&self) -> JwsAlgorithm; fn kid(&self) -> Option<&str>; async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>>; }
 pub struct JwtClaims { iss, sub, aud: Option<OneOrMany<String>>, exp, nbf, iat, jti, additional }  // RFC 7519 registered claims; re-exported from `vc` (ADR 0006)
+pub enum OneOrMany<T> { One(T), Many(Vec<T>) }  // `aud`; DID Core `controller` and service `type`; re-exported from `did`
 ```
 
 `jsonwebtoken` has no ES256K; sign and verify it with `k256` directly. ECDSA signatures are always
@@ -285,7 +286,7 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
 
 ## Upper layer
 
-- `vc` (`vc`): `Jwt` newtype and `JwtClaims` (RFC 7519 registered claims plus the rest);
+- `vc` (`vc`): `Jwt` newtype; `JwtClaims` re-exported from `jose`, with its `chrono` conversions;
   `Credential`/`Presentation` for the VCDM 1.1 JWT profile, built with `new` and `with_*`
   setters, checked on deserialization, with `to_jwt_claims`/`from_jwt_claims`
   (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree);
