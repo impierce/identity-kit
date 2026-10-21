@@ -28,6 +28,9 @@ compatibility with what `openid4vc`, UniCore or UniMe do today; all three can ch
 
 ## Decision
 
+The decisions describe the target design; issues #51 to #56 implement it, and
+`docs/FEATURES.md` tracks what has landed.
+
 1. **Boundary rule.** A data type lives in the crate whose specification defines it: DID Core,
    JOSE, VC and SD-JWT types here; OpenID types (`SubjectSyntaxType`, scopes, authorization
    requests, client metadata, DCQL) in `openid4vc`. An extension point (a trait a consumer
@@ -38,13 +41,16 @@ compatibility with what `openid4vc`, UniCore or UniMe do today; all three can ch
    party:
    - `IdentityKind::{Did(DidMethod), JwkThumbprint}` is what the other side accepts;
      `Identifier::{Did(Did), JwkThumbprint(String)}` with `Display` is the `iss`/`sub` value.
-   - `trait Identity { capabilities() -> Vec<(IdentityKind, JwsAlgorithm)>; identifier(kind);
-     public_jwk(kind, alg); signer(kind, alg) -> Box<dyn Signer> }`. Negotiation (which kind,
-     which algorithm) stays with the protocol; the identity answers for a chosen pair. For a DID
-     the signer's `kid()` is the absolute verification-method URL; for a thumbprint it is `None`
-     and the caller puts `public_jwk` in the header. No external-signer hook: a remote or
+   - `trait Identity { capabilities() -> Vec<(IdentityKind, JwsAlgorithm)>;
+     identifier(kind, alg); public_jwk(kind, alg); signer(kind, alg) -> Box<dyn Signer> }`.
+     Negotiation (which kind, which algorithm) stays with the protocol; the identity answers for
+     a chosen pair. The identifier takes the algorithm too: a party may hold a key per algorithm
+     for one kind, and a thumbprint, a `did:key` or a `did:jwk` is derived from the key, so it
+     names the same key as `public_jwk` and `signer` only for the same pair. For a DID the
+     signer's `kid()` is the absolute verification-method URL; for a thumbprint it is `None` and
+     the caller puts `public_jwk` in the header. No external-signer hook: a remote or
      hardware signer is a `KeyStore` (principle 4 of `DESIGN.md`).
-   - One shipped implementation, `KeyStoreIdentity`, over any `KeyStore` and the registered
+   - One implementation in the crate, `KeyStoreIdentity`, over any `KeyStore` and the registered
      `DidProducer`s, vendor-agnostic so that a KMS crate implementing `KeyStore` works without
      glue. It binds existing keys; generating a key on first use is opt-in, so no production
      deployment mints keys silently. Whether that default is the right balance between usability
@@ -53,24 +59,32 @@ compatibility with what `openid4vc`, UniCore or UniMe do today; all three can ch
      DID-Core "DID subject", which is the thing identified, not the thing that signs),
      `controller` (precise for DIDs, forced for a bare JWK, unfamiliar outside the DID world),
      `holder`/`issuer` (roles; the same party plays several) and `entity`/`principal` (say
-     nothing about keys). Veramo's `IIdentifier` and IOTA Identity are the precedents.
+     nothing about keys). Veramo's `IIdentifier` is the precedent.
 3. **`did::DidMethod`**: method name per the DID Core ABNF plus an optional namespace
-   (`did:iota:smr`), parsed, displayed and serialized as a string. `Identity` is keyed on it;
-   `Did::method()` stays a `&str`.
+   (`did:demo:dev`), parsed, displayed and serialized as a string. `IdentityKind::Did` carries
+   the full value: an identity offers a namespaced kind only when it can produce DIDs in that
+   namespace, and `DidMethod::matches` checks a DID against a kind. Resolver and producer
+   registration stays keyed by the method name alone (`DidResolver::method()` against
+   `Did::method()`, which stays a `&str`); a method's resolver handles its own namespaces.
 4. **`resolver::KeyReference`** describes where a token says its key is, and
    **`resolver::KeyResolver`** takes it:
    - `KeyReference::{DidUrl, Jwk, X509Chain, Jwks { issuer, kid }, Jku}`, `#[non_exhaustive]`,
      built by `KeyReference::from_jws(&CompactJws, iss)` with a documented precedence (a `kid`
      that is a DID URL; a `#fragment` joined with a DID `iss`; a `kid` with an HTTPS `iss`;
-     the `jwk` header; `x5c`; `jku`) and by `KeyReference::from_confirmation(&cnf)` for the
-     subject side (`jwk`, then `kid`, then `jku`).
+     the `jwk` header; `x5c`; `jku`) and, in `sd_jwt_vc`, by
+     `KeyReference::from_confirmation(&cnf)` for the subject side (`jwk`, then `kid`, then
+     `jku`). A `cnf.kid` must be an absolute DID URL: RFC 7800 §3.4 leaves the meaning of a key
+     id to the application, and the confirmation carries no DID or key set to resolve a
+     `#fragment` or a bare id against (using `sub` would conflate the subject with the holder),
+     so any other `kid` is a `KeyReferenceError`.
    - `KeyRole::{Issuer, Subject}` replaces `VerificationRelationship` at the trait boundary
      (`assertionMethod`/`authentication` for a DID; meaningless for a JWKS).
    - `resolve_key(&KeyReference, KeyRole) -> Jwk`, with `KeyResolutionError::Unsupported` for a
      reference a resolver does not handle, and `CompositeKeyResolver` chaining resolvers. The
      trait moves from `vc::validation` to the lower layer so id_tokens and proofs use it.
-   - Shipped: `Resolver` for `DidUrl`; `JwkResolver` for a key by value; `JwksResolver` over an
-     `HttpClient` for `Jwks` (SD-JWT VC §3.5 JWT VC issuer metadata, `jwks` or `jwks_uri`).
+   - In the crate: `Resolver` for `DidUrl`; `JwkResolver` for a key by value; `JwksResolver`
+     over an `HttpClient` for `Jwks` (SD-JWT VC §3.5 JWT VC issuer metadata, `jwks` or
+     `jwks_uri`).
      `X509Chain` and `Jku` exist in the enum and resolve to `Unsupported` until an issue adds
      them.
    - Resolving says nothing about trust. After the signature verifies, the validators check
@@ -83,11 +97,11 @@ compatibility with what `openid4vc`, UniCore or UniMe do today; all three can ch
 5. **`jose::JwtClaims`** and `OneOrMany` move down from `vc` (re-exported there). RFC 7519 is
    JOSE-layer, and the richer type (`aud` one-or-many, `NumericDate`) replaces `openid4vc`'s
    `RFC7519Claims`.
-6. **One `StatusCheck`** over `CredentialStatus::{Vcdm(&TypedObject), SdJwt(&Status)}` replaces
-   `StatusCheck` and `SdJwtStatusCheck`, so a consumer implements status checking once and the
-   `StatusPolicy` handling stays typed. Two typed traits and one trait over a raw `Value` were
-   rejected: the first doubles the implementation point, the second pushes parsing into every
-   implementor.
+6. **One `StatusCheck`** over `CredentialStatus::{Vcdm(&TypedObject), SdJwt(&Status)}` (the
+   `SdJwt` variant with the `sd-jwt` feature) replaces `StatusCheck` and `SdJwtStatusCheck`, so
+   a consumer implements status checking once and the `StatusPolicy` handling stays typed. Two
+   typed traits and one trait over a raw `Value` were rejected: the first doubles the
+   implementation point, the second pushes parsing into every implementor.
 7. **`vc::ClaimPath`** leaves the `sd-jwt` gate (re-exported from `sd_jwt_vc`): SD-JWT VC §5.6.1
    and OID4VP §7 define the same construct and DCQL applies it to every JSON-based format. It
    gains a `utoipa` schema.
