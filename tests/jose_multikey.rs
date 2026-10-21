@@ -94,6 +94,13 @@ fn rsa_vector_is_a_pkcs1_public_key() {
     );
     assert_eq!(jwk.rsa_public_components().unwrap().0.len(), 256);
     assert_eq!(jwk.to_multikey().unwrap(), multikey);
+
+    // The `rsa-pub` payload after the multicodec header (`0x1205`) is the PKCS #1 key itself.
+    let bytes = bs58::decode(&multikey[1..]).into_vec().unwrap();
+    assert_eq!(bytes[..2], [0x85, 0x24]);
+    let payload = &bytes[2..];
+    assert_eq!(Jwk::from_pkcs1_der(payload).unwrap(), jwk);
+    assert_eq!(jwk.to_pkcs1_der().unwrap(), payload);
 }
 
 #[test]
