@@ -17,6 +17,9 @@
 //! - [`ecdsa_signature_from_der`] and [`normalize_ecdsa_signature`] turn what an HSM or a cloud
 //!   KMS returns for an ECDSA key into the JWS form: raw `r || s`, with a secp256k1 `s` in the
 //!   lower half of the group order.
+//! - [`JwtClaims`] is a JWT claims set (RFC 7519): the registered claims as fields, `aud` as a
+//!   [`OneOrMany`], times as `NumericDate` seconds, every other claim kept in order.
+//!   [`CompactJws::claims`] reads a payload as one, unverified.
 //!
 //! JWE is out of scope.
 //!
@@ -27,17 +30,23 @@
 
 mod algorithm;
 pub(crate) mod base64url;
+mod claims;
 mod compact;
 mod ecdsa;
 mod error;
 mod jwk;
 mod multikey;
+mod one_or_many;
 mod verifier;
 
 pub use algorithm::{JwsAlgorithm, UnknownAlgorithm};
+pub use claims::JwtClaims;
+#[cfg(feature = "sd-jwt")]
+pub(crate) use claims::numeric_date;
 pub use compact::{CompactJws, JwsHeader, Signer, encode_compact};
 pub use ecdsa::{ecdsa_signature_from_der, normalize_ecdsa_signature};
 pub use error::{EcdsaSignatureError, JwkError, JwsError, SignError, VerificationError};
 pub use jwk::{Jwk, KeyType};
 pub use multikey::KeyCodec;
+pub use one_or_many::OneOrMany;
 pub use verifier::{DefaultVerifier, JwsVerifier};

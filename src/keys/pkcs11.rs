@@ -1047,18 +1047,20 @@ fn find_key(
 }
 
 /// Destroys the private and the public key object labelled `key`.
+///
+/// Both are attempted even when the first fails, so a failure leaves as little of the key on
+/// the token as it can; the first error is returned.
 fn delete(session: &Session, key: &KeyId) -> Result<(), KeyStoreError> {
     let private = find_key(session, ObjectClass::PRIVATE_KEY, key)?;
     let public = find_key(session, ObjectClass::PUBLIC_KEY, key)?;
     if private.is_none() && public.is_none() {
         return Err(KeyStoreError::NotFound(key.clone()));
     }
+    let mut destroyed = Ok(());
     for object in [private, public].into_iter().flatten() {
-        session
-            .destroy_object(object)
-            .map_err(Pkcs11Error::call("C_DestroyObject"))?;
+        destroyed = destroyed.and(session.destroy_object(object));
     }
-    Ok(())
+    destroyed.map_err(Pkcs11Error::call("C_DestroyObject"))
 }
 
 /// A label for a key pair that is being generated without a label, unique within the process

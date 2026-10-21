@@ -21,8 +21,8 @@ pub use crate::did::{
     VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 pub use crate::jose::{
-    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, KeyType, Signer,
-    encode_compact,
+    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, JwtClaims, KeyType,
+    Signer, encode_compact,
 };
 #[cfg(feature = "in-memory")]
 #[cfg_attr(docsrs, doc(cfg(feature = "in-memory")))]
@@ -79,8 +79,8 @@ pub mod credentials {
     #[cfg(feature = "sd-jwt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
     pub use crate::sd_jwt_vc::{
-        ClaimPath, Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, Processed, SdJwt,
-        SdJwtBuilder, SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
+        Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, Processed, SdJwt, SdJwtBuilder,
+        SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
         SdJwtCredentialValidator, SdJwtError, SdJwtStatusCheck, SdJwtValidationError,
         SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, Status,
         StatusList, StatusListToken, TypeMetadata, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
@@ -92,7 +92,7 @@ pub mod credentials {
         StatusPolicy, SubjectHolderRelationship, TimeOptions, ValidationError,
     };
     pub use crate::vc::{
-        Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Party,
-        Presentation, PresentationV2, Subject,
+        ClaimPath, Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt,
+        JwtClaims, Party, Presentation, PresentationV2, Subject,
     };
 }

@@ -1,6 +1,7 @@
 //! OpenAPI schemas for the JSON types (feature `utoipa`): [`utoipa::ToSchema`] for
 //! [`DidDocument`], [`VerificationMethod`], [`MethodRef`], [`Service`], [`Jwk`],
-//! `DomainLinkageConfiguration` and `TypeMetadata` with its display and claim metadata.
+//! `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` with its display and claim
+//! metadata.
 //!
 //! The schemas are written by hand rather than derived: every type carries open extension
 //! properties and custom serialization that a derive cannot express. Each schema describes the
@@ -440,6 +441,50 @@ impl ToSchema for crate::domain_linkage::DomainLinkageConfiguration {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Claim paths
+// ---------------------------------------------------------------------------------------------
+
+#[cfg(feature = "vc")]
+mod claim_path {
+    use super::*;
+    use crate::vc::ClaimPath;
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for ClaimPath {
+        fn schema() -> RefOr<Schema> {
+            array(
+                one_of(
+                    [
+                        string("An object key.").into(),
+                        ObjectBuilder::new()
+                            .schema_type(Type::Integer)
+                            .minimum(Some(0))
+                            .description(Some("An array index."))
+                            .into(),
+                        ObjectBuilder::new()
+                            .schema_type(Type::Null)
+                            .description(Some("Every element of an array."))
+                            .into(),
+                    ],
+                    "A path component.",
+                ),
+                "A claim path (SD-JWT VC §5.6.1), the claims path pointer of OID4VP §7: where a \
+                 claim sits in a JSON credential.",
+            )
+            .min_items(Some(1))
+            .into()
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for ClaimPath {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("ClaimPath")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // SD-JWT VC type metadata
 // ---------------------------------------------------------------------------------------------
 
@@ -447,6 +492,7 @@ impl ToSchema for crate::domain_linkage::DomainLinkageConfiguration {
 mod type_metadata {
     use super::*;
     use crate::sd_jwt_vc::{ClaimDisplay, ClaimMetadata, DisplayMetadata, TypeMetadata};
+    use crate::vc::ClaimPath;
 
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]
     impl PartialSchema for TypeMetadata {
@@ -538,24 +584,9 @@ mod type_metadata {
                 ))
                 .property(
                     "path",
-                    array(
-                        one_of(
-                            [
-                                string("An object key.").into(),
-                                ObjectBuilder::new()
-                                    .schema_type(Type::Integer)
-                                    .minimum(Some(0))
-                                    .description(Some("An array index."))
-                                    .into(),
-                                ObjectBuilder::new()
-                                    .schema_type(Type::Null)
-                                    .description(Some("Every element of an array."))
-                                    .into(),
-                            ],
-                            "A path component.",
-                        ),
-                        "The claim path (SD-JWT VC §5.6.1).",
-                    ),
+                    RefBuilder::new()
+                        .ref_location_from_schema_name(ClaimPath::name())
+                        .description(Some("The claim path (SD-JWT VC §5.6.1).")),
                 )
                 .required("path")
                 .property(
@@ -595,6 +626,7 @@ mod type_metadata {
 
         fn schemas(schemas: &mut Schemas) {
             collect::<ClaimDisplay>(schemas);
+            collect::<ClaimPath>(schemas);
         }
     }
 

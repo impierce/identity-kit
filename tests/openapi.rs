@@ -24,6 +24,8 @@ fn openapi() -> Value {
     add::<Jwk>(&mut schemas);
     #[cfg(feature = "domain-linkage")]
     add::<identity_kit::domain_linkage::DomainLinkageConfiguration>(&mut schemas);
+    #[cfg(feature = "vc")]
+    add::<identity_kit::vc::ClaimPath>(&mut schemas);
     #[cfg(feature = "sd-jwt")]
     add::<identity_kit::sd_jwt_vc::TypeMetadata>(&mut schemas);
 
@@ -258,6 +260,8 @@ fn every_schema_compiles_with_its_references_resolved() {
     }
     #[cfg(feature = "domain-linkage")]
     assert!(components.contains_key("DomainLinkageConfiguration"));
+    #[cfg(feature = "vc")]
+    assert!(components.contains_key("ClaimPath"));
     #[cfg(feature = "sd-jwt")]
     for name in [
         "TypeMetadata",
@@ -467,6 +471,60 @@ fn did_configuration_resource_validates() {
     ] {
         validator.rejects(&invalid);
         assert!(serde_json::from_value::<DomainLinkageConfiguration>(invalid).is_err());
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Claim paths
+// ---------------------------------------------------------------------------------------------
+
+/// The `ClaimPath` schema: a non-empty array of names, non-negative indexes and `null`, as
+/// SD-JWT VC §5.6.1 and OID4VP §7 define it.
+#[cfg(feature = "vc")]
+#[test]
+fn claim_path_schema() {
+    use identity_kit::claim_path;
+    use identity_kit::vc::ClaimPath;
+
+    assert_eq!(
+        serde_json::to_value(<ClaimPath as utoipa::PartialSchema>::schema()).unwrap(),
+        json!({
+            "type": "array",
+            "description": "A claim path (SD-JWT VC §5.6.1), the claims path pointer of OID4VP §7: where a claim sits in a JSON credential.",
+            "items": {
+                "description": "A path component.",
+                "oneOf": [
+                    { "type": "string", "description": "An object key." },
+                    { "type": "integer", "minimum": 0, "description": "An array index." },
+                    { "type": "null", "description": "Every element of an array." }
+                ]
+            },
+            "minItems": 1
+        })
+    );
+
+    let validator = Validator::of("ClaimPath");
+    // The paths of SD-JWT VC §5.6.1.1 and OID4VP §7.
+    for path in [
+        json!(["name"]),
+        json!(["address"]),
+        json!(["address", "street_address"]),
+        json!(["degrees", null, "type"]),
+        json!(["nationalities", 1]),
+    ] {
+        validator.accepts(&path.to_string());
+        let parsed: ClaimPath = serde_json::from_value(path.clone()).unwrap();
+        validator.accepts(&serde_json::to_string(&parsed).unwrap());
+    }
+    validator.accepts(&serde_json::to_string(&claim_path!["degrees", (), "type"]).unwrap());
+    for invalid in [
+        json!([]),
+        json!(["a", -1]),
+        json!(["a", 1.5]),
+        json!(["a", true]),
+        json!("a"),
+    ] {
+        validator.rejects(&invalid);
     }
 }
 
