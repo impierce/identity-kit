@@ -191,7 +191,9 @@ let store = Pkcs11KeyStore::open_with(
   generated key is the spec's label when set and the RFC 7638 thumbprint of the public key
   otherwise, written to both objects once the key exists; until then the objects carry a label
   starting with `identity-kit-staging-` (`STAGING_LABEL_PREFIX`), so a generation interrupted
-  in between leaves a recognizable key to remove with the module's tools. Generation and
+  in between leaves a recognizable key to remove with the module's tools. `delete` destroys
+  both objects even when destroying the first fails, then returns the first error; what is
+  left keeps its label, so calling `delete` again removes it. Generation and
   deletion are serialized per token within the process; SoftHSM2's file object store fails
   when objects are created and destroyed from several sessions at once. The uniqueness of a
   label is checked, not enforced by the module: two processes provisioning the same label at
