@@ -47,7 +47,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `resolver`) i
 | `sd-jwt`         |   ✅    | SD-JWT, SD-JWT VC and `vc+sd-jwt` credentials (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide` |
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
-| `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |
+| `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
 | `test-vectors`   |         | `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the specification vectors |
 
 `identity_kit::prelude` gathers the common types of the lower layer and `identity_kit::prelude::credentials` those of the upper layer, for glob import.

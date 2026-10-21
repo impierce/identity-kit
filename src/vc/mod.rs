@@ -11,6 +11,8 @@
 //!   presentation as an [`EnvelopedVc`] holding a `data:application/vc+jwt,…` URL.
 //!
 //! Both are plain data with open extension properties; `@context` is carried, never processed.
+//! [`ClaimPath`] points at a claim in any JSON credential: the claim path of SD-JWT VC §5.6.1 and
+//! the claims path pointer of OID4VP §7, which DCQL applies to every JSON-based format.
 //! [`JwtClaims`] lives in [`jose`](crate::jose) and is re-exported here; this module adds its
 //! conversions between `NumericDate` values and `chrono` times.
 //! [`Jwt`] is a compact JWS as a string, signed with any [`Signer`](crate::jose::Signer) through
@@ -69,6 +71,7 @@ mod credential;
 mod error;
 mod jwt;
 mod model;
+mod path;
 mod presentation;
 mod v2;
 pub mod validation;
@@ -83,5 +86,6 @@ pub use crate::jose::JwtClaims;
 #[cfg(feature = "sd-jwt")]
 pub(crate) use crate::jose::numeric_date;
 pub use model::{CONTEXT_V1, CONTEXT_V2, Party, Subject, TypedObject};
+pub use path::{ClaimPath, ClaimPathError, PathComponent};
 pub use presentation::Presentation;
 pub use v2::{CredentialV2, EnvelopedVc, EnvelopedVp, PresentationV2};

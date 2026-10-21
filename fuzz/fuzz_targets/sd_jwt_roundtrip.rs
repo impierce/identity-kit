@@ -6,10 +6,8 @@
 use arbitrary::Arbitrary;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use identity_kit::sd_jwt_vc::{
-    ClaimPath, HashAlgorithm, PathComponent, SdJwt, SdJwtBuilder, SdJwtError,
-};
-use identity_kit::vc::Jwt;
+use identity_kit::sd_jwt_vc::{HashAlgorithm, SdJwt, SdJwtBuilder, SdJwtError};
+use identity_kit::vc::{ClaimPath, Jwt, PathComponent};
 use libfuzzer_sys::fuzz_target;
 use serde_json::{Map, Value};
 
