@@ -79,7 +79,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |
 | `linked-vp`          | on      | implies `vc` and `did-web` (for `url` and `HttpClient`)       |
 | `jwks`               | off     | implies `did-web` (for `HttpClient`); `JwksResolver` over JWT VC issuer metadata |
-| `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |
+| `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
 | `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |
 
 ## `did` module

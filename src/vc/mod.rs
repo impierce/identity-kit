@@ -11,6 +11,8 @@
 //!   presentation as an [`EnvelopedVc`] holding a `data:application/vc+jwt,…` URL.
 //!
 //! Both are plain data with open extension properties; `@context` is carried, never processed.
+//! [`ClaimPath`] points at a claim in any JSON credential: the claim path of SD-JWT VC §5.6.1 and
+//! the claims path pointer of OID4VP §7, which DCQL applies to every JSON-based format.
 //! [`Jwt`] is a compact JWS as a string, signed with any [`Signer`](crate::jose::Signer) through
 //! [`Jwt::sign`]. The [`validation`] module verifies and validates the JWTs: signature through
 //! a [`KeyResolver`](validation::KeyResolver) and a [`JwsVerifier`](crate::jose::JwsVerifier),
@@ -67,6 +69,7 @@ mod credential;
 mod error;
 mod jwt;
 mod model;
+mod path;
 mod presentation;
 mod v2;
 pub mod validation;
@@ -77,5 +80,6 @@ pub use jwt::{Jwt, JwtClaims};
 #[cfg(feature = "sd-jwt")]
 pub(crate) use jwt::{numeric_date, required_numeric_date};
 pub use model::{CONTEXT_V1, CONTEXT_V2, Party, Subject, TypedObject};
+pub use path::{ClaimPath, ClaimPathError, PathComponent};
 pub use presentation::Presentation;
 pub use v2::{CredentialV2, EnvelopedVc, EnvelopedVp, PresentationV2};
