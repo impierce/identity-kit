@@ -1,0 +1,7 @@
+# cargo-mutants (https://mutants.rs): mutation testing of the test suite.
+# `cargo mutants --in-diff <diff>` on a change, or `cargo mutants -f 'src/jose/**'` for a module.
+
+# Every feature, so feature-gated code (secp256k1, rsa, pkcs11, …) is mutated and tested.
+additional_cargo_args = ["--all-features"]
+# Build without debug info: each mutant rebuilds the crate and every test binary.
+profile = "mutants"

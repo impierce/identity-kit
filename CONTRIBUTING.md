@@ -44,6 +44,19 @@ cargo install --locked cargo-fuzz
 fuzz/run.sh sd_jwt 600      # one target, ten minutes
 ```
 
+### Mutation testing
+
+[`cargo-mutants`](https://mutants.rs) checks the tests themselves: it changes the code (a return value, a comparison, a match arm) and reports each change that no test catches, code the tests run but do not check.
+On pull requests that touch `src/` or `tests/`, CI tests the mutants in the changed lines and annotates the missed ones; the job is informational and does not block.
+A full run is started by hand from the Actions tab (workflow `Mutants`, optionally limited to a glob such as `src/jose/**`) and splits the mutants across eight jobs.
+[`.cargo/mutants.toml`](.cargo/mutants.toml) holds the configuration.
+
+```sh
+cargo install --locked cargo-mutants
+cargo mutants -f 'src/jose/**' -j 2         # one module
+git diff main... > pr.diff && cargo mutants --in-diff pr.diff   # what CI runs on a pull request
+```
+
 ## Pull requests
 
 Pull requests are squash-merged, so the **pull request title** becomes the commit message on `main`.

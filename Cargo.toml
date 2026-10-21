@@ -101,3 +101,9 @@ dbg_macro = "warn"
 todo = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
+
+# For cargo-mutants (`.cargo/mutants.toml`): test builds without debug info, which keeps the
+# rebuild per mutant short.
+[profile.mutants]
+inherits = "test"
+debug = "none"
