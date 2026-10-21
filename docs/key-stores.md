@@ -23,7 +23,12 @@ any other algorithm, supported by the store or not, is `AlgorithmMismatch`. An u
 
 Callers cache the public key. `KeySigner` fetches it once, on construction, checks that the
 key's `alg` (if the public JWK carries one) is the algorithm asked for, and then implements
-`jose::Signer`; `encode_compact` never asks the store for anything but signatures.
+`jose::Signer`; `encode_compact` never asks the store for anything but signatures. A caller that
+already has the public key, stored next to the DID document it published for instance, builds
+the signer with `KeySigner::from_public_jwk` and saves the lookup, a network round trip for a
+remote backend. `KeySigner` holds the store by whatever handle it is given: a reference, or an
+`Arc<dyn KeyStore>` for a `'static` signer that moves into a spawned task or lives in shared
+application state.
 
 ### Errors
 
