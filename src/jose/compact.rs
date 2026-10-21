@@ -4,6 +4,7 @@
 use core::fmt;
 
 use indexmap::IndexMap;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -178,6 +179,34 @@ impl CompactJws {
     /// The decoded signature.
     pub fn signature(&self) -> &[u8] {
         &self.signature
+    }
+
+    /// The payload read as JSON into `T`, a [`JwtClaims`](super::JwtClaims) set say, unverified:
+    /// nothing about the signature or the claims is checked.
+    ///
+    /// # Errors
+    ///
+    /// [`JwsError::InvalidPayload`] when the payload is not JSON of the shape `T` expects.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use identity_kit::jose::{CompactJws, JwtClaims};
+    ///
+    /// // RFC 7515 Appendix A.3: the RFC 7519 §3.1 claims set, signed with ES256.
+    /// let jws = CompactJws::decode(
+    ///     "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGF\
+    ///      tcGxlLmNvbS9pc19yb290Ijp0cnVlfQ.DtEhU3ljbEg8L38VWAfUAqOyKAM6-Xx-F4GawxaepmXFCgfTjDx\
+    ///      w5djxLa8ISlSApmWQxfKTUJqPP3-Kg6NU1Q",
+    /// )?;
+    /// let claims: JwtClaims = jws.claims()?;
+    /// assert_eq!(claims.iss.as_deref(), Some("joe"));
+    /// assert_eq!(claims.exp, Some(1300819380));
+    /// assert_eq!(claims.additional["http://example.com/is_root"], true);
+    /// # Ok::<(), identity_kit::jose::JwsError>(())
+    /// ```
+    pub fn claims<T: DeserializeOwned>(&self) -> Result<T, JwsError> {
+        serde_json::from_slice(&self.payload).map_err(|e| JwsError::InvalidPayload(e.to_string()))
     }
 
     /// The compact serialization as it was decoded.
