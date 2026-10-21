@@ -94,7 +94,7 @@ fn paths_are_json_arrays_of_names_indexes_and_null() {
         ]
     );
     assert_eq!(
-        serde_json::to_value(&claim_path!["nationalities", 1]).unwrap(),
+        serde_json::to_value(claim_path!["nationalities", 1]).unwrap(),
         json!(["nationalities", 1])
     );
     assert_eq!(path.to_string(), r#"["degrees", null, "type"]"#);
