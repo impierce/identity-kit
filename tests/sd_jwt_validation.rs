@@ -16,9 +16,9 @@ use identity_kit::methods::DidKey;
 use identity_kit::resolver::Resolver;
 use identity_kit::sd_jwt_vc::validation::{KeyBindingOptions, SdJwtValidationOptions};
 use identity_kit::sd_jwt_vc::{
-    Disclosure, KeyBinding, LEGACY_TYP, SdJwt, SdJwtCredentialValidator, SdJwtError,
-    SdJwtValidationError, SdJwtVc, SdJwtVcBuilder, SdJwtVcError, Status, StatusList, StatusListRef,
-    StatusListToken, StatusType,
+    Disclosure, HashAlgorithm, KeyBinding, LEGACY_TYP, SdJwt, SdJwtBuilder, SdJwtCredentialV2Error,
+    SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtVc, SdJwtVcBuilder,
+    SdJwtVcError, Status, StatusList, StatusListRef, StatusListToken, StatusType,
 };
 use identity_kit::vc::validation::{
     CredentialStatus, StatusCheck, StatusError, StatusPolicy, TimeOptions, ValidationError,
@@ -26,7 +26,7 @@ use identity_kit::vc::validation::{
 use identity_kit::vc::{CredentialError, Jwt, JwtClaims};
 use serde_json::json;
 
-use common::{Ed25519Signer, Es256Signer};
+use common::{Ed25519Signer, Es256Signer, unsigned_jwt};
 
 const VCT: &str = "https://credentials.example.com/identity_credential";
 const AUDIENCE: &str = "https://verifier.example.org";
@@ -649,6 +649,45 @@ async fn status_policies() {
             )
             .await
             .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn disclosures_nested_beyond_the_limit_are_refused_before_any_key_is_resolved() {
+    // 1,000 disclosures, each concealing the next as a property; the innermost holds a scalar.
+    let mut disclosures = Vec::new();
+    let mut value = json!(1);
+    for i in 0..1000 {
+        let disclosure = Disclosure::property(format!("salt-{i}"), "c", value);
+        value = json!({ "_sd": [disclosure.digest(HashAlgorithm::Sha256)] });
+        disclosures.push(disclosure);
+    }
+    // The key is of a DID no method resolves: resolving it would fail differently.
+    let sd_jwt = |typ: &str| {
+        let header = json!({ "alg": "EdDSA", "typ": typ, "kid": "did:example:123#key-1" });
+        SdJwt::new(
+            Jwt::new(unsigned_jwt(&header, &value)).unwrap(),
+            disclosures.clone(),
+        )
+    };
+    let validator = SdJwtCredentialValidator::new(Resolver::builder().build(), DefaultVerifier);
+    let options = SdJwtValidationOptions::new();
+    fn too_deep(error: &SdJwtError) -> bool {
+        matches!(error, SdJwtError::TooDeep { max } if *max == SdJwtBuilder::MAX_DEPTH)
+    }
+
+    let result = validator.validate(&sd_jwt("dc+sd-jwt"), &options).await;
+    assert!(
+        matches!(&result, Err(SdJwtValidationError::Credential(SdJwtVcError::SdJwt(e))) if too_deep(e)),
+        "{result:?}"
+    );
+    let result = validator.validate_v2(&sd_jwt("vc+sd-jwt"), &options).await;
+    assert!(
+        matches!(
+            &result,
+            Err(SdJwtValidationError::CredentialV2(SdJwtCredentialV2Error::SdJwt(e))) if too_deep(e)
+        ),
+        "{result:?}"
     );
 }
 

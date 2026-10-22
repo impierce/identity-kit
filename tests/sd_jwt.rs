@@ -796,6 +796,106 @@ fn claims_nested_beyond_the_limit_are_refused() {
     }
 }
 
+/// How [`disclosure_chain`] nests the next disclosure in a value.
+#[derive(Clone, Copy)]
+enum Link {
+    /// As an object property, through `_sd`.
+    Property,
+    /// As an array element, through `...`.
+    Element,
+}
+
+/// A payload and disclosures nesting one another along `links`, outermost first: each
+/// disclosure's value holds the digest of the next, and the innermost holds a scalar.
+fn disclosure_chain(links: &[Link]) -> (Value, Vec<Disclosure>) {
+    let mut disclosures = Vec::with_capacity(links.len());
+    let mut value = json!(1);
+    for (i, link) in links.iter().enumerate().rev() {
+        let salt = format!("salt-{i}");
+        let (disclosure, container) = match link {
+            Link::Property => {
+                let disclosure = Disclosure::property(salt, "c", value);
+                let digest = disclosure.digest(HashAlgorithm::Sha256);
+                (disclosure, json!({ "_sd": [digest] }))
+            }
+            Link::Element => {
+                let disclosure = Disclosure::element(salt, value);
+                let digest = disclosure.digest(HashAlgorithm::Sha256);
+                (disclosure, json!([{ "...": digest }]))
+            }
+        };
+        disclosures.push(disclosure);
+        value = container;
+    }
+    let payload = if value.is_object() {
+        value
+    } else {
+        json!({ "c": value })
+    };
+    (payload, disclosures)
+}
+
+fn chained(links: &[Link]) -> SdJwt {
+    let (payload, disclosures) = disclosure_chain(links);
+    let jwt = Jwt::new(unsigned_jwt(&json!({ "alg": "ES256" }), &payload)).unwrap();
+    SdJwt::new(jwt, disclosures)
+}
+
+#[test]
+fn disclosures_nested_beyond_the_limit_are_refused() {
+    fn too_deep<T>(result: Result<T, SdJwtError>) -> bool {
+        matches!(result, Err(SdJwtError::TooDeep { max }) if max == SdJwtBuilder::MAX_DEPTH)
+    }
+
+    // `n` property links nest the claims `n` containers deep, counting the payload.
+    let deepest = chained(&[Link::Property; SdJwtBuilder::MAX_DEPTH]);
+    let processed = deepest.process().unwrap();
+    assert_eq!(processed.disclosed_paths().count(), SdJwtBuilder::MAX_DEPTH);
+    assert!(too_deep(
+        chained(&[Link::Property; SdJwtBuilder::MAX_DEPTH + 1]).process()
+    ));
+
+    // Long chains are refused at the limit, not followed: through properties, array elements
+    // or both, whatever the order of the disclosures.
+    let alternating: Vec<Link> = (0..1000)
+        .map(|i| {
+            if i % 2 == 0 {
+                Link::Property
+            } else {
+                Link::Element
+            }
+        })
+        .collect();
+    for links in [
+        vec![Link::Property; 1000],
+        vec![Link::Element; 1000],
+        alternating,
+    ] {
+        let sd_jwt = chained(&links);
+        assert!(too_deep(sd_jwt.process()));
+        let reversed = SdJwt::new(
+            sd_jwt.jwt().clone(),
+            sd_jwt.disclosures().iter().rev().cloned().collect(),
+        );
+        assert!(too_deep(reversed.process()));
+        assert!(too_deep(
+            SdJwt::parse(&sd_jwt.to_string()).unwrap().process()
+        ));
+        assert!(too_deep(sd_jwt.select(|_| true)));
+    }
+
+    // Plain claims count too: a chain of 8 links (8 containers) under `wraps` plain objects
+    // nests `wraps + 8` deep.
+    let wrapped = |wraps: usize| {
+        let (inner, disclosures) = disclosure_chain(&[Link::Property; 8]);
+        let payload = (0..wraps).fold(inner, |inner, _| json!({ "a": inner }));
+        let jwt = Jwt::new(unsigned_jwt(&json!({ "alg": "ES256" }), &payload)).unwrap();
+        SdJwt::new(jwt, disclosures).process()
+    };
+    assert!(wrapped(SdJwtBuilder::MAX_DEPTH - 8).is_ok());
+    assert!(too_deep(wrapped(SdJwtBuilder::MAX_DEPTH - 7)));
+}
+
 #[test]
 fn builder_reproduces_the_simple_example() {
     let mut claims = object(vector!("simple", "user_claims.json"));
