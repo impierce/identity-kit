@@ -286,15 +286,72 @@ fn rsa_signatures_cross_check_with_jsonwebtoken() {
         );
     }
 
-    // An even modulus is not an RSA key.
-    let even = Jwk::from_rsa_public(&[0xff, 0xfe], &[1, 0, 1]).unwrap();
+    // An even modulus is not an RSA key, however long.
+    let (mut n, e) = rfc7515_a2_key().rsa_public_components().unwrap();
+    *n.last_mut().unwrap() &= 0xfe;
+    let even = Jwk::from_rsa_public(&n, &e).unwrap();
     assert!(matches!(
         DefaultVerifier.verify(JwsAlgorithm::RS256, jws.signing_input(), &ps256, &even),
         Err(VerificationError::Key(JwkError::InvalidKey {
             key: "RSA",
-            ..
-        }))
+            reason,
+        })) if !reason.starts_with("the modulus is")
     ));
+}
+
+/// RFC 7518 §3.3 and §3.5: RS256 and PS256 need "a key of size 2048 bits or larger". The size
+/// is checked before the signature, so a short key is refused whatever the signature, and
+/// [`Jwk::to_decoding_key`] refuses it too.
+#[test]
+fn rsa_keys_shorter_than_2048_bits_are_refused() {
+    let rsa = |n: &[u8]| -> Jwk {
+        serde_json::from_value(json!({ "kty": "RSA", "n": b64(n), "e": "AQAB" })).unwrap()
+    };
+    #[cfg(feature = "rsa")]
+    let jws = CompactJws::decode(&rfc7515_a2_jws()).unwrap();
+    // The RFC 7515 Appendix A.2 modulus is 2048 bits: 256 octets, the first with its top bit set.
+    let n = URL_SAFE_NO_PAD.decode(RFC7515_A2_N).unwrap();
+    assert_eq!((n.len(), n[0] >> 7), (256, 1));
+
+    // Leading zero octets, which RFC 7518 §6.3.1 forbids but a JWK may carry, add no bits and
+    // do not change the key.
+    let padded: Jwk = serde_json::from_value(json!({
+        "kty": "RSA",
+        "n": b64(&[&[0u8][..], &n].concat()),
+        "e": b64(&[0, 1, 0, 1]),
+    }))
+    .unwrap();
+    assert!(padded.to_decoding_key().is_ok());
+    #[cfg(feature = "rsa")]
+    jws.verify(&DefaultVerifier, &padded).unwrap();
+
+    // 1024 bits: the first 128 octets of the modulus, made odd. 2047 bits: the modulus with a
+    // first octet of 0x7f, with and without leading zero octets.
+    let mut half = n[..128].to_vec();
+    *half.last_mut().unwrap() |= 1;
+    let mut short = n.clone();
+    short[0] = 0x7f;
+    for (key, bits) in [
+        (rsa(&half), 1024),
+        (rsa(&short), 2047),
+        (rsa(&[&[0, 0][..], &short].concat()), 2047),
+    ] {
+        let refused = JwkError::InvalidKey {
+            key: "RSA",
+            reason: format!("the modulus is {bits} bits; RS256 and PS256 need at least 2048"),
+        };
+        assert_eq!(key.to_decoding_key().err(), Some(refused.clone()));
+        #[cfg(feature = "rsa")]
+        for alg in [JwsAlgorithm::RS256, JwsAlgorithm::PS256] {
+            for signature in [&[][..], RFC7515_A2_SIGNATURE] {
+                assert_eq!(
+                    DefaultVerifier.verify(alg, jws.signing_input(), signature, &key),
+                    Err(VerificationError::Key(refused.clone())),
+                    "{alg} {bits}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(feature = "secp256k1")]

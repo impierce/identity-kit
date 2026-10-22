@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["secp256k1", "software", "did-key", "did-jwk", "did-web", "reqwest", "vc", "sd-jwt", "domain-linkage", "linked-vp"]
 # ES256K signatures and `secp256k1` keys, via `k256`.
 secp256k1 = ["dep:k256"]
-# RS256 and PS256 signatures, via `rsa`.
+# RS256 and PS256 signatures, via `rsa`; keys of at least 2048 bits (RFC 7518 §3.3, §3.5).
 rsa = ["dep:rsa"]
 # `InMemoryKeyStore`: a key store for tests and development, with an optional deterministic seed.
 in-memory = ["dep:getrandom"]

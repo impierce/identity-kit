@@ -8,6 +8,8 @@ use identity_kit::did::{
     DEFAULT_MAX_LEN, Did, DidDocument, DidUrl, MethodType, ResolutionErrorKind, ResolutionOptions,
     VerificationRelationship,
 };
+#[cfg(feature = "rsa")]
+use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsVerifier as _, VerificationError};
 use identity_kit::jose::{Jwk, JwkError};
 use identity_kit::methods::DidKey;
 use identity_kit::methods::key::{DidKeyError, KeyFormat};
@@ -356,6 +358,40 @@ async fn rsa_key_too_long_for_a_did() {
     let p384: Jwk =
         serde_json::from_value(json!({"kty": "EC", "crv": "P-384", "x": "", "y": ""})).unwrap();
     assert!(matches!(DidKey::did(&p384), Err(DidKeyError::Key(_))));
+}
+
+/// An `rsa-pub` Multikey is a PKCS #1 key of any size, so the did:key of a 1024-bit key
+/// resolves. RS256 and PS256 need 2048 bits (RFC 7518 §3.3, §3.5), so no signature under it
+/// verifies.
+#[tokio::test]
+async fn rsa_key_shorter_than_2048_bits_resolves_but_does_not_verify() {
+    use base64::Engine as _;
+    let jwk: Jwk = serde_json::from_value(json!({
+        "kty": "RSA",
+        "n": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0xff; 128]),
+        "e": "AQAB",
+    }))
+    .unwrap();
+    let did = DidKey::did(&jwk).unwrap();
+    let resolver = resolver(DidKey::new());
+    let document = resolver.resolve_document(&did).await.unwrap();
+    let id = &document.verification_method[0].id;
+    let key = resolver
+        .resolve_public_key(id, Some(VerificationRelationship::AssertionMethod))
+        .await
+        .unwrap();
+    assert_eq!(key, jwk);
+    #[cfg(feature = "rsa")]
+    for alg in [JwsAlgorithm::RS256, JwsAlgorithm::PS256] {
+        assert_eq!(
+            DefaultVerifier.verify(alg, b"payload", &[0; 128], &key),
+            Err(VerificationError::Key(JwkError::InvalidKey {
+                key: "RSA",
+                reason: "the modulus is 1024 bits; RS256 and PS256 need at least 2048".to_owned(),
+            })),
+            "{alg}"
+        );
+    }
 }
 
 #[tokio::test]

@@ -16,8 +16,8 @@ impl Jwk {
     /// Unlike [`Jwk::from_spki_der`], it takes no [`KeyType`](super::KeyType) and does not check
     /// the modulus size, as [`Jwk::from_rsa_public`] and [`Jwk::from_multikey`] do not: PKCS #1
     /// carries no algorithm identifier for a hint to select a parser by, and
-    /// [`DefaultVerifier`](super::DefaultVerifier) rejects an unusable modulus when the key is
-    /// used.
+    /// [`DefaultVerifier`](super::DefaultVerifier) rejects an unusable modulus, or one shorter
+    /// than 2048 bits, when the key is used.
     ///
     /// # Errors
     ///

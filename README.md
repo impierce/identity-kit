@@ -40,7 +40,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `reqwest`        |   ✅    | The hardened default `HttpClient` for `did:web` (`reqwest` with `rustls`); implies `did-web` |
 | `local-network` |  | Development and tests only: `ReqwestClient::builder` with opt-ins to reach loopback and private addresses over `http`; implies `reqwest` |
 | `secp256k1`      |   ✅    | ES256K signatures and `secp256k1` keys, via `k256`                                       |
-| `rsa`            |         | RS256 and PS256 signature verification, via `rsa`                                        |
+| `rsa`            |         | RS256 and PS256 signature verification with keys of 2048 bits or more, via `rsa`         |
 | `software`       |   ✅    | `SoftwareKeyStore`: private keys in a JWK set file                                       |
 | `in-memory`      |         | `InMemoryKeyStore`: keys in memory, optionally derived from a seed                       |
 | `pkcs11`         |         | `Pkcs11KeyStore`: keys in a PKCS#11 module (an HSM, SoftHSM2), via `cryptoki` and `tokio`'s blocking pool |
