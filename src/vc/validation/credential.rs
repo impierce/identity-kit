@@ -7,6 +7,7 @@ use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
 use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party};
 
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 
 use super::{
     CredentialStatus, CredentialValidationOptions, KeyResolver, StatusCheck, StatusPolicy,
@@ -256,7 +257,8 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtCredentia
 /// # Errors
 ///
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
-/// or [`ValidationError::Credential`] when the token does not decode to a credential.
+/// or [`ValidationError::Credential`] when the token does not decode to a credential, and
+/// [`ValidationError::SdJwtPayload`] when it is the issuer-signed JWT of an SD-JWT.
 pub fn decode_credential(jwt: &Jwt) -> Result<DecodedCredential, ValidationError> {
     decode(&jwt.decode()?, &NO_TYP)
 }
@@ -280,8 +282,7 @@ pub(super) fn decode(
     additional_typ: &BTreeSet<String>,
 ) -> Result<DecodedCredential, ValidationError> {
     check_typ(jws.header(), "JWT", additional_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(jws)?;
     let credential = Credential::from_jwt_claims(&claims)?;
     Ok(DecodedCredential {
         header: jws.header().clone(),
@@ -298,14 +299,60 @@ pub(super) fn decode_v2(
     additional_typ: &BTreeSet<String>,
 ) -> Result<DecodedCredentialV2, ValidationError> {
     check_typ(jws.header(), CredentialV2::JWT_TYP, additional_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(jws)?;
     let credential = CredentialV2::from_jwt_claims(&claims)?;
     Ok(DecodedCredentialV2 {
         header: jws.header().clone(),
         claims,
         credential,
     })
+}
+
+/// The claims set of `jws`, refused when it is the issuer-signed JWT of an SD-JWT: see
+/// [`ValidationError::SdJwtPayload`].
+pub(super) fn plain_claims(jws: &CompactJws) -> Result<JwtClaims, ValidationError> {
+    let claims: JwtClaims = serde_json::from_slice(jws.payload())
+        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    match claims
+        .additional
+        .iter()
+        .find_map(|(name, value)| sd_jwt_member(name, value))
+    {
+        Some(claim) => Err(ValidationError::SdJwtPayload { claim }),
+        None => Ok(claims),
+    }
+}
+
+/// The names RFC 9901 §4.2 reserves in the payload of an SD-JWT: `_sd` and `_sd_alg` as
+/// member names, and `...` as the one member of an array element standing for a digest.
+const SD_JWT_NAMES: [&str; 2] = ["_sd", "_sd_alg"];
+const ELLIPSIS: &str = "...";
+
+/// The SD-JWT name the member `name` with `value` is, or holds anywhere below it. serde_json
+/// limits the nesting of a parsed payload, so the recursion is bounded.
+fn sd_jwt_member(name: &str, value: &Value) -> Option<&'static str> {
+    SD_JWT_NAMES
+        .into_iter()
+        .find(|reserved| *reserved == name)
+        .or_else(|| sd_jwt_name_in(value))
+}
+
+/// As [`sd_jwt_member`], for the members and elements of `value`.
+fn sd_jwt_name_in(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Object(object) => object
+            .iter()
+            .find_map(|(name, value)| sd_jwt_member(name, value)),
+        Value::Array(array) => array.iter().find_map(|element| match element {
+            Value::Object(object)
+                if object.len() == 1 && object.get(ELLIPSIS).is_some_and(Value::is_string) =>
+            {
+                Some(ELLIPSIS)
+            }
+            element => sd_jwt_name_in(element),
+        }),
+        _ => None,
+    }
 }
 
 /// Rejects a header `typ` other than `expected` and `additional`, when one is present.

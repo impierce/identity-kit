@@ -48,6 +48,15 @@ pub enum ValidationError {
     /// The claims do not map to a credential or presentation.
     #[error(transparent)]
     Credential(#[from] CredentialError),
+    /// The payload carries `_sd_alg`, `_sd` or an array element `{"...": "<digest>"}`: it is
+    /// the issuer-signed JWT of an SD-JWT, whose claims mean something else until its
+    /// disclosures are processed, so it is not read as a plain JWT (RFC 8725 §3.12).
+    /// `SdJwtCredentialValidator` of `sd_jwt_vc` validates it.
+    #[error("the payload carries `{claim}`, so it is an SD-JWT, not a plain JWT")]
+    SdJwtPayload {
+        /// The claim found: `_sd_alg`, `_sd` or `...`.
+        claim: &'static str,
+    },
     /// The key `kid` names could not be resolved.
     #[error("resolving key `{kid}`: {source}")]
     KeyResolution {
