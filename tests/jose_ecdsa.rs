@@ -293,6 +293,43 @@ fn wycheproof_secp256k1_bitcoin_signatures_verify_once_normalized() {
     assert!(high_s_cases > 0);
 }
 
+#[cfg(feature = "secp256k1")]
+#[test]
+fn es256k_refuses_the_upper_s() {
+    // Unlike ES256, ES256K verification accepts only the lower of `s` and `n - s`, as `k256`
+    // and most secp256k1 verifiers do. Wycheproof's first valid secp256k1 case: the conversion
+    // gives the lower `s`, which verifies; its counterpart does not, until normalized.
+    let file: Value =
+        serde_json::from_str(include_str!("wycheproof/ecdsa_secp256k1_sha256_test.json")).unwrap();
+    let group = &file["testGroups"][0];
+    let case = &group["tests"][0];
+    assert_eq!(
+        (case["tcId"].as_u64(), case["result"].as_str()),
+        (Some(1), Some("valid"))
+    );
+    let public =
+        Jwk::from_secp256k1_public(&hex(group["publicKey"]["uncompressed"].as_str().unwrap()))
+            .unwrap();
+    let message = hex(case["msg"].as_str().unwrap());
+    let lower = ecdsa_signature_from_der(JwsAlgorithm::ES256K, &hex(case["sig"].as_str().unwrap()))
+        .unwrap();
+    DefaultVerifier
+        .verify(JwsAlgorithm::ES256K, &message, &lower, &public)
+        .unwrap();
+
+    let mut upper = lower.clone();
+    negate_s(&mut upper);
+    assert_ne!(upper, lower);
+    assert_eq!(
+        DefaultVerifier.verify(JwsAlgorithm::ES256K, &message, &upper, &public),
+        Err(identity_kit::jose::VerificationError::InvalidSignature)
+    );
+    assert_eq!(
+        normalize_ecdsa_signature(JwsAlgorithm::ES256K, &upper).unwrap(),
+        lower
+    );
+}
+
 /// `s := n - s` for a secp256k1 `r || s` (SEC 2 §2.4.1).
 #[cfg(feature = "secp256k1")]
 fn negate_s(signature: &mut [u8]) {
