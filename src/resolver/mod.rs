@@ -1,6 +1,7 @@
 //! DID resolution and production: the [`DidResolver`] and [`DidProducer`] traits a DID method
 //! implements, the [`Resolver`] registry that routes a DID to the resolver of its method, an
-//! optional TTL [`DocumentCache`], and DID URL dereferencing.
+//! optional TTL [`DocumentCache`], and DID URL dereferencing. Beside DIDs, finding the key a
+//! token was signed with: [`KeyReference`] and [`KeyResolver`].
 //!
 //! The module ships no DID method. Each method is a type implementing [`DidResolver`] and/or
 //! [`DidProducer`], registered with [`ResolverBuilder::with`]; adding one needs no change here.
@@ -24,6 +25,27 @@
 //! and returns the [`Jwk`](crate::jose::Jwk) of a verification method, optionally checked to be
 //! usable for a verification relationship, decoding `publicKeyMultibase` material as a Multikey,
 //! which is what a JWS verifier needs.
+//!
+//! # Key references
+//!
+//! A JWT names the key that signed it in one of several ways (ADR 0006), and
+//! [`KeyReference::from_jws`] reads which, in this order: a `kid` that is a DID URL
+//! (`did:…#fragment`, without a path or DID parameters); a `kid` that is a `#fragment`, joined
+//! with a DID `iss`; another `kid` with an HTTPS `iss`, naming a key of the issuer's key set; the
+//! key itself in a `jwk` header; an `x5c` certificate chain; a `jku` key set URL. A
+//! [`KeyResolver`] turns the reference into a key for a [`KeyRole`], the issuer's
+//! (`assertionMethod` in a DID document) or the subject's (`authentication`):
+//!
+//! | Reference | Resolved by |
+//! |---|---|
+//! | [`KeyReference::DidUrl`] | [`Resolver`], dereferencing the verification method |
+//! | [`KeyReference::Jwk`] | [`JwkResolver`], the key itself |
+//! | [`KeyReference::Jwks`] | `JwksResolver` (feature `jwks`), the JWT VC issuer metadata of the issuer |
+//! | [`KeyReference::X509Chain`], [`KeyReference::Jku`] | nothing in the crate yet; an application's own [`KeyResolver`] |
+//!
+//! [`CompositeKeyResolver`] tries several in order. Resolving says nothing about trust: after
+//! the signature verifies, [`KeyReference::binds_to`] checks that the key belongs to the party
+//! the token claims, which the validators of the upper layer do.
 //!
 //! # Examples
 //!
@@ -101,11 +123,21 @@ use crate::did::{Did, ResolutionError, ResolutionOptions, ResolutionResult};
 
 mod cache;
 mod dereference;
+#[cfg(feature = "jwks")]
+mod jwks;
+mod key;
 mod producer;
 mod registry;
 
 pub use cache::DocumentCache;
 pub use dereference::{DereferenceError, Dereferenced};
+#[cfg(feature = "jwks")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwks")))]
+pub use jwks::{JwksError, JwksResolver};
+pub use key::{
+    CompositeKeyResolver, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError,
+    KeyResolver, KeyRole,
+};
 pub use producer::{DidProducer, Hosting, MethodCapabilities, ProduceError};
 pub use registry::{Resolver, ResolverBuilder};
 

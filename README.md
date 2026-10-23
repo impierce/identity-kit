@@ -20,6 +20,7 @@ Collection of primitives for SSI libraries and applications: decentralized ident
 - ✅ PKCS#11 key store backend, tested against SoftHSM2
 - ✅ `Identity` trait for the signing party: the identifier, `kid` and signer for a negotiated identifier kind and algorithm, with `KeyStoreIdentity` over any key store
 - ✅ `DidResolver` and `DidProducer` traits with a `Resolver` registry, document cache and DID URL dereferencing
+- ✅ `KeyReference` and `KeyResolver`: a token's key found from a DID URL `kid`, a `#fragment` relative to a DID `iss`, a `jwk` header, `cnf`, or the JWT VC issuer metadata of an HTTPS `iss`
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
 - ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
 - ✅ SD-JWT (RFC 9901), SD-JWT VC and VCDM 2.0 credentials secured with SD-JWT (`vc+sd-jwt`): issuing with selective disclosure, presenting with key binding, validating over any DID method, the Token Status List and type metadata
@@ -37,7 +38,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | ---------------- | :-----: | ---------------------------------------------------------------------------------------- |
 | `did-key`        |   ✅    | The `did:key` method (`methods::key`)                                                    |
 | `did-jwk`        |   ✅    | The `did:jwk` method (`methods::jwk`)                                                    |
-| `did-web`        |   ✅    | The `did:web` method (`methods::web`) over any `HttpClient`; pulls in `url`              |
+| `did-web`        |   ✅    | The `did:web` method (`methods::web`) over any `HttpClient`                              |
 | `reqwest`        |   ✅    | The hardened default `HttpClient` for `did:web` (`reqwest` with `rustls`); implies `did-web` |
 | `local-network` |  | Development and tests only: `ReqwestClient::builder` with opt-ins to reach loopback and private addresses over `http`; implies `reqwest` |
 | `secp256k1`      |   ✅    | ES256K signatures and `secp256k1` keys, via `k256`                                       |
@@ -49,6 +50,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `sd-jwt`         |   ✅    | SD-JWT, SD-JWT VC and `vc+sd-jwt` credentials (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide` |
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
+| `jwks`           |         | `resolver::JwksResolver`: the keys of an HTTPS issuer from its JWT VC issuer metadata; implies `did-web` |
 | `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
 | `test-vectors`   |         | `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the specification vectors |
 

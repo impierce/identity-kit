@@ -12,7 +12,9 @@ use super::{
     ClaimPath, Disclosure, HashAlgorithm, KeyBinding, PathComponent, Processed, SdJwt,
     SdJwtBuilder, SdJwtError, Status,
 };
+use crate::did::DidUrl;
 use crate::jose::{Jwk, JwsHeader, Signer};
+use crate::resolver::{KeyReference, KeyReferenceError};
 use crate::vc::JwtClaims;
 
 /// The `typ` of the issuer-signed JWT of an SD-JWT VC, `dc+sd-jwt`.
@@ -61,11 +63,89 @@ impl Confirmation {
         }
     }
 
-    /// A confirmation by key reference.
+    /// A confirmation by key reference: an absolute DID URL naming a verification method of
+    /// the holder, which a verifier resolves under `authentication`.
     pub fn kid(kid: impl Into<String>) -> Self {
         Self {
             kid: Some(kid.into()),
             ..Self::default()
+        }
+    }
+}
+
+impl KeyReference {
+    /// Where the holder's key of a `cnf` claim (RFC 7800) is: `jwk` if present, else a `kid`
+    /// that is an absolute DID URL, else `jku` with the `kid`.
+    ///
+    /// RFC 7800 §3.4 leaves the meaning of a key id to the application, and the confirmation
+    /// carries no DID or key set to resolve a `#fragment` or a bare id against (using `sub`
+    /// would conflate the subject with the holder), so a `cnf.kid` must be an absolute DID URL
+    /// without a path or DID parameters (ADR 0006).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use identity_kit::resolver::{KeyReference, KeyReferenceError};
+    /// use identity_kit::sd_jwt_vc::Confirmation;
+    ///
+    /// let cnf = Confirmation::kid("did:example:holder#key-1");
+    /// assert_eq!(KeyReference::from_confirmation(&cnf)?.to_string(), "did:example:holder#key-1");
+    ///
+    /// let relative = Confirmation::kid("#key-1");
+    /// assert!(matches!(
+    ///     KeyReference::from_confirmation(&relative),
+    ///     Err(KeyReferenceError::InvalidKid { .. })
+    /// ));
+    /// # Ok::<(), KeyReferenceError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`KeyReferenceError::Missing`] for an empty `cnf`,
+    /// [`KeyReferenceError::UnsupportedConfirmation`] for one that names its key only by another
+    /// method (`x5t#S256`, `jwe`), and otherwise the member that is wrong.
+    pub fn from_confirmation(cnf: &Confirmation) -> Result<Self, KeyReferenceError> {
+        if let Some(jwk) = &cnf.jwk {
+            if jwk.is_private() {
+                return Err(KeyReferenceError::InvalidJwk(
+                    "`cnf.jwk` holds a private key".to_owned(),
+                ));
+            }
+            return Ok(Self::Jwk(Box::new(jwk.clone())));
+        }
+        let jku = cnf.additional.get("jku");
+        if let Some(kid) = &cnf.kid {
+            match DidUrl::parse(kid) {
+                Ok(url) if url.path().is_some() || url.query().is_some() => {
+                    return Err(KeyReferenceError::KidWithParameters(url));
+                }
+                Ok(url) => return Ok(Self::DidUrl(url)),
+                Err(source) if jku.is_none() => {
+                    return Err(KeyReferenceError::InvalidKid {
+                        kid: kid.clone(),
+                        source,
+                    });
+                }
+                Err(_) => {}
+            }
+        }
+        if let Some(jku) = jku {
+            let url = jku
+                .as_str()
+                .and_then(|jku| url::Url::parse(jku).ok())
+                .ok_or_else(|| KeyReferenceError::InvalidUrl {
+                    parameter: "jku",
+                    value: jku.to_string(),
+                    reason: "not an absolute URL".to_owned(),
+                })?;
+            return Ok(Self::Jku {
+                url,
+                kid: cnf.kid.clone(),
+            });
+        }
+        match cnf.additional.keys().next() {
+            Some(method) => Err(KeyReferenceError::UnsupportedConfirmation(method.clone())),
+            None => Err(KeyReferenceError::Missing),
         }
     }
 }
@@ -701,9 +781,16 @@ impl SdJwtVc {
         &self.processed
     }
 
-    /// The holder's public key from `cnf`, if given by value.
+    /// The holder's public key from `cnf`, if given by value. A key given by reference
+    /// ([`Confirmation::kid`]) is in [`confirmation`](Self::confirmation), and
+    /// [`KeyReference::from_confirmation`] reads either.
     pub fn holder_key(&self) -> Option<&Jwk> {
         self.claims.holder_key()
+    }
+
+    /// `cnf`: the holder's key, for key binding.
+    pub fn confirmation(&self) -> Option<&Confirmation> {
+        self.claims.cnf.as_ref()
     }
 
     /// This credential with only the disclosures at `paths` and beneath them, plus those they

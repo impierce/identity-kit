@@ -13,7 +13,7 @@ use identity_kit::claim_path;
 use identity_kit::did::{Did, DidUrl};
 use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
-use identity_kit::resolver::Resolver;
+use identity_kit::resolver::{KeyReference, KeyReferenceError, Resolver};
 use identity_kit::sd_jwt_vc::validation::{KeyBindingOptions, SdJwtValidationOptions};
 use identity_kit::sd_jwt_vc::{
     Disclosure, HashAlgorithm, KeyBinding, LEGACY_TYP, SdJwt, SdJwtBuilder, SdJwtCredentialV2Error,
@@ -134,8 +134,12 @@ async fn issued_credential_validates() {
         .validate(credential.sd_jwt(), &options())
         .await
         .unwrap();
-    assert_eq!(validated.kid, issuer.kid);
+    assert_eq!(
+        validated.issuer_key,
+        KeyReference::DidUrl(issuer.kid.clone())
+    );
     assert_eq!(validated.key_binding, None);
+    assert_eq!(validated.holder_key, None);
     assert_eq!(validated.credential.payload()["given_name"], "John");
     assert_eq!(
         validated.credential.payload()["nationalities"],
@@ -234,7 +238,9 @@ async fn key_binding_errors() {
         validator
             .validate(keyless.sd_jwt(), &with_key_binding())
             .await,
-        Err(SdJwtValidationError::NoHolderKey)
+        Err(SdJwtValidationError::NoHolderKey(
+            KeyReferenceError::Missing
+        ))
     ));
 
     // Wrong audience and nonce.
@@ -390,12 +396,14 @@ async fn issuer_signature_and_binding_errors() {
         .sign(&issuer.signer)
         .await
         .unwrap();
+    // An HTTPS issuer does not control the key of a DID, whatever the DID URL in `kid`.
     assert!(matches!(
         validator.validate(https.sd_jwt(), &options()).await,
-        Err(SdJwtValidationError::Validation(ValidationError::NotDid {
-            role: "issuer",
-            ..
-        }))
+        Err(SdJwtValidationError::Validation(ValidationError::IssuerMismatch {
+            issuer: id,
+            key,
+        })) if id.as_str() == "https://example.com/issuer"
+            && *key == KeyReference::DidUrl(issuer.kid.clone())
     ));
     let anonymous = SdJwtVcBuilder::new(VCT)
         .with_kid(issuer.kid.as_str())
@@ -419,7 +427,7 @@ async fn issuer_signature_and_binding_errors() {
     assert!(matches!(
         validator.validate(no_kid.sd_jwt(), &options()).await,
         Err(SdJwtValidationError::Validation(
-            ValidationError::MissingKid
+            ValidationError::KeyReference(KeyReferenceError::Missing)
         ))
     ));
     let bad_kid = builder(&issuer)
@@ -430,7 +438,7 @@ async fn issuer_signature_and_binding_errors() {
     assert!(matches!(
         validator.validate(bad_kid.sd_jwt(), &options()).await,
         Err(SdJwtValidationError::Validation(
-            ValidationError::InvalidKid { .. }
+            ValidationError::KeyReference(KeyReferenceError::InvalidKid { .. })
         ))
     ));
     let versioned = builder(&issuer)
@@ -445,7 +453,7 @@ async fn issuer_signature_and_binding_errors() {
     assert!(matches!(
         validator.validate(versioned.sd_jwt(), &options()).await,
         Err(SdJwtValidationError::Validation(
-            ValidationError::KidWithParameters(_)
+            ValidationError::KeyReference(KeyReferenceError::KidWithParameters(_))
         ))
     ));
     let unknown = builder(&issuer)
@@ -696,6 +704,7 @@ mod status_list_check {
     use std::collections::HashMap;
 
     use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
+    use identity_kit::resolver::{CompositeKeyResolver, JwkResolver};
     use identity_kit::sd_jwt_vc::validation::StatusListCheck;
     use identity_kit::vc::TypedObject;
     use url::Url;
@@ -742,6 +751,53 @@ mod status_list_check {
             )))
             .await
             .unwrap();
+        // A relative `kid` joined with the token's `iss`.
+        let token_of = |n: u8, iss: &str| {
+            let mut list = StatusList::new(1, 8).unwrap();
+            list.set(1, StatusType::INVALID).unwrap();
+            StatusListToken::new(
+                format!("https://example.com/statuslists/{n}"),
+                issued_at(),
+                list,
+            )
+            .with_expires_at(expires_at())
+            .with_claim("iss", iss)
+        };
+        let relative = token_of(6, issuer.did.as_str())
+            .sign(
+                &Ed25519Signer::rfc8037().with_kid(format!("#{}", issuer.kid.fragment().unwrap())),
+            )
+            .await
+            .unwrap();
+        // The key in a `jwk` header: anybody's without an `iss` it belongs to.
+        let with_jwk = |token: StatusListToken| async move {
+            let signer = Ed25519Signer::rfc8037();
+            let mut header = JwsHeader::new(JwsAlgorithm::EdDSA).with_typ(StatusListToken::TYP);
+            header.jwk = Some(signer.public_jwk());
+            let payload = serde_json::to_vec(&token).unwrap();
+            identity_kit::jose::encode_compact(&header, &payload, &signer)
+                .await
+                .unwrap()
+        };
+        let thumbprint = Ed25519Signer::rfc8037()
+            .public_jwk()
+            .thumbprint_sha256()
+            .unwrap();
+        let by_thumbprint = with_jwk(token_of(7, &thumbprint)).await;
+        let anonymous = with_jwk(
+            StatusListToken::new(
+                "https://example.com/statuslists/8",
+                issued_at(),
+                StatusList::new(1, 8).unwrap(),
+            )
+            .with_expires_at(expires_at()),
+        )
+        .await;
+        // A DID URL of the issuer under another `iss`.
+        let other_iss = token_of(9, "did:example:other")
+            .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
+            .await
+            .unwrap();
         let forged = {
             let mut parts: Vec<String> = token.as_str().split('.').map(str::to_owned).collect();
             parts[2] = common::encode(&[1u8; 64]);
@@ -765,9 +821,19 @@ mod status_list_check {
             "https://example.com/statuslists/5".to_owned(),
             (200, versioned.as_str().to_owned()),
         );
+        for (n, token) in [
+            (6, relative.as_str().to_owned()),
+            (7, by_thumbprint),
+            (8, anonymous),
+            (9, other_iss.as_str().to_owned()),
+        ] {
+            served.insert(format!("https://example.com/statuslists/{n}"), (200, token));
+        }
         let check = StatusListCheck::new(
             Served(served),
-            Resolver::builder().with(DidKey::default()).build(),
+            CompositeKeyResolver::new()
+                .with(Resolver::builder().with(DidKey::default()).build())
+                .with(JwkResolver),
             DefaultVerifier,
         );
         let validator = validator().with_status_check(check);
@@ -777,6 +843,21 @@ mod status_list_check {
 
         let valid = credential(LIST_URI, 0).sign(&issuer.signer).await.unwrap();
         assert!(validator.validate(valid.sd_jwt(), &options()).await.is_ok());
+        for uri in [
+            "https://example.com/statuslists/6",
+            "https://example.com/statuslists/7",
+        ] {
+            let valid = credential(uri, 0).sign(&issuer.signer).await.unwrap();
+            let result = validator.validate(valid.sd_jwt(), &options()).await;
+            assert!(result.is_ok(), "{uri}: {result:?}");
+            let revoked = credential(uri, 1).sign(&issuer.signer).await.unwrap();
+            assert!(matches!(
+                validator.validate(revoked.sd_jwt(), &options()).await,
+                Err(SdJwtValidationError::Validation(ValidationError::Status(
+                    StatusError::Invalid(_)
+                )))
+            ));
+        }
         for (idx, expected) in [(1, "INVALID (0x01)"), (2, "SUSPENDED (0x02)")] {
             let bad = credential(LIST_URI, idx)
                 .sign(&issuer.signer)
@@ -805,6 +886,24 @@ mod status_list_check {
                     )))
                 ),
                 "{uri}#{idx}: {result:?}"
+            );
+        }
+        // A key by value without an `iss`, and a key of a DID other than the `iss`, are not the
+        // status issuer's.
+        for uri in [
+            "https://example.com/statuslists/8",
+            "https://example.com/statuslists/9",
+        ] {
+            let bad = credential(uri, 0).sign(&issuer.signer).await.unwrap();
+            let result = validator.validate(bad.sd_jwt(), &options()).await;
+            assert!(
+                matches!(
+                    &result,
+                    Err(SdJwtValidationError::Validation(ValidationError::Status(
+                        StatusError::Unavailable(reason)
+                    ))) if reason.contains("does not belong to the issuer")
+                ),
+                "{uri}: {result:?}"
             );
         }
     }

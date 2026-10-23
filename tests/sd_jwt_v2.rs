@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
-use identity_kit::did::{Did, DidUrl, Uri, VerificationRelationship};
+use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
@@ -24,9 +24,9 @@ use identity_kit::sd_jwt_vc::{
 };
 use identity_kit::vc::validation::{
     CredentialStatus, CredentialValidationOptions, FailFast, JwtPresentationValidator,
-    KeyResolutionError, KeyResolver, PresentationValidationError, PresentationValidationOptions,
-    PresentedCredentialV2, StatusCheck, StatusError, StatusPolicy, TimeOptions, ValidationError,
-    decode_presentation_v2,
+    KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
+    PresentationValidationError, PresentationValidationOptions, PresentedCredentialV2, StatusCheck,
+    StatusError, StatusPolicy, TimeOptions, ValidationError, decode_presentation_v2,
 };
 use identity_kit::vc::{
     CredentialError, CredentialV2, EnvelopedVc, Jwt, JwtClaims, PresentationV2, Subject,
@@ -341,8 +341,12 @@ async fn issued_credential_round_trips() {
         .await
         .unwrap();
     assert_eq!(validated.credential, issued);
-    assert_eq!(validated.kid, issuer.kid);
+    assert_eq!(
+        validated.issuer_key,
+        KeyReference::DidUrl(issuer.kid.clone())
+    );
     assert!(validated.key_binding.is_none());
+    assert!(validated.holder_key.is_none());
     let validated = validator()
         .validate_credential_v2(issued.clone(), &options())
         .await
@@ -604,13 +608,13 @@ struct AuthenticationOnly(Resolver);
 impl KeyResolver for AuthenticationOnly {
     async fn resolve_key(
         &self,
-        url: &DidUrl,
-        relationship: VerificationRelationship,
+        key: &KeyReference,
+        role: KeyRole,
     ) -> Result<Jwk, KeyResolutionError> {
-        if relationship == VerificationRelationship::AssertionMethod {
+        if role == KeyRole::Issuer {
             return Err(KeyResolutionError::msg("not an assertion method"));
         }
-        self.0.resolve_key(url, relationship).await
+        self.0.resolve_key(key, role).await
     }
 }
 
@@ -635,11 +639,11 @@ async fn issuer_binding_and_time_errors() {
         .unwrap_err();
     assert!(matches!(
         error,
-        SdJwtValidationError::Validation(ValidationError::IssuerMismatch { issuer, kid })
-            if issuer.as_str() == "did:example:other" && kid == issuer_kid()
+        SdJwtValidationError::Validation(ValidationError::IssuerMismatch { issuer, key })
+            if issuer.as_str() == "did:example:other" && *key == KeyReference::DidUrl(issuer_kid())
     ));
 
-    // An issuer that is not a DID cannot be bound to a key.
+    // An HTTPS issuer does not control the key of a DID, whatever the DID URL in `kid`.
     let mut https_credential = credential(&issuer.did, &holder.did);
     https_credential.issuer = Uri::parse("https://university.example/issuers/14")
         .unwrap()
@@ -647,8 +651,9 @@ async fn issuer_binding_and_time_errors() {
     let https = builder(https_credential).sign(&signer).await.unwrap();
     assert!(matches!(
         validator().validate_v2(https.sd_jwt(), &options()).await.unwrap_err(),
-        SdJwtValidationError::Validation(ValidationError::NotDid { role: "issuer", id })
-            if id == "https://university.example/issuers/14"
+        SdJwtValidationError::Validation(ValidationError::IssuerMismatch { issuer, key })
+            if issuer.as_str() == "https://university.example/issuers/14"
+                && *key == KeyReference::DidUrl(issuer_kid())
     ));
 
     // `iss` disagreeing with `issuer` is caught when parsing.
@@ -679,8 +684,8 @@ async fn issuer_binding_and_time_errors() {
     let strict = SdJwtCredentialValidator::new(AuthenticationOnly(resolver()), DefaultVerifier);
     assert!(matches!(
         strict.validate_v2(issued.sd_jwt(), &options()).await.unwrap_err(),
-        SdJwtValidationError::Validation(ValidationError::KeyResolution { kid, .. })
-            if kid == issuer_kid()
+        SdJwtValidationError::Validation(ValidationError::KeyResolution { key, .. })
+            if *key == KeyReference::DidUrl(issuer_kid())
     ));
 
     // A tampered payload does not verify.
@@ -790,7 +795,7 @@ async fn key_binding_errors() {
             .validate_v2(unbound.sd_jwt(), &with_key_binding())
             .await
             .unwrap_err(),
-        SdJwtValidationError::NoHolderKey
+        SdJwtValidationError::NoHolderKey(KeyReferenceError::Missing)
     ));
 
     // The key binding JWT covers another set of disclosures.

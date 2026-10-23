@@ -41,9 +41,13 @@ pub use crate::methods::DidKey;
 #[cfg(feature = "did-web")]
 #[cfg_attr(docsrs, doc(cfg(feature = "did-web")))]
 pub use crate::methods::DidWeb;
+#[cfg(feature = "jwks")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwks")))]
+pub use crate::resolver::JwksResolver;
 pub use crate::resolver::{
-    DereferenceError, Dereferenced, DidProducer, DidResolver, DocumentCache, Hosting,
-    MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
+    CompositeKeyResolver, DereferenceError, Dereferenced, DidProducer, DidResolver, DocumentCache,
+    Hosting, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
+    KeyRole, MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
 };
 
 /// The upper layer's prelude: credentials and presentations as JWTs (feature `vc`), SD-JWT
@@ -89,9 +93,8 @@ pub mod credentials {
     pub use crate::vc::validation::{
         CredentialStatus, CredentialValidationOptions, DecodedCredential, DecodedCredentialV2,
         DecodedPresentation, DecodedPresentationV2, FailFast, JwtCredentialValidator,
-        JwtPresentationValidator, KeyResolver, PresentationValidationOptions,
-        PresentedCredentialV2, StatusCheck, StatusPolicy, SubjectHolderRelationship, TimeOptions,
-        ValidationError,
+        JwtPresentationValidator, PresentationValidationOptions, PresentedCredentialV2,
+        StatusCheck, StatusPolicy, SubjectHolderRelationship, TimeOptions, ValidationError,
     };
     pub use crate::vc::{
         ClaimPath, Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt,
