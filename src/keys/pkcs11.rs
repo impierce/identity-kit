@@ -18,7 +18,7 @@ use cryptoki::types::AuthPin;
 use sha2::{Digest as _, Sha256};
 
 use super::{KeyId, KeySpec, KeyStore, KeyStoreCapabilities, KeyStoreError};
-use crate::jose::{Jwk, JwsAlgorithm, KeyType};
+use crate::jose::{Jwk, JwsAlgorithm, KeyType, normalize_ecdsa_signature};
 
 /// DER `OBJECT IDENTIFIER` 1.2.840.10045.3.1.7 (`prime256v1`), the `CKA_EC_PARAMS` of a P-256 key.
 const P256_PARAMS: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
@@ -723,7 +723,10 @@ impl Inner {
                 let signature = session
                     .sign(&Mechanism::Ecdsa, private, &Sha256::digest(data))
                     .map_err(Pkcs11Error::call("C_Sign"))?;
-                low_s(signature)
+                // A module may return either of the two equivalent `s` values; `k256`, like
+                // Bitcoin, accepts only the lower one. A signature that cannot be normalized is
+                // returned as is, for the length check that follows.
+                normalize_ecdsa_signature(alg, &signature).unwrap_or(signature)
             }
             KeyKind::Rsa if alg == JwsAlgorithm::PS256 => {
                 let params = PkcsPssParams {
@@ -1044,18 +1047,20 @@ fn find_key(
 }
 
 /// Destroys the private and the public key object labelled `key`.
+///
+/// Both are attempted even when the first fails, so a failure leaves as little of the key on
+/// the token as it can; the first error is returned.
 fn delete(session: &Session, key: &KeyId) -> Result<(), KeyStoreError> {
     let private = find_key(session, ObjectClass::PRIVATE_KEY, key)?;
     let public = find_key(session, ObjectClass::PUBLIC_KEY, key)?;
     if private.is_none() && public.is_none() {
         return Err(KeyStoreError::NotFound(key.clone()));
     }
+    let mut destroyed = Ok(());
     for object in [private, public].into_iter().flatten() {
-        session
-            .destroy_object(object)
-            .map_err(Pkcs11Error::call("C_DestroyObject"))?;
+        destroyed = destroyed.and(session.destroy_object(object));
     }
-    Ok(())
+    destroyed.map_err(Pkcs11Error::call("C_DestroyObject"))
 }
 
 /// A label for a key pair that is being generated without a label, unique within the process
@@ -1186,25 +1191,6 @@ fn der_octet_string(der: &[u8]) -> Option<&[u8]> {
         (length, content)
     };
     (content.len() == length).then_some(content)
-}
-
-/// `signature`, a secp256k1 `r || s`, with `s` in the lower half of the group order.
-///
-/// A module may return either of the two equivalent `s` values; `k256`, like Bitcoin, accepts
-/// only the lower one, so the store always returns that one. A signature that is not 64 bytes
-/// is returned as is, for the length check that follows.
-#[cfg(feature = "secp256k1")]
-fn low_s(signature: Vec<u8>) -> Vec<u8> {
-    match k256::ecdsa::Signature::from_slice(&signature) {
-        Ok(parsed) => parsed.normalize_s().to_bytes().to_vec(),
-        Err(_) => signature,
-    }
-}
-
-/// Without `k256` the store does not offer ES256K, so no secp256k1 signature is made.
-#[cfg(not(feature = "secp256k1"))]
-fn low_s(signature: Vec<u8>) -> Vec<u8> {
-    signature
 }
 
 /// [`Pkcs11Error::InvalidOptions`] as a [`KeyStoreError`].

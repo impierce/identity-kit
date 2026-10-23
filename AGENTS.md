@@ -11,12 +11,12 @@
 
 ## Ground rules
 
-- One crate, two layers. `did`, `jose`, `keys`, `resolver` and `methods` never import `vc`, `sd_jwt_vc`, `domain_linkage` or `linked_vp`. CI enforces it; keep it green.
+- One crate, two layers. `did`, `jose`, `keys`, `identity`, `resolver` and `methods` never import `vc`, `sd_jwt_vc`, `domain_linkage` or `linked_vp`. CI enforces it; keep it green.
 - Extension points are traits (`DidResolver`, `DidProducer`, `KeyStore`). Never add a closed enum of methods or backends to the library.
 - JWT/JWS and SD-JWT only. No JSON-LD processing.
 - Tests are specification vectors (W3C, RFCs, DIF, method specs), never another library's output.
 - No git or path dependencies; `cargo publish --dry-run` must pass on every pull request.
-- `#![forbid(unsafe_code)]`, clippy clean, `cargo hack --each-feature` clean.
+- `unsafe_code = "forbid"` in `[lints.rust]`, clippy clean, `cargo hack --each-feature` clean.
 
 ## Agent skills
 

@@ -1,0 +1,9 @@
+# CodeQL configuration for `.github/workflows/codeql.yml`.
+
+# Only the code that ships is analysed. The tests and fuzz targets hold specification vectors on
+# purpose (RFC example keys, nonces, signatures), which queries such as
+# `rust/hard-coded-cryptographic-value` report as vulnerabilities. Rust is extracted without a
+# build (`build-mode: none`), so these paths are left out of the database entirely.
+paths-ignore:
+  - tests
+  - fuzz

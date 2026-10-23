@@ -5,10 +5,13 @@ pluggable key store, and JWT-based verifiable credentials. It is published as **
 Cargo features. Consumers today are `impierce/openid4vc` and `impierce/ssi-agent` (UniCore); it
 replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did-*` and `did-key`.
 
+This document describes the target architecture. Parts of it are planned rather than
+implemented; [`FEATURES.md`](FEATURES.md) tracks the status of each feature and its issue.
+
 ## Principles
 
-1. **One crate, two layers, hard boundary.** Lower layer: `did`, `jose`, `keys`, `resolver`,
-   `methods`. Upper layer: `vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`. Lower modules
+1. **One crate, two layers, hard boundary.** Lower layer: `did`, `jose`, `keys`, `identity`,
+   `resolver`, `methods`. Upper layer: `vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`. Lower modules
    never import upper ones. The upper modules are feature-gated so CI can prove the boundary
    (see Conformance).
 2. **Traits, not enums, for extension points.** A DID method implements `DidResolver` and/or
@@ -31,7 +34,13 @@ replaces their use of the `identity_*` crates, Stronghold, spruceid `ssi-*`/`did
    `miniz_oxide`, `getrandom`, `cryptoki`. SD-JWT itself is implemented in this crate (ADR 0005).
 7. **Developer experience.** A `prelude` per layer (`prelude` for the lower layer,
    `prelude::credentials` for the upper); docs.rs built with `all-features` and `doc_cfg`;
-   `#![forbid(unsafe_code)]`; a rolling six-month MSRV; one `CHANGELOG.md`; `release-plz`.
+   `unsafe_code = "forbid"` in the `[lints.rust]` of every package (the crate, `fuzz/` and
+   `xtask/`); a rolling six-month MSRV; one `CHANGELOG.md`; `release-plz`.
+8. **Extension points are defined here.** A data type lives with the specification that defines
+   it (DID Core, JOSE, VC, SD-JWT here; OpenID types in `openid4vc`), but a trait a consumer
+   implements is always defined in this crate, even when the need comes from an OpenID flow.
+   Protocol crates consume `Identity`, `KeyResolver` and `StatusCheck`; they never define an
+   extension point of their own (ADR 0006).
 
 ## Layout
 
@@ -41,11 +50,12 @@ identity-kit/
 ├── identity-kit/              # the published crate; lib name `identity_kit`
 │   └── src/
 │       ├── did/               # Did, DidUrl, DidMethod, DidDocument, VerificationMethod, Service, resolution metadata
-│       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode
+│       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode, JwtClaims
 │       ├── keys/              # KeyStore, KeySigner, KeyId, KeySpec; backends in_memory, software, pkcs11
-│       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing
+│       ├── identity/          # Identity, IdentityKind, Identifier, KeyStoreIdentity
+│       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing, KeyReference, KeyResolver
 │       ├── methods/           # key, jwk, web
-│       ├── vc/                # [vc] Jwt, Credential, Presentation, CredentialV2, EnvelopedVc, validation
+│       ├── vc/                # [vc] Jwt, Credential, Presentation, CredentialV2, EnvelopedVc, ClaimPath, validation
 │       ├── sd_jwt_vc/         # [sd-jwt] SD-JWT (RFC 9901), SD-JWT VC, status list, type metadata, validator
 │       ├── domain_linkage/    # [domain-linkage] DID configuration resource builder and validator
 │       └── linked_vp/         # [linked-vp] linked presentation services, builder, fetcher and validator
@@ -60,7 +70,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | Feature              | Default | Pulls in                                                      |
 | -------------------- | ------- | ------------------------------------------------------------- |
 | `did-key`, `did-jwk` | on      | nothing: `bs58` and the multicodec header are always compiled in `jose` (ADR 0003) |
-| `did-web`            | on      | `url`; the method works over any injected `HttpClient`        |
+| `did-web`            | on      | nothing; the method works over any injected `HttpClient`      |
 | `reqwest`            | on      | `reqwest` with `rustls` and `ring`: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
 | `local-network` | off  | Development and tests only: `ReqwestClient::builder` opt-ins for loopback and private addresses (implies `reqwest`) |
 | `secp256k1`          | on      | `k256`                                                        |
@@ -70,9 +80,10 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `pkcs11`             | off     | `cryptoki`; `tokio` (`rt`) for the blocking pool; PKCS#11 key store |
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
 | `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
-| `domain-linkage`     | on      | implies `vc` and `did-web` (for `url`)                        |
-| `linked-vp`          | on      | implies `vc` and `did-web` (for `url` and `HttpClient`)       |
-| `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration` and `TypeMetadata` |
+| `domain-linkage`     | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
+| `linked-vp`          | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
+| `jwks`               | off     | implies `did-web` (for `HttpClient`); `JwksResolver` over JWT VC issuer metadata |
+| `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
 | `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |
 
 ## `did` module
@@ -142,15 +153,19 @@ impl Jwk {
     pub fn public(&self) -> Jwk;
     pub fn to_decoding_key(&self) -> Result<jsonwebtoken::DecodingKey>;
     pub fn from_spki_der(hint: KeyType, der: &[u8]) -> Result<Jwk>;   // what KMS/HSM backends return
+    pub fn from_pkcs1_der(der: &[u8]) -> Result<Jwk>;   // RSA `RSAPublicKey` (RFC 8017 A.1.1), what some vaults return
+    pub fn to_pkcs1_der(&self) -> Result<Vec<u8>>;      // the same parser `rsa-pub` Multikeys use
 }
 pub enum JwsAlgorithm { EdDSA, ES256, ES256K, ES384, RS256, PS256 }  // From/TryFrom jsonwebtoken::Algorithm
 pub trait JwsVerifier: Send + Sync {
     fn verify(&self, alg: JwsAlgorithm, signing_input: &[u8], signature: &[u8], key: &Jwk) -> Result<(), VerificationError>;
 }
 pub struct DefaultVerifier;                    // ed25519-dalek, p256, k256 (secp256k1), rsa (rsa)
-pub struct CompactJws { .. }                   // decode(token); header(), kid(), alg(), signing_input(), payload(), signature()
+pub struct CompactJws { .. }                   // decode(token); header(), kid(), alg(), signing_input(), payload(), signature(), claims::<T>() (unverified)
 pub async fn encode_compact(header: &Header, payload: &[u8], signer: &dyn Signer) -> Result<String>;
 #[async_trait] pub trait Signer: Send + Sync { fn alg(&self) -> JwsAlgorithm; fn kid(&self) -> Option<&str>; async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>>; }
+pub struct JwtClaims { iss, sub, aud: Option<OneOrMany<String>>, exp, nbf, iat, jti, additional }  // RFC 7519 registered claims; re-exported from `vc` (ADR 0006)
+pub enum OneOrMany<T> { One(T), Many(Vec<T>) }  // `aud`; DID Core `controller` and service `type`; re-exported from `did`
 ```
 
 `jsonwebtoken` has no ES256K; sign and verify it with `k256` directly. ECDSA signatures are always
@@ -183,13 +198,37 @@ pub trait KeyStore: Send + Sync {
     async fn generate(&self, spec: KeySpec) -> Result<KeyId, KeyStoreError> { Err(KeyStoreError::Unsupported("generate")) }
     async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> { Err(KeyStoreError::Unsupported("delete")) }
 }
-pub struct KeySigner<'a> { store: &'a dyn KeyStore, key: KeyId, alg: JwsAlgorithm, public: Jwk }  // implements jose::Signer
+pub struct KeySigner<S> { store: S, key: KeyId, alg: JwsAlgorithm, public: Jwk }  // S: KeyStore (&T, Arc<dyn KeyStore>, ..); implements jose::Signer
 ```
 
 Backends: `InMemoryKeyStore` (`in-memory`; optional deterministic seed for fixtures),
 `SoftwareKeyStore` (`software`; private JWK set file, permission check, `zeroize`, atomic write on
 generate), `Pkcs11KeyStore` (`pkcs11`). `keys::testsuite`
 (`test-vectors`) runs one behavioural suite against every backend.
+
+## `identity` module
+
+The signing party: which identifiers it controls and the keys that sign for them. Protocols
+negotiate the kind of identifier and the algorithm; the identity answers for the chosen pair.
+
+```rust
+pub enum IdentityKind { Did(DidMethod), JwkThumbprint }       // what the other side accepts
+pub enum Identifier { Did(Did), JwkThumbprint(String) }      // Display: the `iss`/`sub` value
+#[async_trait]
+pub trait Identity: Send + Sync {
+    fn capabilities(&self) -> Vec<(IdentityKind, JwsAlgorithm)>;
+    async fn identifier(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Identifier, IdentityError>;
+    async fn public_jwk(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Jwk, IdentityError>;
+    async fn signer(&self, kind: &IdentityKind, alg: JwsAlgorithm) -> Result<Box<dyn Signer + '_>, IdentityError>;
+}
+pub struct KeyStoreIdentity { .. }   // over any KeyStore + DidProducers; bind(kind, alg, key), bind_did_url(..); generate_missing(bool), off by default
+```
+
+- For a DID the signer's `kid()` is the absolute verification-method URL; for a thumbprint it is
+  `None` and the caller puts `public_jwk` in the header or `cnf`.
+- No external-signer hook: a remote or hardware signer is a `KeyStore`.
+- `KeyStoreIdentity` is vendor-agnostic; a KMS crate that implements `KeyStore` needs no glue.
+  It binds existing keys and generates on first use only when asked (ADR 0006).
 
 ## `resolver` and `methods`
 
@@ -207,6 +246,17 @@ pub trait DidProducer: Send + Sync {
     async fn produce(&self, keys: &[Jwk], params: Self::Params) -> Result<DidDocument, ProduceError>;
 }
 pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); resolve, resolve_document, dereference, resolve_public_key
+
+#[non_exhaustive]
+pub enum KeyReference { DidUrl(DidUrl), Jwk(Jwk), X509Chain(Vec<Vec<u8>>), Jwks { issuer: Url, kid: String }, Jku { url: Url, kid: Option<String> } }
+impl KeyReference { pub fn from_jws(jws: &CompactJws, iss: Option<&str>) -> Result<Self, KeyReferenceError>; }   // `kid` DID URL; `#frag` + DID `iss`; `kid` + HTTPS `iss`; `jwk`; `x5c`; `jku`
+pub enum KeyRole { Issuer, Subject }                    // assertionMethod / authentication for a DID
+#[async_trait]
+pub trait KeyResolver: Send + Sync {
+    async fn resolve_key(&self, key: &KeyReference, role: KeyRole) -> Result<Jwk, KeyResolutionError>;   // Unsupported(reference) when it cannot
+}
+pub struct CompositeKeyResolver(..);   // first resolver that does not answer Unsupported
+// in the crate: Resolver (DidUrl), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
 ```
 
 - `jose::multikey`: the multicodec table (`ed25519-pub 0xed`, `p256-pub 0x1200`, `secp256k1-pub
@@ -222,17 +272,26 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   queries and fragments; encode a non-default port as `%3A<port>`), DID to document URL mapping
   (`https://host[:port]/.well-known/did.json` when no path segments, else
   `https://host[:port]/<segments>/did.json`), resolver over an injected `HttpClient` trait
-  (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only),
+  (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only, no
+  proxy, since a proxy resolves the host itself; `from_client` wraps an application's own
+  client, proxy included, whose address checks are then the application's),
   producer taking the document URL and setting `@context` to `["https://www.w3.org/ns/did/v1",
   "https://w3id.org/security/suites/jws-2020/v1"]`. For development and tests only, the
   `local-network` feature adds `ReqwestClient::builder` with
   `dangerous_allow_loopback` and `dangerous_allow_private_network`: the host is resolved first,
   plain `http` is used only when every address is in an allowed range, the connection is pinned
   to the checked addresses, and link-local and the other non-public ranges stay refused.
+- Key references (ADR 0006): a token names its key in one of several ways and `KeyReference`
+  captures which; `from_jws` applies a fixed precedence, `sd_jwt_vc` builds one from `cnf`
+  (`jwk`, `kid` as an absolute DID URL, `jku`). Resolving a reference says nothing about
+  trust: after the signature verifies, a validator checks that the key belongs to the claimed
+  party (the DID of a DID URL; `did:jwk` or the RFC 7638 thumbprint of a key by value; the
+  issuer URL of a JWKS). `X509Chain` and `Jku` are in the enum and resolve to `Unsupported`
+  until implemented.
 
 ## Upper layer
 
-- `vc` (`vc`): `Jwt` newtype and `JwtClaims` (RFC 7519 registered claims plus the rest);
+- `vc` (`vc`): `Jwt` newtype; `JwtClaims` re-exported from `jose`, with its `chrono` conversions;
   `Credential`/`Presentation` for the VCDM 1.1 JWT profile, built with `new` and `with_*`
   setters, checked on deserialization, with `to_jwt_claims`/`from_jwt_claims`
   (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree);
@@ -240,11 +299,13 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   `EnvelopedVc`/`EnvelopedVp` over `data:` URLs; `chrono::DateTime<Utc>` timestamps serialized
   RFC 3339; `vc::validation` with `JwtCredentialValidator` and `JwtPresentationValidator`
   (each with `validate` for 1.1 and `validate_v2` for 2.0, picked by the caller from `typ`)
-  over `JwsVerifier` + `KeyResolver` (implemented by `Resolver`, resolving the `kid` under
+  over `JwsVerifier` + `resolver::KeyResolver` (the key the token's `KeyReference` names, under
   `assertionMethod` or `authentication`), `TimeOptions` (explicit `now`, leeway), issuer and
-  holder binding to the DID of `kid`, audience and nonce, accepted `typ` beyond the profile's,
-  `SubjectHolderRelationship`, `FailFast`, a `StatusCheck` trait with a `StatusPolicy`,
-  `extract_issuer`/`extract_holder` (ADR 0004).
+  holder binding to the party the `KeyReference` names, audience and nonce, accepted `typ` beyond the profile's,
+  `SubjectHolderRelationship`, `FailFast`, one format-agnostic `StatusCheck` trait over
+  `CredentialStatus::Vcdm` (and `CredentialStatus::SdJwt` with `sd-jwt`) with a `StatusPolicy`,
+  `extract_issuer`/`extract_holder` (ADR 0004, ADR 0006); `ClaimPath` (SD-JWT VC §5.6.1, OID4VP §7 claims path pointer),
+  re-exported from `sd_jwt_vc`.
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
   `SdJwt` (parse, `process` per §7.1, `disclose`/`select` for presentation, `sign_key_binding`),
   `SdJwtBuilder` concealing claims at `ClaimPath`s (recursive disclosures, decoys, pluggable
@@ -257,10 +318,11 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
   `StatusMechanism`, `StatusList` (ZLIB bit array) and `StatusListToken` for the Token Status
   List; `TypeMetadata` with claim paths, `extends` folding, claim validation and `Integrity`
   metadata; `SdJwtCredentialValidator` over `KeyResolver` + `JwsVerifier` (`validate` an SD-JWT
-  VC, `validate_v2` a VCDM 2.0 credential: issuer key under `assertionMethod`, `iss` or
-  `issuer` bound to the DID of `kid`, time claims and validity period, key binding with
-  `KeyBindingOptions`, `SdJwtStatusCheck` for `status` and `StatusCheck` for
-  `credentialStatus` with a `StatusPolicy`, `StatusListCheck` over an `HttpClient`).
+  VC, `validate_v2` a VCDM 2.0 credential: issuer key from the token's `KeyReference` under
+  `assertionMethod`, `iss` or `issuer` bound to the party it names, time claims and validity
+  period, key binding with `KeyBindingOptions` and the holder key from `cnf` (`jwk` or `kid`)
+  under `authentication`, the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
+  `credentialStatus`, `StatusListCheck` over an `HttpClient`).
   `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
   (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
@@ -297,8 +359,9 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 - Determinism: same inputs produce byte-identical documents and configuration resources.
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
   `cargo tree` in that configuration must not list `chrono`, `miniz_oxide` or `sd-jwt-payload`.
-- `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, clippy pedantic as warnings
-  with `-D warnings` on the default lint set.
+- `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, and clippy with
+  `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds
+  (`dbg_macro`, `todo`, `print_stdout`, `print_stderr`). `clippy::pedantic` is not enabled.
 - Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID
   methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata, linked presentations),
   seeded from the specification vectors (`fuzz/seeds/`, one named file per example; the

@@ -2,13 +2,16 @@
 
 use std::collections::BTreeSet;
 
-use crate::did::{Did, DidUrl, Uri, VerificationRelationship};
-use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
-use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party, TypedObject};
+use crate::did::Uri;
+use crate::jose::{CompactJws, DefaultVerifier, Jwk, JwsHeader, JwsVerifier};
+use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party};
+
+use chrono::{DateTime, Utc};
+use serde_json::Value;
 
 use super::{
-    CredentialValidationOptions, KeyResolver, StatusCheck, StatusError, StatusPolicy,
-    ValidationError,
+    CredentialStatus, CredentialValidationOptions, KeyReference, KeyResolver, KeyRole, StatusCheck,
+    StatusPolicy, ValidationError, check_statuses,
 };
 
 /// A validated or decoded VCDM 1.1 credential JWT: its header, its claims (custom ones
@@ -148,18 +151,27 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     ) -> Result<DecodedCredential, ValidationError> {
         let jws = jwt.decode()?;
         let decoded = decode(&jws, &options.additional_typ)?;
-        let kid = self
-            .verify(&jws, VerificationRelationship::AssertionMethod)
+        let issuer = &decoded.credential.issuer;
+        let (reference, key) = self
+            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()))
             .await?;
-        check_controller(&decoded.credential.issuer, &kid, "issuer")?;
+        check_controller(issuer, &reference, &key, "issuer")?;
         options.time.check_claims(&decoded.claims)?;
         options.time.check(
             Some(decoded.credential.issuance_date),
             decoded.credential.expiration_date,
             None,
         )?;
-        self.check_status(decoded.credential.credential_status.iter(), options.status)
-            .await?;
+        self.check_status(
+            decoded
+                .credential
+                .credential_status
+                .iter()
+                .map(CredentialStatus::Vcdm),
+            options.status,
+            options.time.now(),
+        )
+        .await?;
         Ok(decoded)
     }
 
@@ -175,71 +187,55 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     ) -> Result<DecodedCredentialV2, ValidationError> {
         let jws = jwt.decode()?;
         let decoded = decode_v2(&jws, &options.additional_typ)?;
-        let kid = self
-            .verify(&jws, VerificationRelationship::AssertionMethod)
+        let issuer = &decoded.credential.issuer;
+        let (reference, key) = self
+            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()))
             .await?;
-        check_controller(&decoded.credential.issuer, &kid, "issuer")?;
+        check_controller(issuer, &reference, &key, "issuer")?;
         options.time.check_claims(&decoded.claims)?;
         options.time.check(
             decoded.credential.valid_from,
             decoded.credential.valid_until,
             None,
         )?;
-        self.check_status(decoded.credential.statuses(), options.status)
-            .await?;
+        self.check_status(
+            decoded.credential.statuses().map(CredentialStatus::Vcdm),
+            options.status,
+            options.time.now(),
+        )
+        .await?;
         Ok(decoded)
     }
 
-    /// Resolves the key of `jws` under `relationship` and verifies the signature; the `kid`.
+    /// Resolves the key `jws` names, `iss` being its issuer, for `role` and verifies the
+    /// signature; the reference and the key.
     pub(super) async fn verify(
         &self,
         jws: &CompactJws,
-        relationship: VerificationRelationship,
-    ) -> Result<DidUrl, ValidationError> {
-        let kid = jws.kid().ok_or(ValidationError::MissingKid)?;
-        let kid = DidUrl::parse(kid).map_err(|source| ValidationError::InvalidKid {
-            kid: kid.to_owned(),
-            source,
-        })?;
-        if kid.path().is_some() || kid.query().is_some() {
-            return Err(ValidationError::KidWithParameters(kid));
-        }
+        role: KeyRole,
+        iss: Option<&str>,
+    ) -> Result<(KeyReference, Jwk), ValidationError> {
+        let reference = KeyReference::from_jws(jws, iss)?;
         let key = self
             .resolver
-            .resolve_key(&kid, relationship)
+            .resolve_key(&reference, role)
             .await
             .map_err(|source| ValidationError::KeyResolution {
-                kid: kid.clone(),
+                key: Box::new(reference.clone()),
                 source,
             })?;
         jws.verify(&self.verifier, &key)?;
-        Ok(kid)
+        Ok((reference, key))
     }
 
-    /// Checks every status entry per `policy`.
+    /// Checks every status entry with this validator's check, per `policy`, at `now`.
     pub(super) async fn check_status<'a>(
         &self,
-        statuses: impl Iterator<Item = &'a TypedObject>,
+        statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
         policy: StatusPolicy,
+        now: DateTime<Utc>,
     ) -> Result<(), ValidationError> {
-        if policy == StatusPolicy::SkipAll {
-            return Ok(());
-        }
-        for status in statuses {
-            let result = match &self.status {
-                Some(check) => check.check(status).await,
-                None => Err(StatusError::Unsupported(status.object_type().to_owned())),
-            };
-            match result {
-                Ok(()) => {}
-                Err(StatusError::Unsupported(_)) if policy == StatusPolicy::SkipUnsupported => {}
-                Err(StatusError::Unsupported(status_type)) => {
-                    return Err(ValidationError::StatusUnchecked(status_type));
-                }
-                Err(error) => return Err(ValidationError::Status(error)),
-            }
-        }
-        Ok(())
+        check_statuses(self.status.as_deref(), statuses, policy, now).await
     }
 }
 
@@ -258,7 +254,8 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtCredentia
 /// # Errors
 ///
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
-/// or [`ValidationError::Credential`] when the token does not decode to a credential.
+/// or [`ValidationError::Credential`] when the token does not decode to a credential, and
+/// [`ValidationError::SdJwtPayload`] when it is the issuer-signed JWT of an SD-JWT.
 pub fn decode_credential(jwt: &Jwt) -> Result<DecodedCredential, ValidationError> {
     decode(&jwt.decode()?, &NO_TYP)
 }
@@ -282,8 +279,7 @@ pub(super) fn decode(
     additional_typ: &BTreeSet<String>,
 ) -> Result<DecodedCredential, ValidationError> {
     check_typ(jws.header(), "JWT", additional_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(jws)?;
     let credential = Credential::from_jwt_claims(&claims)?;
     Ok(DecodedCredential {
         header: jws.header().clone(),
@@ -300,14 +296,60 @@ pub(super) fn decode_v2(
     additional_typ: &BTreeSet<String>,
 ) -> Result<DecodedCredentialV2, ValidationError> {
     check_typ(jws.header(), CredentialV2::JWT_TYP, additional_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(jws)?;
     let credential = CredentialV2::from_jwt_claims(&claims)?;
     Ok(DecodedCredentialV2 {
         header: jws.header().clone(),
         claims,
         credential,
     })
+}
+
+/// The claims set of `jws`, refused when it is the issuer-signed JWT of an SD-JWT: see
+/// [`ValidationError::SdJwtPayload`].
+pub(super) fn plain_claims(jws: &CompactJws) -> Result<JwtClaims, ValidationError> {
+    let claims: JwtClaims = serde_json::from_slice(jws.payload())
+        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    match claims
+        .additional
+        .iter()
+        .find_map(|(name, value)| sd_jwt_member(name, value))
+    {
+        Some(claim) => Err(ValidationError::SdJwtPayload { claim }),
+        None => Ok(claims),
+    }
+}
+
+/// The names RFC 9901 §4.2 reserves in the payload of an SD-JWT: `_sd` and `_sd_alg` as
+/// member names, and `...` as the one member of an array element standing for a digest.
+const SD_JWT_NAMES: [&str; 2] = ["_sd", "_sd_alg"];
+const ELLIPSIS: &str = "...";
+
+/// The SD-JWT name the member `name` with `value` is, or holds anywhere below it. serde_json
+/// limits the nesting of a parsed payload, so the recursion is bounded.
+fn sd_jwt_member(name: &str, value: &Value) -> Option<&'static str> {
+    SD_JWT_NAMES
+        .into_iter()
+        .find(|reserved| *reserved == name)
+        .or_else(|| sd_jwt_name_in(value))
+}
+
+/// As [`sd_jwt_member`], for the members and elements of `value`.
+fn sd_jwt_name_in(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Object(object) => object
+            .iter()
+            .find_map(|(name, value)| sd_jwt_member(name, value)),
+        Value::Array(array) => array.iter().find_map(|element| match element {
+            Value::Object(object)
+                if object.len() == 1 && object.get(ELLIPSIS).is_some_and(Value::is_string) =>
+            {
+                Some(ELLIPSIS)
+            }
+            element => sd_jwt_name_in(element),
+        }),
+        _ => None,
+    }
 }
 
 /// Rejects a header `typ` other than `expected` and `additional`, when one is present.
@@ -327,28 +369,32 @@ pub(super) fn check_typ(
     }
 }
 
-/// Checks that `party` is the DID of `kid`, the controller of the signing key.
+/// Checks that `key`, which `reference` resolved to, belongs to `party`
+/// ([`KeyReference::binds_to`]).
 pub(super) fn check_controller(
     party: &Party,
-    kid: &DidUrl,
+    reference: &KeyReference,
+    key: &Jwk,
     role: &'static str,
 ) -> Result<(), ValidationError> {
     let id = party.id();
-    let did = Did::parse(id.as_str()).map_err(|_| ValidationError::NotDid {
-        role,
-        id: id.to_string(),
-    })?;
-    if did != *kid.did() {
-        return Err(mismatch(role, id.clone(), kid.clone()));
+    if !reference.binds_to(Some(id.as_str()), key) {
+        return Err(mismatch(role, id.clone(), reference.clone()));
     }
     Ok(())
 }
 
 /// The mismatch error for `role`.
-fn mismatch(role: &'static str, id: Uri, kid: DidUrl) -> ValidationError {
+fn mismatch(role: &'static str, id: Uri, key: KeyReference) -> ValidationError {
     if role == "holder" {
-        ValidationError::HolderMismatch { holder: id, kid }
+        ValidationError::HolderMismatch {
+            holder: id,
+            key: Box::new(key),
+        }
     } else {
-        ValidationError::IssuerMismatch { issuer: id, kid }
+        ValidationError::IssuerMismatch {
+            issuer: id,
+            key: Box::new(key),
+        }
     }
 }

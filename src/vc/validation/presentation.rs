@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use indexmap::IndexMap;
 use serde_json::Value;
 
-use crate::did::{Uri, VerificationRelationship};
+use crate::did::Uri;
 use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
 #[cfg(feature = "sd-jwt")]
 use crate::sd_jwt_vc::{SdJwtCredentialV2, SdJwtCredentialValidator, SdJwtValidationOptions};
@@ -14,9 +14,11 @@ use crate::vc::{
     PresentationV2, Subject,
 };
 
-use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2};
+#[cfg(feature = "sd-jwt")]
+use super::CredentialStatus;
+use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2, plain_claims};
 use super::{
-    DecodedCredential, DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver,
+    DecodedCredential, DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver, KeyRole,
     PresentationValidationError, PresentationValidationOptions, StatusCheck,
     SubjectHolderRelationship, ValidationError,
 };
@@ -263,18 +265,16 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     /// The checks are those of [`validate`](Self::validate), with the profile's own shape:
     /// `typ`, when present, is `vp+jwt` (or one of `options.additional_typ`); the payload is
     /// the presentation, with `iss` and `jti` agreeing with `holder` and `id` and no `vp`
-    /// claim; the holder, from `holder` or else `iss`, is required and is the DID of `kid`.
+    /// claim; the holder, from `holder` or else `iss`, is required and owns the signing key
+    /// ([`KeyReference::binds_to`](crate::resolver::KeyReference::binds_to)).
     /// Each credential is unwrapped from its `EnvelopedVerifiableCredential` and validated
     /// under `options.credentials`: an `application/vc+jwt` one with
     /// [`JwtCredentialValidator::validate_v2`]; with the `sd-jwt` feature, an
     /// `application/vc+sd-jwt` one as `SdJwtCredentialValidator::validate_v2` of `sd_jwt_vc`
-    /// does, with its `credentialStatus` checked by this validator's [`StatusCheck`] and the
-    /// key binding of `options.key_binding` required when set (none by default: the
-    /// presentation JWT already proves holder control). The `status` claim of such a
-    /// credential (Token Status List) is **not** checked here, because this validator has no
-    /// `SdJwtStatusCheck`; an application that relies on it validates the credential with
-    /// `SdJwtCredentialValidator` as well. An envelope of another media type (a COSE
-    /// credential) fails for that credential alone.
+    /// does, with its `credentialStatus` entries and its `status` claim checked by this
+    /// validator's [`StatusCheck`] and the key binding of `options.key_binding` required when
+    /// set (none by default: the presentation JWT already proves holder control). An envelope
+    /// of another media type (a COSE credential) fails for that credential alone.
     ///
     /// # Errors
     ///
@@ -345,8 +345,13 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
             let credential = validated.credential;
             self.credentials
                 .check_status(
-                    credential.credential().statuses(),
+                    credential
+                        .credential()
+                        .statuses()
+                        .map(CredentialStatus::Vcdm)
+                        .chain(credential.status().map(CredentialStatus::SdJwt)),
                     options.credentials.status,
+                    options.credentials.time.now(),
                 )
                 .await?;
             check_subject_holder(
@@ -379,8 +384,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     ) -> Result<DecodedPresentation, ValidationError> {
         let jws = jwt.decode()?;
         check_typ(jws.header(), "JWT", &options.additional_typ)?;
-        let claims: JwtClaims = serde_json::from_slice(jws.payload())
-            .map_err(|e| ValidationError::Payload(e.to_string()))?;
+        let claims = plain_claims(&jws)?;
         let presentation = Presentation::from_jwt_claims(&claims)?;
         self.check_holder_and_claims(&jws, presentation.holder.as_ref(), "iss", &claims, options)
             .await?;
@@ -417,8 +421,8 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     }
 
     /// The checks both profiles share once the payload is decoded: the signature under a key
-    /// resolved for `authentication`, the holder (reported missing as `missing`) is the DID
-    /// of `kid`, the time claims, the audience and the nonce.
+    /// resolved for [`KeyRole::Subject`], the key belongs to the holder (reported missing as
+    /// `missing`), the time claims, the audience and the nonce.
     async fn check_holder_and_claims(
         &self,
         jws: &CompactJws,
@@ -427,12 +431,16 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
         claims: &JwtClaims,
         options: &PresentationValidationOptions,
     ) -> Result<(), ValidationError> {
-        let kid = self
+        let (reference, key) = self
             .credentials
-            .verify(jws, VerificationRelationship::Authentication)
+            .verify(
+                jws,
+                KeyRole::Subject,
+                holder.map(|holder| holder.id().as_str()),
+            )
             .await?;
         let holder = holder.ok_or(CredentialError::MissingClaim(missing))?;
-        check_controller(holder, &kid, "holder")?;
+        check_controller(holder, &reference, &key, "holder")?;
         options.time.check_claims(claims)?;
         if let Some(expected) = &options.audience
             && !claims.audiences().any(|aud| aud == expected)
@@ -469,7 +477,9 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtPresentat
 /// # Errors
 ///
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
-/// or [`ValidationError::Credential`] when the token or one of its credentials does not decode.
+/// or [`ValidationError::Credential`] when the token or one of its credentials does not decode,
+/// and [`ValidationError::SdJwtPayload`] when one of them is the issuer-signed JWT of an
+/// SD-JWT.
 pub fn decode_presentation(jwt: &Jwt) -> Result<DecodedPresentation, ValidationError> {
     decode_presentation_with(jwt, &NO_TYP, &NO_TYP)
 }
@@ -483,8 +493,7 @@ pub(crate) fn decode_presentation_with(
 ) -> Result<DecodedPresentation, ValidationError> {
     let jws = jwt.decode()?;
     check_typ(jws.header(), "JWT", presentation_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(&jws)?;
     let presentation = Presentation::from_jwt_claims(&claims)?;
     let credentials = presentation
         .verifiable_credential
@@ -509,7 +518,8 @@ pub(crate) fn decode_presentation_with(
 /// or [`ValidationError::Credential`] when the token, or one of its credentials, does not
 /// decode, and `ValidationError::SdJwt` when an SD-JWT credential does not; an envelope of
 /// a media type other than `application/vc+jwt` (or `application/vc+sd-jwt`) is a
-/// [`CredentialError::UnsupportedMediaType`].
+/// [`CredentialError::UnsupportedMediaType`]. A `vp+jwt` payload, or a `vc+jwt` one, that is
+/// the issuer-signed JWT of an SD-JWT is a [`ValidationError::SdJwtPayload`].
 pub fn decode_presentation_v2(jwt: &Jwt) -> Result<DecodedPresentationV2, ValidationError> {
     let jws = jwt.decode()?;
     let (claims, presentation) = decode_payload_v2(&jws, &NO_TYP)?;
@@ -547,8 +557,7 @@ fn decode_payload_v2(
     additional_typ: &BTreeSet<String>,
 ) -> Result<(JwtClaims, PresentationV2), ValidationError> {
     check_typ(jws.header(), PresentationV2::JWT_TYP, additional_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(jws)?;
     let presentation = PresentationV2::from_jwt_claims(&claims)?;
     Ok((claims, presentation))
 }

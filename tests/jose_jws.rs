@@ -5,7 +5,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use identity_kit::jose::{
     CompactJws, DefaultVerifier, Jwk, JwkError, JwsAlgorithm, JwsError, JwsHeader, JwsVerifier,
-    SignError, Signer, VerificationError, encode_compact,
+    SignError, Signer, VerificationError, encode_compact, normalize_ecdsa_signature,
 };
 use serde_json::{Value, json};
 
@@ -142,6 +142,53 @@ fn rfc7515_a3_es256_verifies() {
         )
         .unwrap();
     assert!(jsonwebtoken_verifies(&jws, &rfc7515_a3_key()));
+}
+
+/// The order `n` of the P-256 group (SEC 2 §2.4.2), big-endian.
+const P256_ORDER: [u8; 32] = [
+    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
+];
+
+/// `n - s` for a P-256 `s` below `n`, big-endian.
+fn p256_order_minus(s: &[u8]) -> Vec<u8> {
+    let mut out = vec![0; 32];
+    let mut borrow = 0i16;
+    for i in (0..32).rev() {
+        let mut digit = i16::from(P256_ORDER[i]) - i16::from(s[i]) - borrow;
+        borrow = i16::from(digit < 0);
+        digit += 256 * borrow;
+        out[i] = u8::try_from(digit).unwrap();
+    }
+    out
+}
+
+#[test]
+fn es256_verifies_s_and_n_minus_s_alike() {
+    // ECDSA signatures are malleable: when `(r, s)` verifies, so does `(r, n - s)`. RFC 7518 §3.4
+    // asks for no canonical `s`, and `DefaultVerifier` accepts both for ES256. RFC 7515 A.3's
+    // own signature carries the upper `s` of the two.
+    let (r, s) = RFC7515_A3_SIGNATURE.split_at(32);
+    let lower_s = p256_order_minus(s);
+    assert!(s > lower_s.as_slice());
+    let other = [r, &lower_s].concat();
+
+    let original = rfc7515_a3_jws();
+    let reencoded = compact(r#"{"alg":"ES256"}"#, RFC7515_PAYLOAD, &other);
+    assert_ne!(original, reencoded);
+    for token in [&original, &reencoded] {
+        let jws = CompactJws::decode(token).unwrap();
+        jws.verify(&DefaultVerifier, &rfc7515_a3_key()).unwrap();
+        assert_eq!(jws.payload(), RFC7515_PAYLOAD);
+    }
+
+    // `normalize_ecdsa_signature` leaves an ES256 signature as it is, whichever `s` it has.
+    for signature in [RFC7515_A3_SIGNATURE, &other] {
+        assert_eq!(
+            normalize_ecdsa_signature(JwsAlgorithm::ES256, signature).unwrap(),
+            signature
+        );
+    }
 }
 
 #[test]
@@ -286,15 +333,72 @@ fn rsa_signatures_cross_check_with_jsonwebtoken() {
         );
     }
 
-    // An even modulus is not an RSA key.
-    let even = Jwk::from_rsa_public(&[0xff, 0xfe], &[1, 0, 1]).unwrap();
+    // An even modulus is not an RSA key, however long.
+    let (mut n, e) = rfc7515_a2_key().rsa_public_components().unwrap();
+    *n.last_mut().unwrap() &= 0xfe;
+    let even = Jwk::from_rsa_public(&n, &e).unwrap();
     assert!(matches!(
         DefaultVerifier.verify(JwsAlgorithm::RS256, jws.signing_input(), &ps256, &even),
         Err(VerificationError::Key(JwkError::InvalidKey {
             key: "RSA",
-            ..
-        }))
+            reason,
+        })) if !reason.starts_with("the modulus is")
     ));
+}
+
+/// RFC 7518 §3.3 and §3.5: RS256 and PS256 need "a key of size 2048 bits or larger". The size
+/// is checked before the signature, so a short key is refused whatever the signature, and
+/// [`Jwk::to_decoding_key`] refuses it too.
+#[test]
+fn rsa_keys_shorter_than_2048_bits_are_refused() {
+    let rsa = |n: &[u8]| -> Jwk {
+        serde_json::from_value(json!({ "kty": "RSA", "n": b64(n), "e": "AQAB" })).unwrap()
+    };
+    #[cfg(feature = "rsa")]
+    let jws = CompactJws::decode(&rfc7515_a2_jws()).unwrap();
+    // The RFC 7515 Appendix A.2 modulus is 2048 bits: 256 octets, the first with its top bit set.
+    let n = URL_SAFE_NO_PAD.decode(RFC7515_A2_N).unwrap();
+    assert_eq!((n.len(), n[0] >> 7), (256, 1));
+
+    // Leading zero octets, which RFC 7518 §6.3.1 forbids but a JWK may carry, add no bits and
+    // do not change the key.
+    let padded: Jwk = serde_json::from_value(json!({
+        "kty": "RSA",
+        "n": b64(&[&[0u8][..], &n].concat()),
+        "e": b64(&[0, 1, 0, 1]),
+    }))
+    .unwrap();
+    assert!(padded.to_decoding_key().is_ok());
+    #[cfg(feature = "rsa")]
+    jws.verify(&DefaultVerifier, &padded).unwrap();
+
+    // 1024 bits: the first 128 octets of the modulus, made odd. 2047 bits: the modulus with a
+    // first octet of 0x7f, with and without leading zero octets.
+    let mut half = n[..128].to_vec();
+    *half.last_mut().unwrap() |= 1;
+    let mut short = n.clone();
+    short[0] = 0x7f;
+    for (key, bits) in [
+        (rsa(&half), 1024),
+        (rsa(&short), 2047),
+        (rsa(&[&[0, 0][..], &short].concat()), 2047),
+    ] {
+        let refused = JwkError::InvalidKey {
+            key: "RSA",
+            reason: format!("the modulus is {bits} bits; RS256 and PS256 need at least 2048"),
+        };
+        assert_eq!(key.to_decoding_key().err(), Some(refused.clone()));
+        #[cfg(feature = "rsa")]
+        for alg in [JwsAlgorithm::RS256, JwsAlgorithm::PS256] {
+            for signature in [&[][..], RFC7515_A2_SIGNATURE] {
+                assert_eq!(
+                    DefaultVerifier.verify(alg, jws.signing_input(), signature, &key),
+                    Err(VerificationError::Key(refused.clone())),
+                    "{alg} {bits}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(feature = "secp256k1")]
@@ -403,6 +507,43 @@ fn tampering_is_detected() {
         ),
         Err(VerificationError::InvalidSignature)
     );
+}
+
+#[cfg(feature = "rsa")]
+#[test]
+fn rsa_keys_need_a_modulus_and_an_exponent() {
+    let jws = CompactJws::decode(&rfc7515_a2_jws()).unwrap();
+    for (n, e) in [(RFC7515_A2_N, ""), ("", "AQAB")] {
+        let key: Jwk = serde_json::from_value(json!({ "kty": "RSA", "n": n, "e": e })).unwrap();
+        assert_eq!(
+            jws.verify(&DefaultVerifier, &key),
+            Err(VerificationError::Key(JwkError::InvalidKey {
+                key: "RSA",
+                reason: "modulus and exponent must not be empty".to_owned(),
+            }))
+        );
+    }
+}
+
+#[test]
+fn boxed_and_shared_verifiers_delegate() {
+    let jws = CompactJws::decode(&rfc7515_a3_jws()).unwrap();
+    let mut signature = RFC7515_A3_SIGNATURE.to_vec();
+    signature[0] ^= 0x80;
+    let boxed: Box<dyn JwsVerifier> = Box::new(DefaultVerifier);
+    let shared: std::sync::Arc<dyn JwsVerifier> = std::sync::Arc::new(DefaultVerifier);
+    for verifier in [&boxed as &dyn JwsVerifier, &shared] {
+        jws.verify(verifier, &rfc7515_a3_key()).unwrap();
+        assert_eq!(
+            verifier.verify(
+                JwsAlgorithm::ES256,
+                jws.signing_input(),
+                &signature,
+                &rfc7515_a3_key()
+            ),
+            Err(VerificationError::InvalidSignature)
+        );
+    }
 }
 
 #[test]
@@ -827,6 +968,35 @@ async fn encode_compact_checks_the_algorithm_and_reports_signer_errors() {
             .downcast_ref::<std::io::Error>()
             .is_some()
     );
+}
+
+/// An error with a cause, as a key store backend might return.
+#[derive(Debug)]
+struct Unreachable(std::io::Error);
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HSM unreachable")
+    }
+}
+
+impl std::error::Error for Unreachable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+#[test]
+fn sign_error_is_transparent_to_the_wrapped_error() {
+    use std::error::Error as _;
+
+    let error = SignError::new(Unreachable(std::io::Error::other("connection reset")));
+    assert_eq!(error.to_string(), "HSM unreachable");
+    // The wrapped error's cause comes next in the chain, not the wrapped error a second time.
+    let source = error.source().expect("the cause of the wrapped error");
+    assert!(source.is::<std::io::Error>());
+    assert_eq!(source.to_string(), "connection reset");
+    assert!(SignError::msg("no cause").source().is_none());
 }
 
 #[tokio::test]

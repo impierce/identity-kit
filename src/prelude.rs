@@ -1,8 +1,8 @@
 //! The commonly used types and traits of each layer, for glob import.
 //!
 //! The crate has two layers (see the [crate documentation](crate)). This module is the lower
-//! layer's prelude: DIDs and DID documents, JOSE keys and signatures, key stores, DID
-//! resolution and the methods the enabled features provide. [`credentials`] is the upper
+//! layer's prelude: DIDs and DID documents, JOSE keys and signatures, key stores, the signing
+//! party, DID resolution and the methods the enabled features provide. [`credentials`] is the upper
 //! layer's: verifiable credentials as JWTs, SD-JWT VCs and domain linkage.
 //!
 //! ```
@@ -20,9 +20,10 @@ pub use crate::did::{
     ResolutionMetadata, ResolutionOptions, ResolutionResult, Service, ServiceEndpoint, Uri,
     VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
+pub use crate::identity::{Identifier, Identity, IdentityError, IdentityKind, KeyStoreIdentity};
 pub use crate::jose::{
-    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, KeyType, Signer,
-    encode_compact,
+    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, JwtClaims, KeyType,
+    Signer, encode_compact,
 };
 #[cfg(feature = "in-memory")]
 #[cfg_attr(docsrs, doc(cfg(feature = "in-memory")))]
@@ -40,9 +41,13 @@ pub use crate::methods::DidKey;
 #[cfg(feature = "did-web")]
 #[cfg_attr(docsrs, doc(cfg(feature = "did-web")))]
 pub use crate::methods::DidWeb;
+#[cfg(feature = "jwks")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwks")))]
+pub use crate::resolver::JwksResolver;
 pub use crate::resolver::{
-    DereferenceError, Dereferenced, DidProducer, DidResolver, DocumentCache, Hosting,
-    MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
+    CompositeKeyResolver, DereferenceError, Dereferenced, DidProducer, DidResolver, DocumentCache,
+    Hosting, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
+    KeyRole, MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
 };
 
 /// The upper layer's prelude: credentials and presentations as JWTs (feature `vc`), SD-JWT
@@ -79,20 +84,20 @@ pub mod credentials {
     #[cfg(feature = "sd-jwt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
     pub use crate::sd_jwt_vc::{
-        ClaimPath, Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, Processed, SdJwt,
-        SdJwtBuilder, SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
-        SdJwtCredentialValidator, SdJwtError, SdJwtStatusCheck, SdJwtValidationError,
-        SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, Status,
-        StatusList, StatusListToken, TypeMetadata, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
+        Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, Processed, SdJwt, SdJwtBuilder,
+        SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
+        SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtValidationOptions,
+        SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, Status, StatusList, StatusListToken,
+        TypeMetadata, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
     };
     pub use crate::vc::validation::{
-        CredentialValidationOptions, DecodedCredential, DecodedCredentialV2, DecodedPresentation,
-        DecodedPresentationV2, FailFast, JwtCredentialValidator, JwtPresentationValidator,
-        KeyResolver, PresentationValidationOptions, PresentedCredentialV2, StatusCheck,
-        StatusPolicy, SubjectHolderRelationship, TimeOptions, ValidationError,
+        CredentialStatus, CredentialValidationOptions, DecodedCredential, DecodedCredentialV2,
+        DecodedPresentation, DecodedPresentationV2, FailFast, JwtCredentialValidator,
+        JwtPresentationValidator, PresentationValidationOptions, PresentedCredentialV2,
+        StatusCheck, StatusPolicy, SubjectHolderRelationship, TimeOptions, ValidationError,
     };
     pub use crate::vc::{
-        Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Party,
-        Presentation, PresentationV2, Subject,
+        ClaimPath, Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt,
+        JwtClaims, Party, Presentation, PresentationV2, Subject,
     };
 }

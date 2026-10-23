@@ -79,7 +79,7 @@ use crate::methods::web::{HttpClient, HttpError};
 use crate::resolver::Resolver;
 use crate::vc::validation::{
     CredentialValidationOptions, DecodedPresentation, FailFast, JwtPresentationValidator,
-    KeyResolver, PresentationValidationError, PresentationValidationOptions,
+    KeyReference, KeyResolver, PresentationValidationError, PresentationValidationOptions,
     SubjectHolderRelationship, TimeOptions, ValidationError, decode_presentation_with,
     extract_holder,
 };
@@ -318,7 +318,7 @@ impl LinkedPresentationBuilder {
         if kid.did() != &self.holder {
             return Err(ValidationError::HolderMismatch {
                 holder: self.holder.clone().into(),
-                kid: kid.clone(),
+                key: Box::new(KeyReference::DidUrl(kid.clone())),
             }
             .into());
         }
@@ -528,9 +528,10 @@ impl<R: KeyResolver, V: JwsVerifier> LinkedVpValidator<R, V> {
 
     /// Validates `jwt` as a presentation linked from the document of `did`.
     ///
-    /// The holder and the DID of `kid` are checked against `did` before any key is resolved,
-    /// so a presentation naming another DID never makes the resolver fetch that DID's
-    /// document.
+    /// The holder, and the party the token's [`KeyReference`] names, are checked against
+    /// `did` before any key is resolved, so a presentation naming another DID never makes the
+    /// resolver fetch that DID's document: a DID URL must be of `did`, a key by value must be
+    /// the `did:jwk` of `did`, and a key set of an HTTPS issuer never belongs to a DID.
     ///
     /// # Errors
     ///
@@ -553,16 +554,21 @@ impl<R: KeyResolver, V: JwsVerifier> LinkedVpValidator<R, V> {
         let jws = jwt
             .decode()
             .map_err(|e| PresentationValidationError::presentation(e.into()))?;
-        if let Some(kid) = jws.kid().and_then(|kid| DidUrl::parse(kid).ok())
-            && kid.did() != did
-        {
-            return Err(PresentationValidationError::presentation(
-                ValidationError::HolderMismatch {
-                    holder: did.clone().into(),
-                    kid,
-                },
-            )
-            .into());
+        if let Ok(reference) = KeyReference::from_jws(&jws, Some(did.as_str())) {
+            let of_did = match &reference {
+                KeyReference::DidUrl(url) => url.did() == did,
+                KeyReference::Jwk(jwk) => reference.binds_to(Some(did.as_str()), jwk),
+                _ => false,
+            };
+            if !of_did {
+                return Err(PresentationValidationError::presentation(
+                    ValidationError::HolderMismatch {
+                        holder: did.clone().into(),
+                        key: Box::new(reference),
+                    },
+                )
+                .into());
+            }
         }
         let decoded = self
             .presentations

@@ -1,0 +1,9 @@
+# OSV-Scanner configuration: https://google.github.io/osv-scanner/configuration/
+# OpenSSF Scorecard's Vulnerabilities check scans `Cargo.lock` with OSV-Scanner, which reads this
+# file. Keep the list in step with `[advisories] ignore` in `deny.toml`.
+
+[[IgnoredVulns]]
+# Marvin attack: timing side channel in `rsa` private-key operations, no fixed version.
+# This crate uses `rsa` for public-key verification only; see docs/adr/0001-rsa-verification-only.md.
+id = "RUSTSEC-2023-0071"
+reason = "rsa is used for signature verification only; no private-key operations"
