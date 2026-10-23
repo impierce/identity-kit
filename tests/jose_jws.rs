@@ -509,6 +509,43 @@ fn tampering_is_detected() {
     );
 }
 
+#[cfg(feature = "rsa")]
+#[test]
+fn rsa_keys_need_a_modulus_and_an_exponent() {
+    let jws = CompactJws::decode(&rfc7515_a2_jws()).unwrap();
+    for (n, e) in [(RFC7515_A2_N, ""), ("", "AQAB")] {
+        let key: Jwk = serde_json::from_value(json!({ "kty": "RSA", "n": n, "e": e })).unwrap();
+        assert_eq!(
+            jws.verify(&DefaultVerifier, &key),
+            Err(VerificationError::Key(JwkError::InvalidKey {
+                key: "RSA",
+                reason: "modulus and exponent must not be empty".to_owned(),
+            }))
+        );
+    }
+}
+
+#[test]
+fn boxed_and_shared_verifiers_delegate() {
+    let jws = CompactJws::decode(&rfc7515_a3_jws()).unwrap();
+    let mut signature = RFC7515_A3_SIGNATURE.to_vec();
+    signature[0] ^= 0x80;
+    let boxed: Box<dyn JwsVerifier> = Box::new(DefaultVerifier);
+    let shared: std::sync::Arc<dyn JwsVerifier> = std::sync::Arc::new(DefaultVerifier);
+    for verifier in [&boxed as &dyn JwsVerifier, &shared] {
+        jws.verify(verifier, &rfc7515_a3_key()).unwrap();
+        assert_eq!(
+            verifier.verify(
+                JwsAlgorithm::ES256,
+                jws.signing_input(),
+                &signature,
+                &rfc7515_a3_key()
+            ),
+            Err(VerificationError::InvalidSignature)
+        );
+    }
+}
+
 #[test]
 fn wrong_key_type_is_rejected() {
     let jws = CompactJws::decode(&rfc7515_a3_jws()).unwrap();
@@ -931,6 +968,35 @@ async fn encode_compact_checks_the_algorithm_and_reports_signer_errors() {
             .downcast_ref::<std::io::Error>()
             .is_some()
     );
+}
+
+/// An error with a cause, as a key store backend might return.
+#[derive(Debug)]
+struct Unreachable(std::io::Error);
+
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HSM unreachable")
+    }
+}
+
+impl std::error::Error for Unreachable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+#[test]
+fn sign_error_is_transparent_to_the_wrapped_error() {
+    use std::error::Error as _;
+
+    let error = SignError::new(Unreachable(std::io::Error::other("connection reset")));
+    assert_eq!(error.to_string(), "HSM unreachable");
+    // The wrapped error's cause comes next in the chain, not the wrapped error a second time.
+    let source = error.source().expect("the cause of the wrapped error");
+    assert!(source.is::<std::io::Error>());
+    assert_eq!(source.to_string(), "connection reset");
+    assert!(SignError::msg("no cause").source().is_none());
 }
 
 #[tokio::test]

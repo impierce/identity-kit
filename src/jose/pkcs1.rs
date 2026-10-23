@@ -198,4 +198,60 @@ mod tests {
             assert!(decode(broken).is_err(), "{broken:02x?}");
         }
     }
+
+    /// Why `der` is not an `RSAPublicKey`.
+    fn malformed(der: &[u8]) -> String {
+        match decode(der) {
+            Err(JwkError::InvalidKey { key: "RSA", reason }) => reason,
+            other => panic!("{der:02x?}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pkcs1_lengths_are_strict_der() {
+        // X.690 §10.1: definite lengths in the fewest octets, the long form from 128 on. A body of
+        // exactly 128 bytes: 2 + 121 bytes of modulus INTEGER plus 5 of exponent.
+        let n = vec![0x7f; 121];
+        let e = [0x01, 0x00, 0x01];
+        let der = encode(&n, &e);
+        assert_eq!(&der[..3], [0x30, 0x81, 0x80]);
+        assert_eq!(decode(&der).unwrap(), (n, e.to_vec()));
+        let body = &der[3..];
+
+        // `0x80` is the indefinite length of BER, which DER does not allow.
+        assert_eq!(
+            malformed(&[&[0x30, 0x80], body].concat()),
+            "malformed RSAPublicKey: invalid length"
+        );
+        // Nine length octets, more than a `usize` holds, although their value is 128.
+        assert_eq!(
+            malformed(&[&[0x30, 0x89, 0x01, 0, 0, 0, 0, 0, 0, 0, 0x80], body].concat()),
+            "malformed RSAPublicKey: invalid length"
+        );
+        // Eight length octets fit a 64-bit `usize`; 2^56 bytes are not there.
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            malformed(&[0x30, 0x88, 0x01, 0, 0, 0, 0, 0, 0, 0]),
+            "malformed RSAPublicKey: length exceeds input"
+        );
+        // Fewer length octets than announced.
+        assert_eq!(
+            malformed(&[0x30, 0x82, 0x01]),
+            "malformed RSAPublicKey: invalid length"
+        );
+        // The length octets, but no body.
+        assert_eq!(
+            malformed(&[0x30, 0x81, 0x80]),
+            "malformed RSAPublicKey: length exceeds input"
+        );
+    }
+
+    #[test]
+    fn pkcs1_rejects_an_empty_integer() {
+        // X.690 §8.3.1: the contents of an INTEGER are one or more octets.
+        assert_eq!(
+            malformed(&[0x30, 0x05, 0x02, 0x00, 0x02, 0x01, 0x01]),
+            "malformed RSAPublicKey: empty INTEGER"
+        );
+    }
 }

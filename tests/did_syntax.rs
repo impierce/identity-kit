@@ -325,6 +325,10 @@ fn did_url_vectors() {
 fn invalid_did_urls_are_rejected() {
     let cases: &[(&str, DidError)] = &[
         ("did:example:123#a#b", DidError::InvalidFragment),
+        // The scan carries on after a percent-encoded triplet.
+        ("did:example:123#%41 ", DidError::InvalidFragment),
+        ("did:example:123?%41 ", DidError::InvalidQuery),
+        ("did:example:123/%41 ", DidError::InvalidPath),
         ("did:example:123#a b", DidError::InvalidFragment),
         ("did:example:123#ü", DidError::InvalidFragment),
         ("did:example:123?q=a b", DidError::InvalidQuery),
