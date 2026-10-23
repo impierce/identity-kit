@@ -26,9 +26,10 @@ cargo add serde_json chrono
 4. **Present.** The holder wraps the credential JWT in a `Presentation`, adds the verifier's
    audience and nonce, and signs it with their own key.
 5. **Validate.** `JwtPresentationValidator` checks the presentation's signature, that its
-   signer is the holder, the audience, the nonce and the validity period, and then validates
-   every credential inside with the same rules `JwtCredentialValidator` applies on its own:
-   signature, issuer binding, validity period and subject-to-holder relationship.
+   signer is the holder, the audience, the nonce and the validity period. It then validates
+   every credential inside with the rules `JwtCredentialValidator` applies on its own
+   (signature, issuer binding, validity period), and checks that each credential's subject is
+   the holder; `SubjectHolderRelationship` in the options relaxes that check.
 
 ```rust
 use chrono::{Duration, Utc};
@@ -121,7 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(&json!("BachelorDegree"))
     );
 
-    // A different nonce, as a replayed presentation would carry, is rejected.
+    // Replayed later, the same presentation fails: the verifier now expects a fresh nonce.
     let replayed = PresentationValidationOptions::new()
         .with_audience(audience)
         .with_nonce("another-nonce")
