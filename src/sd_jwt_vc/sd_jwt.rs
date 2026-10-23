@@ -9,7 +9,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-use super::{ClaimPath, Disclosure, HashAlgorithm, SdJwtError};
+use super::{ClaimPath, Disclosure, HashAlgorithm, SdJwtBuilder, SdJwtError};
 use crate::jose::{JwsHeader, Signer};
 use crate::vc::{Jwt, JwtClaims};
 
@@ -199,18 +199,23 @@ impl SdJwt {
     /// disclosure must match a digest, no digest may appear twice, no disclosure may name a
     /// reserved or existing claim.
     ///
+    /// The claims may nest at most [`SdJwtBuilder::MAX_DEPTH`] containers deep, counting the
+    /// payload and those a disclosure's value adds alike, so a chain of disclosures, each
+    /// referencing the next, cannot nest them without bound. Whatever the builder issues stays
+    /// within the limit.
+    ///
     /// # Errors
     ///
     /// [`SdJwtError::Payload`], [`SdJwtError::UnsupportedHashAlgorithm`],
     /// [`SdJwtError::DuplicateDigest`], [`SdJwtError::UnusedDisclosure`],
-    /// [`SdJwtError::WrongDisclosureKind`], [`SdJwtError::ReservedClaimName`] or
-    /// [`SdJwtError::DuplicateClaim`].
+    /// [`SdJwtError::WrongDisclosureKind`], [`SdJwtError::ReservedClaimName`],
+    /// [`SdJwtError::DuplicateClaim`] or [`SdJwtError::TooDeep`].
     pub fn process(&self) -> Result<Processed, SdJwtError> {
         let mut payload = self.payload()?;
         let alg = hash_algorithm(&payload)?;
         payload.shift_remove(HashAlgorithm::CLAIM);
         let mut processor = Processor::new(alg, &self.disclosures);
-        let issued = processor.object(payload, &ClaimPath::root(), None)?;
+        let issued = processor.object(payload, &ClaimPath::root(), None, 1)?;
         if let Some(unused) = processor.used.iter().position(|used| !used) {
             return Err(SdJwtError::UnusedDisclosure(
                 self.disclosures[unused].as_str().to_owned(),
@@ -480,15 +485,22 @@ impl<'a> Processor<'a> {
         Ok(Some(index))
     }
 
+    /// Processes `value`, a container `depth` containers deep counting itself, or a scalar.
     fn value(
         &mut self,
         value: Value,
         path: &ClaimPath,
         owner: Option<usize>,
+        depth: usize,
     ) -> Result<Value, SdJwtError> {
         match value {
-            Value::Object(object) => self.object(object, path, owner).map(Value::Object),
-            Value::Array(array) => self.array(array, path, owner).map(Value::Array),
+            Value::Object(_) | Value::Array(_) if depth > SdJwtBuilder::MAX_DEPTH => {
+                Err(SdJwtError::TooDeep {
+                    max: SdJwtBuilder::MAX_DEPTH,
+                })
+            }
+            Value::Object(object) => self.object(object, path, owner, depth).map(Value::Object),
+            Value::Array(array) => self.array(array, path, owner, depth).map(Value::Array),
             other => Ok(other),
         }
     }
@@ -498,6 +510,7 @@ impl<'a> Processor<'a> {
         object: Map<String, Value>,
         path: &ClaimPath,
         owner: Option<usize>,
+        depth: usize,
     ) -> Result<Map<String, Value>, SdJwtError> {
         let mut out = Map::new();
         let mut digests = None;
@@ -511,7 +524,7 @@ impl<'a> Processor<'a> {
                 digests = Some(array);
                 continue;
             }
-            let value = self.value(value, &path.join(name.as_str()), owner)?;
+            let value = self.value(value, &path.join(name.as_str()), owner, depth + 1)?;
             out.insert(name, value);
         }
         for digest in digests.unwrap_or_default() {
@@ -541,7 +554,12 @@ impl<'a> Processor<'a> {
             }
             let name = name.to_owned();
             let claim_path = path.join(name.as_str());
-            let value = self.value(disclosure.value().clone(), &claim_path, Some(index))?;
+            let value = self.value(
+                disclosure.value().clone(),
+                &claim_path,
+                Some(index),
+                depth + 1,
+            )?;
             out.insert(name, value);
             self.disclosed.push(DisclosedClaim {
                 path: claim_path,
@@ -556,12 +574,13 @@ impl<'a> Processor<'a> {
         array: Vec<Value>,
         path: &ClaimPath,
         owner: Option<usize>,
+        depth: usize,
     ) -> Result<Vec<Value>, SdJwtError> {
         let mut out = Vec::with_capacity(array.len());
         for (i, element) in array.into_iter().enumerate() {
             let element_path = path.join(i);
             let Some(digest) = digest_placeholder(&element).map(str::to_owned) else {
-                out.push(self.value(element, &element_path, owner)?);
+                out.push(self.value(element, &element_path, owner, depth + 1)?);
                 continue;
             };
             let Some(index) = self.lookup(&digest, owner)? else {
@@ -576,7 +595,12 @@ impl<'a> Processor<'a> {
                     expected: "an array element disclosure",
                 });
             }
-            let value = self.value(disclosure.value().clone(), &element_path, Some(index))?;
+            let value = self.value(
+                disclosure.value().clone(),
+                &element_path,
+                Some(index),
+                depth + 1,
+            )?;
             out.push(value);
             self.disclosed.push(DisclosedClaim {
                 path: element_path,

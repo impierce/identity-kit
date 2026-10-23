@@ -16,7 +16,7 @@ use crate::vc::{
 
 #[cfg(feature = "sd-jwt")]
 use super::CredentialStatus;
-use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2};
+use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2, plain_claims};
 use super::{
     DecodedCredential, DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver,
     PresentationValidationError, PresentationValidationOptions, StatusCheck,
@@ -383,8 +383,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     ) -> Result<DecodedPresentation, ValidationError> {
         let jws = jwt.decode()?;
         check_typ(jws.header(), "JWT", &options.additional_typ)?;
-        let claims: JwtClaims = serde_json::from_slice(jws.payload())
-            .map_err(|e| ValidationError::Payload(e.to_string()))?;
+        let claims = plain_claims(&jws)?;
         let presentation = Presentation::from_jwt_claims(&claims)?;
         self.check_holder_and_claims(&jws, presentation.holder.as_ref(), "iss", &claims, options)
             .await?;
@@ -473,7 +472,9 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtPresentat
 /// # Errors
 ///
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
-/// or [`ValidationError::Credential`] when the token or one of its credentials does not decode.
+/// or [`ValidationError::Credential`] when the token or one of its credentials does not decode,
+/// and [`ValidationError::SdJwtPayload`] when one of them is the issuer-signed JWT of an
+/// SD-JWT.
 pub fn decode_presentation(jwt: &Jwt) -> Result<DecodedPresentation, ValidationError> {
     decode_presentation_with(jwt, &NO_TYP, &NO_TYP)
 }
@@ -487,8 +488,7 @@ pub(crate) fn decode_presentation_with(
 ) -> Result<DecodedPresentation, ValidationError> {
     let jws = jwt.decode()?;
     check_typ(jws.header(), "JWT", presentation_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(&jws)?;
     let presentation = Presentation::from_jwt_claims(&claims)?;
     let credentials = presentation
         .verifiable_credential
@@ -513,7 +513,8 @@ pub(crate) fn decode_presentation_with(
 /// or [`ValidationError::Credential`] when the token, or one of its credentials, does not
 /// decode, and `ValidationError::SdJwt` when an SD-JWT credential does not; an envelope of
 /// a media type other than `application/vc+jwt` (or `application/vc+sd-jwt`) is a
-/// [`CredentialError::UnsupportedMediaType`].
+/// [`CredentialError::UnsupportedMediaType`]. A `vp+jwt` payload, or a `vc+jwt` one, that is
+/// the issuer-signed JWT of an SD-JWT is a [`ValidationError::SdJwtPayload`].
 pub fn decode_presentation_v2(jwt: &Jwt) -> Result<DecodedPresentationV2, ValidationError> {
     let jws = jwt.decode()?;
     let (claims, presentation) = decode_payload_v2(&jws, &NO_TYP)?;
@@ -551,8 +552,7 @@ fn decode_payload_v2(
     additional_typ: &BTreeSet<String>,
 ) -> Result<(JwtClaims, PresentationV2), ValidationError> {
     check_typ(jws.header(), PresentationV2::JWT_TYP, additional_typ)?;
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims = plain_claims(jws)?;
     let presentation = PresentationV2::from_jwt_claims(&claims)?;
     Ok((claims, presentation))
 }
