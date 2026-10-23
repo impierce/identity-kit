@@ -1,0 +1,145 @@
+name: Mutants
+
+# Mutation testing with cargo-mutants: change the code (a return value, an operator, a match
+# arm) and check that some test fails. A mutant no test catches is code the tests run but do not
+# check. Informational: not part of QA, and missed mutants do not fail the run. Testing every
+# mutant of the crate takes hours, so it runs weekly and by hand, not on pull requests.
+
+on:
+  schedule:
+    # Saturdays, 01:17 UTC.
+    - cron: "17 1 * * 6"
+  workflow_dispatch:
+    inputs:
+      files:
+        description: "Files to mutate, as a glob such as src/jose/**; empty for the whole crate"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Every mutant, or those in the given files, split across shards that run in parallel. Without
+  # a token the PKCS#11 tests skip themselves, so `pkcs11.rs` has its own job below.
+  shards:
+    name: Mutants (shard ${{ matrix.shard }}/12)
+    if: github.repository_owner == 'impierce'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    env:
+      SHARD: ${{ matrix.shard }}
+      FILES: ${{ inputs.files }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-mutants@27.1.0
+          fallback: none
+      - name: Test the mutants
+        run: |
+          status=0
+          cargo mutants --shard "$SHARD/12" -j 2 --exclude src/keys/pkcs11.rs ${FILES:+-f "$FILES"} || status=$?
+          # 2: missed mutants, 3: timeouts; both are findings, not errors.
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$status" -ne 3 ]; then exit "$status"; fi
+      - name: Summarize
+        if: always()
+        run: |
+          [ -f mutants.out/outcomes.json ] || exit 0
+          {
+            echo "### Mutants, shard $SHARD"
+            echo
+            jq -r '"\(.caught) caught, \(.missed) missed, \(.timeout) timed out, \(.unviable) unviable, of \(.total_mutants)"' mutants.out/outcomes.json
+            # shellcheck disable=SC2016 # literal backticks, for Markdown code spans
+            if [ -s mutants.out/missed.txt ]; then echo; sed 's/^/- `/; s/$/`/' mutants.out/missed.txt; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: mutants.out
+          if-no-files-found: ignore
+
+  # The mutants of the PKCS#11 key store, tested against a SoftHSM2 token as in the coverage
+  # workflow. One at a time: the tests share the token, and two runs at once would race on the
+  # same key labels.
+  pkcs11:
+    name: Mutants (PKCS#11)
+    if: github.repository_owner == 'impierce'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      FILES: ${{ inputs.files }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-mutants@27.1.0
+          fallback: none
+      # Ask cargo-mutants itself whether the `files` glob selects `pkcs11.rs`, so this matches
+      # what the shards would have run.
+      - name: Check the file filter
+        id: filter
+        run: |
+          if [ -z "$FILES" ] || cargo mutants --list-files -f "$FILES" | grep -x 'src/keys/pkcs11.rs' >/dev/null; then
+            echo "selected=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up SoftHSM2
+        if: steps.filter.outputs.selected == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y softhsm2 opensc
+          mkdir -p "$RUNNER_TEMP/softhsm/tokens"
+          printf 'directories.tokendir = %s/softhsm/tokens\nobjectstore.backend = file\n' "$RUNNER_TEMP" > "$RUNNER_TEMP/softhsm/softhsm2.conf"
+          export SOFTHSM2_CONF="$RUNNER_TEMP/softhsm/softhsm2.conf"
+          softhsm2-util --init-token --free --label identity-kit --so-pin 0102 --pin 1234
+          {
+            echo "SOFTHSM2_CONF=$SOFTHSM2_CONF"
+            echo "PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so"
+            echo "PKCS11_TOKEN_LABEL=identity-kit"
+            echo "PKCS11_PIN=1234"
+          } >> "$GITHUB_ENV"
+      - name: Test the mutants
+        if: steps.filter.outputs.selected == 'true'
+        run: |
+          status=0
+          cargo mutants -j 1 -f src/keys/pkcs11.rs || status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ] && [ "$status" -ne 3 ]; then exit "$status"; fi
+      - name: Summarize
+        if: always()
+        run: |
+          [ -f mutants.out/outcomes.json ] || exit 0
+          {
+            echo "### Mutants, PKCS#11"
+            echo
+            jq -r '"\(.caught) caught, \(.missed) missed, \(.timeout) timed out, \(.unviable) unviable, of \(.total_mutants)"' mutants.out/outcomes.json
+            # shellcheck disable=SC2016 # literal backticks, for Markdown code spans
+            if [ -s mutants.out/missed.txt ]; then echo; sed 's/^/- `/; s/$/`/' mutants.out/missed.txt; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutants-pkcs11
+          path: mutants.out
+          if-no-files-found: ignore

@@ -55,6 +55,22 @@ cargo install --locked cargo-fuzz
 fuzz/run.sh sd_jwt 600      # one target, ten minutes
 ```
 
+### Mutation testing
+
+[`cargo-mutants`](https://mutants.rs) checks the tests themselves: it changes the code (a return value, a comparison, a match arm) and reports each change that no test catches, code the tests run but do not check.
+Testing every mutant takes hours, so the `Mutants` workflow runs weekly and when started by hand from the Actions tab, optionally limited to a glob such as `src/jose/**`, not on pull requests.
+It splits the crate across twelve jobs, and tests `src/keys/pkcs11.rs` in a job of its own against a SoftHSM2 token.
+Each job lists its missed mutants in the run summary; they are findings to triage, and the run does not fail on them.
+[`.cargo/mutants.toml`](.cargo/mutants.toml) holds the configuration.
+
+To check the mutants of your own change before opening a pull request:
+
+```sh
+cargo install --locked cargo-mutants
+cargo mutants -f 'src/jose/**' -j 2         # one module
+git diff main... > pr.diff && cargo mutants --in-diff pr.diff -j 2   # the lines a branch changes
+```
+
 ## Pull requests
 
 Pull requests are squash-merged, so the **pull request title** becomes the commit message on `main`.
