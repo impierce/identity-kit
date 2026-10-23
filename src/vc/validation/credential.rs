@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use super::{
     CredentialStatus, CredentialValidationOptions, KeyReference, KeyResolver, KeyRole, StatusCheck,
-    StatusPolicy, ValidationError, check_statuses,
+    StatusPolicy, ValidationError, check_statuses, status_claim, status_claim_entry,
 };
 
 /// A validated or decoded VCDM 1.1 credential JWT: its header, its claims (custom ones
@@ -116,7 +116,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         }
     }
 
-    /// This validator checking `credentialStatus` with `check`.
+    /// This validator checking `credentialStatus` and the `status` claim with `check`.
     #[must_use]
     pub fn with_status_check(mut self, check: impl StatusCheck + 'static) -> Self {
         self.status = Some(Box::new(check));
@@ -162,12 +162,14 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
             decoded.credential.expiration_date,
             None,
         )?;
+        let status = status_claim(&decoded.claims, options.status)?;
         self.check_status(
             decoded
                 .credential
                 .credential_status
                 .iter()
-                .map(CredentialStatus::Vcdm),
+                .map(CredentialStatus::Vcdm)
+                .chain(status.iter().map(status_claim_entry)),
             options.status,
             options.time.now(),
         )
@@ -198,8 +200,13 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
             decoded.credential.valid_until,
             None,
         )?;
+        let status = status_claim(&decoded.claims, options.status)?;
         self.check_status(
-            decoded.credential.statuses().map(CredentialStatus::Vcdm),
+            decoded
+                .credential
+                .statuses()
+                .map(CredentialStatus::Vcdm)
+                .chain(status.iter().map(status_claim_entry)),
             options.status,
             options.time.now(),
         )
