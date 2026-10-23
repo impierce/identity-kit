@@ -10,7 +10,9 @@
 //! - [`JwsAlgorithm`] names the asymmetric algorithms this crate speaks and converts to and from
 //!   [`jsonwebtoken::Algorithm`].
 //! - [`JwsVerifier`] verifies a signature over a signing input; [`DefaultVerifier`] does so with
-//!   RustCrypto. ECDSA signatures are the raw `r || s` form JWS uses, never DER.
+//!   RustCrypto. ECDSA signatures are the raw `r || s` form JWS uses, never DER. An ES256
+//!   signature verifies with `s` and `n - s` alike, so identify a token by its claims, not its
+//!   bytes (see [`DefaultVerifier`]).
 //! - [`CompactJws`] decodes a compact serialization without verifying it; [`encode_compact`]
 //!   produces one with any [`Signer`], which is `async` because private keys live in key stores
 //!   and HSMs.
