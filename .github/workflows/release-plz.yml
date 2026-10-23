@@ -4,13 +4,10 @@ on:
   push:
     branches: [main]
   # Attaches the crate and its provenance to an existing release, when that step failed after
-  # publishing: a rerun would not repeat it, since release-plz finds nothing left to release.
+  # publishing: a rerun would not repeat it, since release-plz finds nothing left to release. Run it
+  # from the release's tag (Run workflow → Use workflow from → Tags), so that the provenance names
+  # the commit the tag points to.
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "The existing release tag to attach the crate and provenance to, e.g. v0.2.0"
-        required: true
-        type: string
 
 permissions: {}
 
@@ -18,7 +15,7 @@ jobs:
   # Publish to crates.io, tag and create a GitHub release once the release PR is merged.
   release:
     name: Release
-    if: github.repository_owner == 'impierce'
+    if: github.repository_owner == 'impierce' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -26,8 +23,8 @@ jobs:
       # crates.io trusted publishing.
       id-token: write
     outputs:
-      tag: ${{ steps.crates.outputs.tag }}
-      hashes: ${{ steps.crates.outputs.hashes }}
+      releases-created: ${{ steps.release-plz.outputs.releases_created }}
+      releases: ${{ steps.release-plz.outputs.releases }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,30 +42,48 @@ jobs:
           permission-contents: write
           permission-pull-requests: read
       - id: release-plz
-        if: github.event_name == 'push'
         uses: release-plz/action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-      # Attach each released `.crate` to its GitHub release, exactly as crates.io serves it: the
-      # download must match the checksum in the crates.io index. The provenance job signs these
-      # files, so anyone can check that a crate came from this workflow.
+
+  # Attach each released `.crate` to its GitHub release, exactly as crates.io serves it: the
+  # download must match the checksum in the crates.io index. The provenance job signs these files,
+  # so anyone can check that a crate came from this workflow. A separate job from `release`, outside
+  # the `release` environment (limited to `main`), so that it can also run by hand from a tag.
+  attach:
+    name: Attach crates
+    needs: release
+    if: >-
+      ${{ !cancelled() && github.repository_owner == 'impierce'
+      && (needs.release.outputs.releases-created == 'true' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      tag: ${{ steps.crates.outputs.tag }}
+      hashes: ${{ steps.crates.outputs.hashes }}
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_PLZ_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_PRIVATE_KEY }}
+          permission-contents: write
       - id: crates
-        if: steps.release-plz.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-          RELEASES: ${{ steps.release-plz.outputs.releases }}
-          TAG: ${{ inputs.tag }}
+          RELEASES: ${{ needs.release.outputs.releases }}
         run: |
           set -euo pipefail
-          # Started by hand for an existing release: `identity-kit` is the only released package.
+          # Started by hand for an existing release: `identity-kit` is the only released package,
+          # and the run must be on its tag, which the provenance then names as its source.
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-              echo "::error::tag must look like v1.2.3, not $TAG"
+            if ! [[ "$GITHUB_REF" =~ ^refs/tags/(v([0-9]+\.[0-9]+\.[0-9]+))$ ]]; then
+              echo "::error::run this workflow from a release tag such as v1.2.3, not $GITHUB_REF"
               exit 1
             fi
-            RELEASES=$(jq -nc --arg version "${BASH_REMATCH[1]}" --arg tag "$TAG" \
+            RELEASES=$(jq -nc --arg version "${BASH_REMATCH[2]}" --arg tag "${BASH_REMATCH[1]}" \
               '[{package_name: "identity-kit", version: $version, tag: $tag}]')
           fi
           mkdir crates
@@ -84,12 +99,13 @@ jobs:
           }
           while read -r name version tag; do
             file="crates/$name-$version.crate"
-            # The index and the CDN can lag a few minutes behind the upload.
+            # The index and the CDN can lag a few minutes behind the upload. Each request is
+            # bounded, so a stalled transfer fails into the next attempt.
             for attempt in $(seq 1 30); do
-              expected=$(curl -fsSL "https://index.crates.io/$(index_path "$name")" \
+              expected=$(curl -fsSL --connect-timeout 10 --max-time 60 "https://index.crates.io/$(index_path "$name")" \
                 | jq -r --arg v "$version" 'select(.vers == $v) | .cksum' || true)
               if [ -n "$expected" ] \
-                && curl -fsSL -o "$file" "https://static.crates.io/crates/$name/$name-$version.crate" \
+                && curl -fsSL --connect-timeout 10 --max-time 120 -o "$file" "https://static.crates.io/crates/$name/$name-$version.crate" \
                 && echo "$expected  $file" | sha256sum --check --status; then
                 break
               fi
@@ -109,8 +125,8 @@ jobs:
   # Only one package is released, so its tag is the release the provenance goes to.
   provenance:
     name: Provenance
-    needs: release
-    if: needs.release.outputs.hashes != ''
+    needs: attach
+    if: ${{ !cancelled() && needs.attach.outputs.hashes != '' }}
     permissions:
       # Read the workflow run the provenance describes.
       actions: read
@@ -122,9 +138,9 @@ jobs:
     # its tag, which `slsa-verifier` checks.
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
-      base64-subjects: ${{ needs.release.outputs.hashes }}
+      base64-subjects: ${{ needs.attach.outputs.hashes }}
       upload-assets: true
-      upload-tag-name: ${{ needs.release.outputs.tag }}
+      upload-tag-name: ${{ needs.attach.outputs.tag }}
 
   # Open or update the release PR with the next version and changelog.
   release-pr:
