@@ -252,6 +252,23 @@ fn ec_thumbprint_is_stable_and_ignores_optional_members() {
 }
 
 #[test]
+fn oct_thumbprint_hashes_k_and_kty() {
+    use sha2::Digest as _;
+
+    // RFC 7517 Appendix A.3, first key. RFC 7638 §3.2: the required members of an `oct` key are
+    // `k` and `kty`, in lexicographic order.
+    let jwk: Jwk = serde_json::from_value(json!({
+        "kty": "oct", "alg": "A128KW", "k": "GawgguFyGrWKav7AX4VKUg"
+    }))
+    .unwrap();
+    let input = r#"{"k":"GawgguFyGrWKav7AX4VKUg","kty":"oct"}"#;
+    assert_eq!(
+        jwk.thumbprint_sha256().unwrap(),
+        URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(input))
+    );
+}
+
+#[test]
 fn thumbprint_needs_the_required_members() {
     let no_y: Jwk =
         serde_json::from_value(json!({ "kty": "EC", "crv": "P-256", "x": RFC7515_A3_X })).unwrap();
@@ -406,6 +423,23 @@ fn accessors_reject_broken_material() {
         short.ed25519_public_bytes(),
         Err(JwkError::InvalidKey { key: "Ed25519", .. })
     ));
+
+    // Either coordinate of the wrong length is enough.
+    let short_y = URL_SAFE_NO_PAD.encode(&b64(RFC7515_A3_Y)[1..]);
+    for (x, y, lengths) in [
+        (RFC7515_A3_X, short_y.as_str(), "32 and 31"),
+        (short_y.as_str(), RFC7515_A3_Y, "31 and 32"),
+    ] {
+        let jwk: Jwk =
+            serde_json::from_value(json!({ "kty": "EC", "crv": "P-256", "x": x, "y": y })).unwrap();
+        assert_eq!(
+            jwk.p256_public_bytes(),
+            Err(JwkError::InvalidKey {
+                key: "P-256",
+                reason: format!("expected 32-byte coordinates, found {lengths}"),
+            })
+        );
+    }
 
     // x and y of the right length that are not a point on P-256.
     let off_curve: Jwk = serde_json::from_value(json!({
