@@ -13,9 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone as _, Utc};
-use identity_kit::did::{
-    Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri, VerificationRelationship,
-};
+use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri};
 use identity_kit::domain_linkage::{
     CONTEXT, CREDENTIAL_TYPE, DomainLinkageClient, DomainLinkageConfiguration,
     DomainLinkageCredentialBuilder, DomainLinkageError, DomainLinkageValidator, LinkedDid,
@@ -26,8 +24,8 @@ use identity_kit::methods::DidKey;
 use identity_kit::methods::web::{DidWeb, HttpClient, HttpError, HttpResponse};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
-    CredentialValidationOptions, KeyResolutionError, KeyResolver, TimeOptions, ValidationError,
-    decode_credential,
+    CredentialValidationOptions, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
+    KeyRole, TimeOptions, ValidationError, decode_credential,
 };
 use identity_kit::vc::{Credential, Jwt, JwtClaims, Subject};
 use serde_json::{Value, json};
@@ -458,7 +456,9 @@ async fn format_rules() {
     ));
     assert!(matches!(
         validate_custom(&controller, JwsHeader::new(JwsAlgorithm::EdDSA), &claims).await,
-        Err(DomainLinkageError::Validation(ValidationError::MissingKid))
+        Err(DomainLinkageError::Validation(
+            ValidationError::KeyReference(KeyReferenceError::Missing)
+        ))
     ));
     let mut extra = header();
     extra
@@ -1219,11 +1219,11 @@ impl Counting {
 impl KeyResolver for Counting {
     async fn resolve_key(
         &self,
-        url: &DidUrl,
-        relationship: VerificationRelationship,
+        key: &KeyReference,
+        role: KeyRole,
     ) -> Result<Jwk, KeyResolutionError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        self.resolver.resolve_key(url, relationship).await
+        self.resolver.resolve_key(key, role).await
     }
 }
 

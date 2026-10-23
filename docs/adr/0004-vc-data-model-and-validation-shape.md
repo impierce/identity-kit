@@ -1,6 +1,6 @@
 # ADR 0004: `vc` keeps VCDM 1.1 and 2.0 apart, resolves keys through one `KeyResolver` method, and builds its types without builder structs
 
-- Status: accepted
+- Status: accepted; §3 and §5 amended by [ADR 0006](0006-extension-points-identity-and-key-reference.md)
 - Date: 2026-10-18
 
 ## Context

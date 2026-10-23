@@ -8,6 +8,7 @@ all-features = true
 # Also fail on unmaintained crates anywhere in the graph and on yanked versions.
 unmaintained = "all"
 yanked = "deny"
+# Keep in step with `osv-scanner.toml`, which OpenSSF Scorecard reads.
 ignore = [
     # Marvin attack: timing side channel in `rsa` private-key operations, no fixed version.
     # This crate uses `rsa` for public-key verification only; see docs/adr/0001-rsa-verification-only.md.

@@ -34,15 +34,18 @@ use serde::{Deserialize, Serialize};
 pub enum JwsAlgorithm {
     /// EdDSA with Ed25519 (RFC 8037).
     EdDSA,
-    /// ECDSA with P-256 and SHA-256 (RFC 7518 §3.4).
+    /// ECDSA with P-256 and SHA-256 (RFC 7518 §3.4). Verification accepts `s` and `n - s`
+    /// alike, as JOSE allows, so a JWS's bytes do not identify it; see
+    /// [`DefaultVerifier`](super::DefaultVerifier).
     ES256,
-    /// ECDSA with secp256k1 and SHA-256 (RFC 8812 §3.2).
+    /// ECDSA with secp256k1 and SHA-256 (RFC 8812 §3.2). Verification accepts only the lower of
+    /// `s` and `n - s`.
     ES256K,
     /// ECDSA with P-384 and SHA-384 (RFC 7518 §3.4).
     ES384,
-    /// RSASSA-PKCS1-v1_5 with SHA-256 (RFC 7518 §3.3).
+    /// RSASSA-PKCS1-v1_5 with SHA-256 (RFC 7518 §3.3), with a key of at least 2048 bits.
     RS256,
-    /// RSASSA-PSS with SHA-256 and MGF1 with SHA-256 (RFC 7518 §3.5).
+    /// RSASSA-PSS with SHA-256 and MGF1 with SHA-256 (RFC 7518 §3.5), with a key of at least 2048 bits.
     PS256,
 }
 

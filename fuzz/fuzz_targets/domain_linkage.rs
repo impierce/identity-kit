@@ -8,14 +8,15 @@ use std::future::Future;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
-use identity_kit::did::{DidDocument, DidUrl, VerificationRelationship};
+use identity_kit::did::DidDocument;
 use identity_kit::domain_linkage::{
     DomainLinkageClient, DomainLinkageConfiguration, DomainLinkageError, DomainLinkageValidator,
     SERVICE_TYPE, fetch_configuration, normalize_origin, service, services,
 };
 use identity_kit::jose::{DefaultVerifier, Jwk};
 use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
-use identity_kit::vc::validation::{CredentialValidationOptions, KeyResolutionError, KeyResolver};
+use identity_kit::resolver::{KeyReference, KeyResolutionError, KeyResolver, KeyRole};
+use identity_kit::vc::validation::CredentialValidationOptions;
 use libfuzzer_sys::fuzz_target;
 use url::Url;
 
@@ -50,11 +51,7 @@ struct NoKeys;
 
 #[async_trait::async_trait]
 impl KeyResolver for NoKeys {
-    async fn resolve_key(
-        &self,
-        _: &DidUrl,
-        _: VerificationRelationship,
-    ) -> Result<Jwk, KeyResolutionError> {
+    async fn resolve_key(&self, _: &KeyReference, _: KeyRole) -> Result<Jwk, KeyResolutionError> {
         Err(KeyResolutionError::msg("no keys"))
     }
 }

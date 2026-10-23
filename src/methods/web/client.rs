@@ -17,12 +17,17 @@ use super::{HttpClient, HttpError, HttpResponse};
 ///   else;
 /// - resolves host names itself and refuses loopback, private, link-local and other
 ///   non-public addresses, so a DID cannot point the resolver at internal services;
+/// - uses no proxy, whatever `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` or the platform's
+///   settings say: a proxy resolves the host itself, so it would reach the addresses refused
+///   above;
 /// - stops reading a body over [`DEFAULT_MAX_BODY`](Self::DEFAULT_MAX_BODY) bytes;
 /// - times out after [`DEFAULT_TIMEOUT`](Self::DEFAULT_TIMEOUT).
 ///
 /// [`ReqwestClient::from_client`] wraps a client the application configured itself, keeping
 /// only the HTTPS-only rule, the refusal of non-public IP literals and the body limit; the
-/// other protections are then the application's.
+/// other protections are then the application's. That is also how to fetch through an egress
+/// proxy: configure it on that client, and have the proxy refuse non-public targets, since it
+/// resolves the host names.
 ///
 /// # Local development and tests
 ///
@@ -71,6 +76,7 @@ impl ReqwestClient {
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .dns_resolver(Arc::new(PublicAddresses))
+            .no_proxy()
             .timeout(Self::DEFAULT_TIMEOUT)
             .user_agent(concat!("identity-kit/", env!("CARGO_PKG_VERSION")))
             .build()
@@ -86,6 +92,11 @@ impl ReqwestClient {
     /// A client over `client` as the application configured it, still HTTPS-only, refusing
     /// non-public IP literals, and reading at most [`DEFAULT_MAX_BODY`](Self::DEFAULT_MAX_BODY)
     /// bytes of body.
+    ///
+    /// Host names are resolved as `client` resolves them, so refusing the non-public
+    /// addresses they resolve to is the application's: with a DNS resolver like the one
+    /// [`new`](Self::new) installs, and, when `client` uses a proxy, by the proxy itself,
+    /// which resolves the host names it is asked to reach.
     pub const fn from_client(client: reqwest::Client) -> Self {
         Self {
             client,

@@ -61,7 +61,6 @@ mod credential_v2;
 mod disclosure;
 mod error;
 mod hash;
-mod path;
 mod sd_jwt;
 mod status;
 mod type_metadata;
@@ -76,17 +75,18 @@ pub use credential_v2::{SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCreden
 pub use disclosure::Disclosure;
 pub use error::SdJwtError;
 pub use hash::HashAlgorithm;
-pub use path::{ClaimPath, ClaimPathError, PathComponent};
 pub use sd_jwt::{DisclosedClaim, ELLIPSIS_KEY, KB_JWT_TYP, KeyBinding, Processed, SD_KEY, SdJwt};
 pub use status::{
     Status, StatusList, StatusListError, StatusListRef, StatusListToken, StatusMechanism,
     StatusType,
 };
+
+pub use crate::vc::{ClaimPath, ClaimPathError, PathComponent};
 pub use type_metadata::{
     ClaimDisplay, ClaimMetadata, DisplayMetadata, Integrity, IntegrityAlgorithm, IntegrityError,
     SdPolicy, TypeMetadata, TypeMetadataError,
 };
 pub use validation::{
-    KeyBindingOptions, SdJwtCredentialValidator, SdJwtStatusCheck, SdJwtValidationError,
-    SdJwtValidationOptions, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
+    KeyBindingOptions, SdJwtCredentialValidator, SdJwtValidationError, SdJwtValidationOptions,
+    ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
 };

@@ -64,6 +64,8 @@ impl SdJwtBuilder {
     /// The parsers of this crate read at most 128 nested containers (serde_json's default),
     /// and concealment, disclosures and the payload add a few around a claim value, so a
     /// claims set within this limit always processes back; one beyond it might not.
+    /// [`SdJwt::process`](super::SdJwt::process) enforces the same limit on the claims it
+    /// reassembles from the payload and the disclosures.
     pub const MAX_DEPTH: usize = 64;
 
     /// A builder over `claims`, nothing concealed yet.

@@ -1,4 +1,5 @@
-//! Claim paths (SD-JWT VC §5.6.1): where a claim sits in a payload.
+//! Claim paths (SD-JWT VC §5.6.1, the claims path pointer of OID4VP §7): where a claim sits in
+//! a JSON payload.
 
 use core::fmt;
 
@@ -51,17 +52,21 @@ impl fmt::Display for PathComponent {
     }
 }
 
-/// A path into a JSON payload, as the `path` of SD-JWT VC claim metadata: a non-empty list of
-/// property names, array indexes and `null` (every element). A path names the claim as if
-/// everything were disclosed.
+/// A path into a JSON payload: a non-empty list of property names, array indexes and `null`
+/// (every element).
+///
+/// SD-JWT VC §5.6.1 uses it as the `path` of claim metadata, where it names the claim as if
+/// everything were disclosed; OID4VP §7 defines the same construct as the claims path pointer
+/// of DCQL `claims[].path`, for every JSON-based credential format (`jwt_vc_json` and
+/// `dc+sd-jwt` alike). ISO mdoc paths, which OID4VP §7 defines differently, are out of scope.
 ///
 /// # Examples
 ///
 /// ```
-/// use identity_kit::sd_jwt_vc::ClaimPath;
+/// use identity_kit::vc::ClaimPath;
 /// use serde_json::json;
 ///
-/// // SD-JWT VC §5.6.1.1.
+/// // SD-JWT VC §5.6.1.1 and OID4VP §7.
 /// let credential = json!({
 ///   "name": "Arthur Dent",
 ///   "address": { "street_address": "42 Market Street", "city": "Milliways" },
@@ -267,14 +272,14 @@ impl fmt::Display for ClaimPath {
     }
 }
 
-/// A [`ClaimPath`](crate::sd_jwt_vc::ClaimPath) from components of mixed kinds: string
+/// A [`ClaimPath`](crate::vc::ClaimPath) from components of mixed kinds: string
 /// literals for names, integers for indexes, `()` for every element.
 ///
 /// # Examples
 ///
 /// ```
 /// use identity_kit::claim_path;
-/// use identity_kit::sd_jwt_vc::{ClaimPath, PathComponent};
+/// use identity_kit::vc::{ClaimPath, PathComponent};
 ///
 /// let path = claim_path!["degrees", (), "type"];
 /// assert_eq!(
@@ -286,7 +291,7 @@ impl fmt::Display for ClaimPath {
 #[macro_export]
 macro_rules! claim_path {
     ($($component:expr),* $(,)?) => {
-        $crate::sd_jwt_vc::ClaimPath::from(vec![$($crate::sd_jwt_vc::PathComponent::from($component)),*])
+        $crate::vc::ClaimPath::from(vec![$($crate::vc::PathComponent::from($component)),*])
     };
 }
 

@@ -609,13 +609,6 @@ fn jwt_type_and_claims_helpers() {
         serde_json::to_string(&claims).unwrap(),
         r#"{"aud":"did:example:verifier","exp":1573029723,"nbf":1573029723,"iat":1573029723,"nonce":"n-0S6_WzA2Mj"}"#
     );
-    assert_eq!(
-        claims.audiences().collect::<Vec<_>>(),
-        ["did:example:verifier"]
-    );
-    let many: JwtClaims = serde_json::from_value(json!({ "aud": ["a", "b"] })).unwrap();
-    assert_eq!(many.audiences().collect::<Vec<_>>(), ["a", "b"]);
-    assert_eq!(JwtClaims::new().audiences().count(), 0);
 
     // A 1.1 token must have `typ: JWT` when it has a `typ` at all.
     let header = r#"{"alg":"EdDSA","typ":"vc+jwt"}"#;
@@ -631,18 +624,11 @@ fn jwt_type_and_claims_helpers() {
     ));
 }
 
-/// RFC 7519 §2: a `NumericDate` may carry a fraction, which the claims drop; VCDM 1.1 §6.3.1
-/// maps `nbf` to `issuanceDate`, so the two agree at whole-second precision.
+/// RFC 7519 §2: a `NumericDate` is whole seconds here (`tests/jose_claims.rs` covers the
+/// parsing); VCDM 1.1 §6.3.1 maps `nbf` to `issuanceDate`, so the two agree at whole-second
+/// precision.
 #[test]
 fn numeric_dates_are_whole_seconds() {
-    let claims: JwtClaims =
-        serde_json::from_value(json!({ "iat": 1541493724.5, "exp": 1573029723.999 })).unwrap();
-    assert_eq!(
-        (claims.iat, claims.exp),
-        (Some(1541493724), Some(1573029723))
-    );
-    assert!(serde_json::from_value::<JwtClaims>(json!({ "exp": 1e300 })).is_err());
-
     let mut vc: Value = serde_json::from_str(EXAMPLE_1).unwrap();
     vc["issuanceDate"] = json!("2010-01-01T19:23:24.500Z");
     vc.as_object_mut().unwrap().remove("proof");

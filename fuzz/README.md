@@ -14,7 +14,8 @@ One file per target in [`fuzz_targets/`](fuzz_targets/); the doc comment at the 
 | `did_syntax`         | `Did`, `DidUrl`, `DidUrlReference`, `Uri`, `DidMethod`: parse, print, `join`, `with_fragment`, `with_did`, `resolve`, `matches` | a DID, DID URL, relative reference, URI or DID method |
 | `did_document`       | `DidDocument` JSON: parse, serialize, re-parse equal; every method and reference resolved                 | a JSON document                                              |
 | `did_methods`        | `did:key`, `did:jwk`, `did:web`: the Read operations, a DID produced from a key resolves back to that key | a DID or HTTPS URL on the first line, then a JWK as JSON     |
-| `jose`               | `CompactJws::decode`, JWK JSON, Multikey and SPKI decoding, verification with any key                     | a compact JWS on the first line, then a JWK as JSON          |
+| `jose`               | `CompactJws::decode`, JWK JSON, Multikey, SPKI and PKCS #1 decoding, verification with any key            | a compact JWS on the first line, then a JWK as JSON or DER   |
+| `ecdsa_der`          | `ecdsa_signature_from_der`, `normalize_ecdsa_signature`: sizes, normalization idempotent                  | a DER `ECDSA-Sig-Value`, also tried as a raw `r \|\| s`       |
 | `vc_jwt`             | `Jwt`, `JwtClaims`, VCDM 1.1 and 2.0 credentials and presentations, `data:` envelopes, presentation decoding | a JWT, a claims set or a credential as JSON                  |
 | `domain_linkage`     | `LinkedDomains` services of a document rebuilt from their origins, fetched bodies and statuses classified, nothing validated without a key | a DID document, a response body, or a status code and body |
 | `linked_vp`          | `LinkedVerifiablePresentation` services of a document, fetched bodies, linked presentation decoding and validation, `LinkedPresentationBuilder` claims round trip | a DID document, a response body, or builder input derived with `arbitrary` |

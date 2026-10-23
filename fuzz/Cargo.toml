@@ -51,6 +51,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "ecdsa_der"
+path = "fuzz_targets/ecdsa_der.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "vc_jwt"
 path = "fuzz_targets/vc_jwt.rs"
 test = false

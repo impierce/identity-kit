@@ -33,11 +33,13 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `Jwk` with private parameters redacted from `Debug`, `public()` view   |   ✅   |               | [RFC 7517][rfc7517]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | SHA-256 JWK thumbprint                                                 |   ✅   |               | [RFC 7638][rfc7638]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | `Jwk::from_spki_der` for keys returned by KMS and HSM backends         |   ✅   |               | [RFC 5280 §4.1.2.7](https://www.rfc-editor.org/rfc/rfc5280#section-4.1.2.7) | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| `ecdsa_signature_from_der` (strict DER) and `normalize_ecdsa_signature` (low `s` for ES256K), for signatures returned by KMS and HSM backends |   ✅   |               | [RFC 3279 §2.2.3](https://www.rfc-editor.org/rfc/rfc3279#section-2.2.3), [RFC 7518 §3.4](https://www.rfc-editor.org/rfc/rfc7518#section-3.4) | [#61](https://github.com/impierce/identity-kit/issues/61) |
+| `Jwk::from_pkcs1_der` and `to_pkcs1_der` for RSA public keys that vaults return as PKCS #1 |   ✅   |               | [RFC 8017 Appendix A.1.1](https://www.rfc-editor.org/rfc/rfc8017#appendix-A.1.1) | [#69](https://github.com/impierce/identity-kit/issues/69) |
 | Compact JWS decode, `Signer` and `JwsVerifier` traits, async `encode_compact` |   ✅   |               | [RFC 7515][rfc7515]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | `DefaultVerifier`: EdDSA, ES256 (ES384 is in `JwsAlgorithm` but not verified) |   ✅   |               | [RFC 7518][rfc7518], [RFC 8037][rfc8037]                              | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | ES256K verification via `k256`                                         |   ✅   | `secp256k1`   | [RFC 8812][rfc8812]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | RSA algorithms (RS256, PS256), verification only ([ADR 0001](adr/0001-rsa-verification-only.md)) |   ✅   | `rsa`         | [RFC 7518 §3.3, §3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.3) | [#7](https://github.com/impierce/identity-kit/issues/7) |
-| `JwtClaims` and `OneOrMany` moved down from `vc` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   📋   |               | [RFC 7519][rfc7519]                                                   | [#54](https://github.com/impierce/identity-kit/issues/54) |
+| `JwtClaims` and `OneOrMany` moved down from `vc` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7519][rfc7519]                                                   | [#54](https://github.com/impierce/identity-kit/issues/54) |
 
 ### `keys`: key stores
 
@@ -45,6 +47,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | ---------------------------------------------------------------------------------------- | :----: | -------------- | ----------------------------------------------- | --------------------------------------------------------- |
 | `KeyStore` trait: opaque `KeyId`, one algorithm per key, declared capabilities, async `sign` |   ✅   |                |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `KeySigner` adapter implementing `jose::Signer` over any `KeyStore`                       |   ✅   |                | [RFC 7515][rfc7515]                             | [#8](https://github.com/impierce/identity-kit/issues/8)   |
+| `KeySigner` over an owned store handle (`Arc<dyn KeyStore>`), and from a known public JWK |   ✅   |                |                                                 | [#62](https://github.com/impierce/identity-kit/issues/62) |
 | `InMemoryKeyStore` with optional deterministic seed                                       |   ✅   | `in-memory`    |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `SoftwareKeyStore`: private JWK set file, permission check, `zeroize`, atomic writes       |   ✅   | `software`     | [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5) | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `keys::testsuite`: one behavioural suite every backend must pass                           |   ✅   | `test-vectors` |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
@@ -54,8 +57,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                                                  | Status | Cargo feature | Specification                                   | Issue                                                     |
 | -------------------------------------------------------------------------------------------------------- | :----: | ------------- | ----------------------------------------------- | --------------------------------------------------------- |
-| `Identity` trait, `IdentityKind` (`Did(DidMethod)`, `JwkThumbprint`), `Identifier` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   📋   |               | [RFC 7638][rfc7638], [SIOPv2][siopv2]           | [#52](https://github.com/impierce/identity-kit/issues/52) |
-| `KeyStoreIdentity`: vendor-agnostic implementation over any `KeyStore` and the registered `DidProducer`s, opt-in key generation |   📋   |               |                                                 | [#52](https://github.com/impierce/identity-kit/issues/52) |
+| `Identity` trait, `IdentityKind` (`Did(DidMethod)`, `JwkThumbprint`), `Identifier` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7638][rfc7638], [SIOPv2][siopv2]           | [#52](https://github.com/impierce/identity-kit/issues/52) |
+| `KeyStoreIdentity`: vendor-agnostic implementation over any `KeyStore` and the registered `DidProducer`s, opt-in key generation |   ✅   |               |                                                 | [#52](https://github.com/impierce/identity-kit/issues/52) |
 
 ### `resolver`: resolution and production
 
@@ -64,8 +67,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `DidResolver` and `DidProducer` traits, `MethodCapabilities`                        |   ✅   |               | [DID Resolution][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
 | `Resolver` registry with builder, `DocumentCache` with TTL                          |   ✅   |               | [DID Resolution][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
 | DID URL dereferencing and `resolve_public_key`                                      |   ✅   |               | [DID Resolution §4][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
-| `KeyReference`, `KeyRole`, generic `KeyResolver` and `CompositeKeyResolver`; `kid`, relative `kid` + `iss`, `jwk` header, `cnf` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   📋   |               | [RFC 7515 §4.1][rfc7515], [RFC 7800][rfc7800] | [#53](https://github.com/impierce/identity-kit/issues/53) |
-| `JwksResolver`: HTTPS `iss` + `kid` over JWT VC issuer metadata (`jwks`, `jwks_uri`)             |   📋   | `jwks`        | [SD-JWT VC §3.5][sd-jwt-vc]      | [#53](https://github.com/impierce/identity-kit/issues/53) |
+| `KeyReference`, `KeyRole`, generic `KeyResolver` and `CompositeKeyResolver`; `kid`, relative `kid` + `iss`, `jwk` header, `cnf` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7515 §4.1][rfc7515], [RFC 7800][rfc7800] | [#53](https://github.com/impierce/identity-kit/issues/53) |
+| `JwksResolver`: HTTPS `iss` + `kid` over JWT VC issuer metadata (`jwks`, `jwks_uri`)             |   ✅   | `jwks`        | [SD-JWT VC §3.5][sd-jwt-vc]      | [#53](https://github.com/impierce/identity-kit/issues/53) |
 | `x5c` certificate chains and `jku`: in `KeyReference`, resolvers to follow                       |   📋   |               | [RFC 7515 §4.1][rfc7515]         | [#53](https://github.com/impierce/identity-kit/issues/53) |
 
 ### `methods`: DID methods
@@ -88,8 +91,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `JwtCredentialValidator`, `JwtPresentationValidator`: issuer and holder binding, clock-skew leeway, `FailFast`, `StatusCheck` hook |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VCDM 2.0][vcdm20]         | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `JwtPresentationValidator::validate_v2`, `decode_presentation_v2`: VCDM 2.0 `vp+jwt` presentations of enveloped `vc+jwt` credentials |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#36](https://github.com/impierce/identity-kit/issues/36) |
 | Additional accepted header `typ` values per validation (`additional_typ`)                                   |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose] | [#34](https://github.com/impierce/identity-kit/issues/34) |
-| One format-agnostic `StatusCheck` over `CredentialStatus::{Vcdm, SdJwt}`, replacing `SdJwtStatusCheck`      |   📋   | `vc`          | [VCDM 1.1][vcdm11], [Token Status List][status-list] | [#55](https://github.com/impierce/identity-kit/issues/55) |
-| `ClaimPath` moved out of the `sd-jwt` feature, `utoipa` schema                                               |   📋   | `vc`, `utoipa` | [SD-JWT VC §5.6.1][sd-jwt-vc], [OID4VP §7][oid4vp] | [#56](https://github.com/impierce/identity-kit/issues/56) |
+| One format-agnostic `StatusCheck` over `CredentialStatus::{Vcdm, SdJwt}`, replacing `SdJwtStatusCheck`      |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [Token Status List][status-list] | [#55](https://github.com/impierce/identity-kit/issues/55) |
+| `ClaimPath` moved out of the `sd-jwt` feature, `utoipa` schema                                               |   ✅   | `vc`, `utoipa` | [SD-JWT VC §5.6.1][sd-jwt-vc], [OID4VP §7][oid4vp] | [#56](https://github.com/impierce/identity-kit/issues/56) |
 
 ### `sd_jwt_vc`: SD-JWT verifiable credentials
 
@@ -102,7 +105,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `SdJwtCredentialV2Builder`: conceal credential properties, decoys, `cnf`, `status`, `iat`/`exp` beside `validFrom`/`validUntil` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `SdJwtCredentialValidator::validate_v2`: issuer binding, validity period, key binding, `credentialStatus` and `status` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901 §7][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `JwtPresentationValidator::validate_v2` and `decode_presentation_v2` unwrap `application/vc+sd-jwt` envelopes (`EnvelopedVc::to_sd_jwt`, `PresentedCredentialV2`), key binding required per `PresentationValidationOptions::key_binding` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.2][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
-| Key binding with the holder key from `cnf.kid` (resolved through `KeyReference`)      |   📋   | `sd-jwt`      | [RFC 7800 §3.4][rfc7800]                       | [#53](https://github.com/impierce/identity-kit/issues/53) |
+| Key binding with the holder key from `cnf.kid` (resolved through `KeyReference`)      |   ✅   | `sd-jwt`      | [RFC 7800 §3.4][rfc7800]                       | [#53](https://github.com/impierce/identity-kit/issues/53) |
 
 ### `domain_linkage`: DID configuration
 

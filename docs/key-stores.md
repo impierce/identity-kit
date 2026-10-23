@@ -11,11 +11,17 @@ remote signers (an HSM, a cloud KMS), and a software backend follows the same ru
 | Operation      | Contract                                                                                                                                               |
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `capabilities` | Truthful and stable. Every algorithm listed signs; `generate` and `delete` succeed only when `can_generate` / `can_delete` is set. No duplicate algorithms. |
-| `public_jwk`   | The public key, never private parameters. `alg` is set to the key's algorithm when the backend knows it; `kid` is the key id for the shipped backends.   |
+| `public_jwk`   | The public key, never private parameters. `alg` is set to the key's algorithm when the backend knows it; `kid` is the key id for the shipped backends. A backend whose vault returns DER builds the JWK with `Jwk::from_spki_der` (a `SubjectPublicKeyInfo`) or, for an RSA key returned as a PKCS #1 `RSAPublicKey`, `Jwk::from_pkcs1_der`. |
 | `sign`         | Takes the raw signing input (the backend hashes) and returns the JWS form of the signature: 64 bytes for EdDSA, raw `r \|\| s` for ECDSA (never DER), the modulus-sized octet string for RSA. |
 | `exists`       | `Ok(false)` for an unknown key, never an error.                                                                                                        |
 | `generate`     | Rejects a spec whose algorithm does not fit the key type (`InvalidSpec`), a key type or algorithm the backend cannot make (`UnsupportedKeyType`, `UnsupportedAlgorithm`) and a taken label (`AlreadyExists`). Default: `Unsupported("generate")`. |
 | `delete`       | `NotFound` for an unknown key. Default: `Unsupported("delete")`.                                                                                        |
+
+A backend whose signer answers in DER, as AWS KMS and Google Cloud KMS do for ECDSA keys,
+converts with `jose::ecdsa_signature_from_der`. A secp256k1 signature must have `s` in the lower
+half of the group order, the only one `DefaultVerifier` (like Bitcoin and most secp256k1
+verifiers) accepts; `ecdsa_signature_from_der` normalizes it, and a backend that already has
+`r || s` passes it through `jose::normalize_ecdsa_signature`. The test suite checks both.
 
 One key, one algorithm: a key created for `ES256` signs `ES256` and nothing else. Signing with
 any other algorithm, supported by the store or not, is `AlgorithmMismatch`. An unknown key is
@@ -23,7 +29,12 @@ any other algorithm, supported by the store or not, is `AlgorithmMismatch`. An u
 
 Callers cache the public key. `KeySigner` fetches it once, on construction, checks that the
 key's `alg` (if the public JWK carries one) is the algorithm asked for, and then implements
-`jose::Signer`; `encode_compact` never asks the store for anything but signatures.
+`jose::Signer`; `encode_compact` never asks the store for anything but signatures. A caller that
+already has the public key, stored next to the DID document it published for instance, builds
+the signer with `KeySigner::from_public_jwk` and saves the lookup, a network round trip for a
+remote backend. `KeySigner` holds the store by whatever handle it is given: a reference, or an
+`Arc<dyn KeyStore>` for a `'static` signer that moves into a spawned task or lives in shared
+application state.
 
 ### Errors
 
@@ -47,7 +58,7 @@ identity_kit::keys::testsuite::run_with_keys(&store, &[(key_id, JwsAlgorithm::ES
 
 The suite signs with every advertised algorithm and verifies with `DefaultVerifier` (algorithms
 it cannot verify in the current build are format-checked only), checks signature lengths and
-that ECDSA signatures are not DER, exercises `exists`, `NotFound`, `AlgorithmMismatch`,
+that ECDSA signatures are not DER, that ES256K signatures have a low `s`, exercises `exists`, `NotFound`, `AlgorithmMismatch`,
 `AlreadyExists`, `InvalidSpec`, the `Unsupported` defaults, and the JWS round trip through
 `KeySigner`. Every backend in this crate runs it in CI; a backend in another crate should too.
 
@@ -180,8 +191,8 @@ let store = Pkcs11KeyStore::open_with(
   secp256k1, say. The store hashes in-process (SHA-256) and signs the hash: `CKM_ECDSA`,
   `CKM_RSA_PKCS` over the SHA-256 `DigestInfo`, `CKM_RSA_PKCS_PSS` with SHA-256, MGF1-SHA-256
   and a 32-byte salt; EdDSA signs the message with `CKM_EDDSA`. ECDSA signatures are the raw
-  `r || s` PKCS#11 returns; a secp256k1 `s` is normalized to the lower half of the order, as
-  `k256` and Bitcoin require.
+  `r || s` PKCS#11 returns; a secp256k1 `s` is normalized to the lower half of the order with
+  `jose::normalize_ecdsa_signature`, as `k256` and Bitcoin require.
 - **RSA.** A PKCS#11 RSA key does not say whether it is for PKCS#1 v1.5 or PSS, so one
   algorithm per store, `RS256` by default: every RSA key's public JWK carries it, `sign`
   accepts only it for an RSA key and `generate` makes RSA keys (65537, 2048 or 4096 bits) for

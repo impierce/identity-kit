@@ -27,11 +27,16 @@ cargo publish --dry-run --locked
 cargo deny check
 ```
 
-The lower layer (`did`, `jose`, `keys`, `resolver`, `methods`) never imports the upper layer (`vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`).
+The lower layer (`did`, `jose`, `keys`, `identity`, `resolver`, `methods`) never imports the upper layer (`vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`).
 CI proves it by building with `--no-default-features --features did-key,software`, which leaves the upper modules out, and by checking that `cargo tree` in that configuration lists neither `chrono` nor `miniz_oxide`, the upper layer's own dependencies, nor `sd-jwt-payload`, an SD-JWT library the lower layer must never grow.
 
 CI also measures test coverage and reports it on the pull request via [Codecov](https://codecov.io/gh/impierce/identity-kit).
 To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and run `cargo llvm-cov --all-features --open`.
+
+[CodeQL](https://codeql.github.com/) scans the Rust code and the workflows on every pull request, with the `security-extended` queries; its alerts appear in the repository's code scanning view.
+`tests/` and `fuzz/` are left out ([`.github/codeql/codeql-config.yml`](.github/codeql/codeql-config.yml)): their specification vectors hold fixed keys and nonces on purpose.
+[OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/impierce/identity-kit) grades the repository's security practices on every push to `main` and weekly.
+Its Vulnerabilities check reads [`osv-scanner.toml`](osv-scanner.toml), which must ignore the same advisories as `deny.toml`, each with its reason.
 
 ### Fuzzing
 
