@@ -26,8 +26,8 @@ use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
 use identity_kit::resolver::{DidResolver, Resolver};
 use identity_kit::vc::validation::{
     CredentialValidationOptions, FailFast, JwtCredentialValidator, JwtPresentationValidator,
-    PresentationValidationError, PresentationValidationOptions, SubjectHolderRelationship,
-    TimeOptions, ValidationError, decode_presentation,
+    KeyReference, PresentationValidationError, PresentationValidationOptions,
+    SubjectHolderRelationship, TimeOptions, ValidationError, decode_presentation,
 };
 use identity_kit::vc::{Credential, CredentialError, Jwt, JwtClaims, Presentation, Subject};
 use serde_json::{Value, json};
@@ -610,7 +610,8 @@ async fn builder_refuses_a_key_of_another_did() {
     let other = DidUrl::parse("did:example:other#key-1").unwrap();
     assert!(matches!(
         builder(&holder).sign(&other, &holder.signer).await,
-        Err(LinkedVpError::Validation(ValidationError::HolderMismatch { kid, .. })) if kid == other
+        Err(LinkedVpError::Validation(ValidationError::HolderMismatch { key, .. }))
+            if *key == KeyReference::DidUrl(other.clone())
     ));
 }
 
@@ -687,7 +688,7 @@ async fn key_of_another_did_is_refused_before_resolving_it() {
         .unwrap_err();
     assert!(matches!(
         presentation_error(error),
-        ValidationError::HolderMismatch { kid, .. } if kid == foreign
+        ValidationError::HolderMismatch { key, .. } if *key == KeyReference::DidUrl(foreign.clone())
     ));
     assert_eq!(documents.calls.load(Ordering::SeqCst), 0);
 }

@@ -10,14 +10,14 @@ use std::task::{Context, Poll, Waker};
 
 use arbitrary::{Arbitrary, Unstructured};
 use chrono::DateTime;
-use identity_kit::did::{Did, DidDocument, DidUrl, ServiceEndpoint, Uri, VerificationRelationship};
+use identity_kit::did::{Did, DidDocument, ServiceEndpoint, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk};
 use identity_kit::linked_vp::{
     LinkedPresentationBuilder, LinkedVpClient, LinkedVpError, LinkedVpValidationOptions,
     LinkedVpValidator, SERVICE_TYPE, decode, service, services,
 };
 use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
-use identity_kit::vc::validation::{KeyResolutionError, KeyResolver};
+use identity_kit::resolver::{KeyReference, KeyResolutionError, KeyResolver, KeyRole};
 use identity_kit::vc::{Jwt, Presentation};
 use libfuzzer_sys::fuzz_target;
 use url::Url;
@@ -50,11 +50,7 @@ struct NoKeys;
 
 #[async_trait::async_trait]
 impl KeyResolver for NoKeys {
-    async fn resolve_key(
-        &self,
-        _: &DidUrl,
-        _: VerificationRelationship,
-    ) -> Result<Jwk, KeyResolutionError> {
+    async fn resolve_key(&self, _: &KeyReference, _: KeyRole) -> Result<Jwk, KeyResolutionError> {
         Err(KeyResolutionError::msg("no keys"))
     }
 }

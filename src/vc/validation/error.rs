@@ -2,12 +2,12 @@
 
 use core::fmt;
 use std::collections::BTreeMap;
-use std::error::Error;
 
 use chrono::{DateTime, Utc};
 
-use crate::did::{DidError, DidUrl, OneOrMany, Uri};
+use crate::did::{OneOrMany, Uri};
 use crate::jose::{JwsError, VerificationError};
+use crate::resolver::{KeyReference, KeyReferenceError, KeyResolutionError};
 use crate::vc::CredentialError;
 
 /// Why a credential or presentation JWT did not validate.
@@ -17,23 +17,10 @@ pub enum ValidationError {
     /// The token is not a compact JWS this crate decodes.
     #[error("invalid JWS: {0}")]
     Jws(#[from] JwsError),
-    /// The JWS header has no `kid`, so the signing key cannot be found.
-    #[error("the JWS header has no `kid`")]
-    MissingKid,
-    /// The `kid` is not a DID URL naming a verification method.
-    #[error("`kid` {kid:?} is not a DID URL: {source}")]
-    InvalidKid {
-        /// The `kid`.
-        kid: String,
-        /// Why it did not parse.
-        #[source]
-        source: DidError,
-    },
-    /// The `kid` carries a path or DID parameters. `versionId` and `versionTime` could select a
-    /// document version that still lists a retired key, so only `did:…#fragment` keys are
-    /// accepted.
-    #[error("`kid` `{0}` carries a path or DID parameters")]
-    KidWithParameters(DidUrl),
+    /// The JWS header names no key this crate can look for: no `kid`, a `kid` that is not a
+    /// DID URL, a DID URL with a path or DID parameters, a relative `kid` without a DID issuer.
+    #[error(transparent)]
+    KeyReference(#[from] KeyReferenceError),
     /// The header `typ` is not the one the profile requires.
     #[error("header `typ` is {found:?}, not `{expected}`")]
     UnexpectedTyp {
@@ -57,11 +44,11 @@ pub enum ValidationError {
         /// The claim found: `_sd_alg`, `_sd` or `...`.
         claim: &'static str,
     },
-    /// The key `kid` names could not be resolved.
-    #[error("resolving key `{kid}`: {source}")]
+    /// The key the token names could not be resolved.
+    #[error("resolving key {key}: {source}")]
     KeyResolution {
-        /// The `kid`.
-        kid: DidUrl,
+        /// Where the token says its key is.
+        key: Box<KeyReference>,
         /// What went wrong.
         #[source]
         source: KeyResolutionError,
@@ -70,12 +57,12 @@ pub enum ValidationError {
     #[error("signature: {0}")]
     Signature(#[from] VerificationError),
     /// The issuer of the credential does not control the key that signed it.
-    #[error("issuer `{issuer}` does not control signing key `{kid}`")]
+    #[error("issuer `{issuer}` does not control signing key {key}")]
     IssuerMismatch {
         /// The issuer of the credential.
         issuer: Uri,
-        /// The key that signed the JWT.
-        kid: DidUrl,
+        /// Where the token says its key is.
+        key: Box<KeyReference>,
     },
     /// The issuer is not a DID, so no key of it can be resolved.
     #[error("{role} `{id}` is not a DID")]
@@ -86,12 +73,12 @@ pub enum ValidationError {
         id: String,
     },
     /// The holder of the presentation does not control the key that signed it.
-    #[error("holder `{holder}` does not control signing key `{kid}`")]
+    #[error("holder `{holder}` does not control signing key {key}")]
     HolderMismatch {
         /// The holder of the presentation.
         holder: Uri,
-        /// The key that signed the JWT.
-        kid: DidUrl,
+        /// Where the token says its key is.
+        key: Box<KeyReference>,
     },
     /// The token or credential is not valid yet.
     #[error("not valid before {} (now is {})", not_before.to_rfc3339(), now.to_rfc3339())]
@@ -183,45 +170,6 @@ pub enum StatusError {
     /// The credential's status makes it unusable: `revoked`, `suspended`, …
     #[error("credential is {0}")]
     Invalid(String),
-}
-
-/// Why a key could not be resolved for a [`KeyResolver`](super::KeyResolver).
-#[derive(Debug)]
-pub struct KeyResolutionError(Box<dyn Error + Send + Sync + 'static>);
-
-impl KeyResolutionError {
-    /// Wraps `error`.
-    pub fn new<E: Error + Send + Sync + 'static>(error: E) -> Self {
-        Self(Box::new(error))
-    }
-
-    /// An error carrying only `message`.
-    pub fn msg<M: fmt::Display>(message: M) -> Self {
-        Self(message.to_string().into())
-    }
-
-    /// The wrapped error.
-    pub fn inner(&self) -> &(dyn Error + Send + Sync + 'static) {
-        &*self.0
-    }
-}
-
-impl fmt::Display for KeyResolutionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl Error for KeyResolutionError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.0.source()
-    }
-}
-
-impl From<crate::resolver::DereferenceError> for KeyResolutionError {
-    fn from(error: crate::resolver::DereferenceError) -> Self {
-        Self::new(error)
-    }
 }
 
 /// Why a presentation did not validate: the presentation itself, or some of its credentials.

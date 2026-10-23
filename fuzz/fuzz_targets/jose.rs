@@ -1,5 +1,6 @@
 //! JOSE (RFC 7515, RFC 7517, RFC 7638, Multikey, PKCS #1): compact JWS decoding, JWK
-//! deserialization, the key encodings and signature verification with any key never panic.
+//! deserialization, the key encodings, signature verification with any key, and reading where
+//! a header says its key is (`KeyReference`, ADR 0006) never panic.
 //!
 //! The input is a compact JWS on the first line, followed by a JWK as JSON; either part may be
 //! absent. The bytes after the first line are also tried as a DER `SubjectPublicKeyInfo` and a
@@ -10,6 +11,7 @@ use std::str::FromStr as _;
 use std::sync::LazyLock;
 
 use identity_kit::jose::{CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, KeyType};
+use identity_kit::resolver::KeyReference;
 use libfuzzer_sys::fuzz_target;
 
 /// The Ed25519 key of RFC 8037 Appendix A.1 and the P-256 key of RFC 7515 Appendix A.3.
@@ -40,6 +42,37 @@ fn exercise_jws(token: &str, keys: &[&Jwk]) {
         // Verification never panics; it succeeds only for a genuine signature, which the input
         // may carry when it is a specification vector next to its key.
         let _ = jws.verify(&DefaultVerifier, key);
+    }
+    exercise_key_reference(&jws, keys);
+}
+
+/// `iss` values that select each rule of `KeyReference::from_jws`: none, a DID, an HTTPS
+/// issuer, and something else.
+const ISSUERS: [Option<&str>; 4] = [
+    None,
+    Some("did:example:123"),
+    Some("https://issuer.example/tenant"),
+    Some("joe"),
+];
+
+fn exercise_key_reference(jws: &CompactJws, keys: &[&Jwk]) {
+    for iss in ISSUERS {
+        let Ok(reference) = KeyReference::from_jws(jws, iss) else {
+            continue;
+        };
+        let _ = reference.to_string();
+        match &reference {
+            // A DID URL never selects a document version or a resource by path (ADR 0004).
+            KeyReference::DidUrl(url) => assert!(url.path().is_none() && url.query().is_none()),
+            KeyReference::Jwk(jwk) => assert!(!jwk.is_private()),
+            KeyReference::Jwks { issuer, .. } => assert_eq!(issuer.scheme(), "https"),
+            _ => {}
+        }
+        for key in keys {
+            for party in ISSUERS {
+                let _ = reference.binds_to(party, key);
+            }
+        }
     }
 }
 

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use indexmap::IndexMap;
 use serde_json::Value;
 
-use crate::did::{Uri, VerificationRelationship};
+use crate::did::Uri;
 use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
 #[cfg(feature = "sd-jwt")]
 use crate::sd_jwt_vc::{SdJwtCredentialV2, SdJwtCredentialValidator, SdJwtValidationOptions};
@@ -18,7 +18,7 @@ use crate::vc::{
 use super::CredentialStatus;
 use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2, plain_claims};
 use super::{
-    DecodedCredential, DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver,
+    DecodedCredential, DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver, KeyRole,
     PresentationValidationError, PresentationValidationOptions, StatusCheck,
     SubjectHolderRelationship, ValidationError,
 };
@@ -265,7 +265,8 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     /// The checks are those of [`validate`](Self::validate), with the profile's own shape:
     /// `typ`, when present, is `vp+jwt` (or one of `options.additional_typ`); the payload is
     /// the presentation, with `iss` and `jti` agreeing with `holder` and `id` and no `vp`
-    /// claim; the holder, from `holder` or else `iss`, is required and is the DID of `kid`.
+    /// claim; the holder, from `holder` or else `iss`, is required and owns the signing key
+    /// ([`KeyReference::binds_to`](crate::resolver::KeyReference::binds_to)).
     /// Each credential is unwrapped from its `EnvelopedVerifiableCredential` and validated
     /// under `options.credentials`: an `application/vc+jwt` one with
     /// [`JwtCredentialValidator::validate_v2`]; with the `sd-jwt` feature, an
@@ -420,8 +421,8 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     }
 
     /// The checks both profiles share once the payload is decoded: the signature under a key
-    /// resolved for `authentication`, the holder (reported missing as `missing`) is the DID
-    /// of `kid`, the time claims, the audience and the nonce.
+    /// resolved for [`KeyRole::Subject`], the key belongs to the holder (reported missing as
+    /// `missing`), the time claims, the audience and the nonce.
     async fn check_holder_and_claims(
         &self,
         jws: &CompactJws,
@@ -430,12 +431,16 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
         claims: &JwtClaims,
         options: &PresentationValidationOptions,
     ) -> Result<(), ValidationError> {
-        let kid = self
+        let (reference, key) = self
             .credentials
-            .verify(jws, VerificationRelationship::Authentication)
+            .verify(
+                jws,
+                KeyRole::Subject,
+                holder.map(|holder| holder.id().as_str()),
+            )
             .await?;
         let holder = holder.ok_or(CredentialError::MissingClaim(missing))?;
-        check_controller(holder, &kid, "holder")?;
+        check_controller(holder, &reference, &key, "holder")?;
         options.time.check_claims(claims)?;
         if let Some(expected) = &options.audience
             && !claims.audiences().any(|aud| aud == expected)

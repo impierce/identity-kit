@@ -13,16 +13,22 @@
 //!    to 5, SD-JWT VC §2.2) or as an [`SdJwtCredentialV2`] (`typ` `vc+sd-jwt` when present,
 //!    or one of `options.additional_typ`; disclosures; the payload as a
 //!    [`CredentialV2`](crate::vc::CredentialV2) with its registered claims agreeing with it).
-//! 2. The `kid` of the issuer-signed JWT is a DID URL of the form `did:…#fragment` (a path or
-//!    DID parameters such as `versionId` are refused, as in the JWT validators, ADR 0004),
-//!    resolved under `assertionMethod`, and verifies the signature; the issuer (`iss`, or the
-//!    credential's `issuer`) is the DID of that `kid`. (Issuers identified by an HTTPS `iss`
-//!    with JWT VC issuer metadata, and `x5c` chains, are not resolved by this crate.)
+//! 2. The header of the issuer-signed JWT names its key ([`KeyReference::from_jws`], with the
+//!    issuer, `iss` or the credential's `issuer`, as `iss`): a `kid` that is a DID URL of the
+//!    form `did:…#fragment` (a path or DID parameters such as `versionId` are refused, as in
+//!    the JWT validators, ADR 0004), a `#fragment` relative to a DID issuer, a `kid` into the
+//!    JWT VC issuer metadata of an HTTPS issuer (SD-JWT VC §3.5, resolved by `JwksResolver`
+//!    with the `jwks` feature), or a `jwk`, `x5c` or `jku` header. The key is resolved for
+//!    [`KeyRole::Issuer`], verifies the signature, and belongs to the issuer
+//!    ([`KeyReference::binds_to`]).
 //! 3. `nbf`, `exp` and `iat` hold at the validation time, and so do `validFrom` and
 //!    `validUntil` of a VCDM 2.0 credential.
 //! 4. When the options require key binding (RFC 9901 §7.3): the SD-JWT+KB carries a key
-//!    binding JWT with `typ: kb+jwt`, signed by the key in `cnf`, for the expected audience
-//!    and nonce, issued within the window, with an `sd_hash` over the presented SD-JWT.
+//!    binding JWT with `typ: kb+jwt`, signed by the holder's key, for the expected audience
+//!    and nonce, issued within the window, with an `sd_hash` over the presented SD-JWT. The
+//!    holder's key is `cnf.jwk`, used as it is since the issuer signed it, or else the key
+//!    `cnf.kid` names, an absolute DID URL resolved for [`KeyRole::Subject`]
+//!    (`authentication`); see [`KeyReference::from_confirmation`].
 //! 5. `status` (as [`CredentialStatus::SdJwt`]) and the `credentialStatus` entries of a VCDM
 //!    2.0 credential (as [`CredentialStatus::Vcdm`]) pass the [`StatusCheck`], per the
 //!    [`StatusPolicy`].
@@ -35,12 +41,14 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 
-use super::{SdJwt, SdJwtCredentialV2, SdJwtCredentialV2Error, SdJwtVc, SdJwtVcError};
-use crate::did::{Did, DidUrl, Uri, VerificationRelationship};
+use super::{
+    Confirmation, SdJwt, SdJwtCredentialV2, SdJwtCredentialV2Error, SdJwtVc, SdJwtVcError,
+};
+use crate::did::Uri;
 use crate::jose::{DefaultVerifier, Jwk, JwsVerifier};
+use crate::resolver::{KeyReference, KeyReferenceError, KeyResolver, KeyRole};
 use crate::vc::validation::{
-    CredentialStatus, KeyResolver, StatusCheck, StatusPolicy, TimeOptions, ValidationError,
-    check_statuses,
+    CredentialStatus, StatusCheck, StatusPolicy, TimeOptions, ValidationError, check_statuses,
 };
 use crate::vc::{CredentialError, JwtClaims};
 
@@ -48,6 +56,10 @@ use crate::vc::{CredentialError, JwtClaims};
 pub use status_list::StatusListCheck;
 
 /// What a key binding JWT must prove (RFC 9901 §7.3, step 5).
+///
+/// The key binding JWT must be signed by the holder's key the credential's `cnf` names: by
+/// value in `cnf.jwk`, or by reference in `cnf.kid`, an absolute DID URL the validator's
+/// [`KeyResolver`] resolves for [`KeyRole::Subject`] (`authentication`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct KeyBindingOptions {
@@ -169,9 +181,10 @@ pub enum SdJwtValidationError {
     /// Key binding is required and the SD-JWT carries no key binding JWT.
     #[error("key binding is required, but the SD-JWT has no key binding JWT")]
     KeyBindingRequired,
-    /// Key binding is required and the credential carries no holder key in `cnf`.
-    #[error("key binding is required, but `cnf` carries no `jwk`")]
-    NoHolderKey,
+    /// Key binding is required and `cnf` names no key this crate can look for: there is no
+    /// `cnf`, or [`KeyReference::from_confirmation`] refuses it.
+    #[error("key binding is required, but `cnf` carries no usable key reference: {0}")]
+    NoHolderKey(KeyReferenceError),
     /// The key binding JWT is older than allowed.
     #[error("key binding JWT issued at {} is older than {max_age:?} (now is {})", issued_at.to_rfc3339(), now.to_rfc3339())]
     KeyBindingTooOld {
@@ -198,10 +211,14 @@ pub enum SdJwtValidationError {
 pub struct ValidatedSdJwtVc {
     /// The credential, with the presented disclosures applied.
     pub credential: SdJwtVc,
-    /// The verification method that signed it.
-    pub kid: DidUrl,
+    /// Where the issuer-signed JWT says its key is.
+    pub issuer_key: KeyReference,
     /// The claims of the key binding JWT, when key binding was required and verified.
     pub key_binding: Option<JwtClaims>,
+    /// The holder's key that verified the key binding JWT, and where `cnf` said it is (a DID
+    /// URL to compare with the presentation's holder or the credential subject, say), when key
+    /// binding was required and verified.
+    pub holder_key: Option<(KeyReference, Jwk)>,
 }
 
 /// A validated VCDM 2.0 credential secured with SD-JWT.
@@ -210,10 +227,13 @@ pub struct ValidatedSdJwtVc {
 pub struct ValidatedSdJwtCredentialV2 {
     /// The credential, with the presented disclosures applied.
     pub credential: SdJwtCredentialV2,
-    /// The verification method that signed it.
-    pub kid: DidUrl,
+    /// Where the issuer-signed JWT says its key is.
+    pub issuer_key: KeyReference,
     /// The claims of the key binding JWT, when key binding was required and verified.
     pub key_binding: Option<JwtClaims>,
+    /// The holder's key that verified the key binding JWT, and where `cnf` said it is, when key
+    /// binding was required and verified.
+    pub holder_key: Option<(KeyReference, Jwk)>,
 }
 
 /// Validates SD-JWT credentials; see the [module documentation](self) for the checks.
@@ -285,15 +305,16 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         if options.reject_legacy_typ && credential.has_legacy_typ() {
             return Err(SdJwtValidationError::LegacyTyp);
         }
-        let kid = self.verify_issuer_signature(credential.sd_jwt()).await?;
-
         let claims = credential.claims();
         let issuer = claims
             .iss
             .as_deref()
             .ok_or(CredentialError::MissingClaim("iss"))
             .map_err(ValidationError::from)?;
-        check_issuer(issuer, &kid)?;
+        let (issuer_key, key) = self
+            .verify_issuer_signature(credential.sd_jwt(), issuer)
+            .await?;
+        check_issuer(issuer, &issuer_key, &key)?;
 
         let mut time_claims = JwtClaims::new();
         time_claims.nbf = claims.nbf;
@@ -301,13 +322,14 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         time_claims.iat = claims.iat;
         options.time.check_claims(&time_claims)?;
 
-        let key_binding = match &options.key_binding {
-            Some(required) => Some(self.check_key_binding(
-                credential.sd_jwt(),
-                credential.holder_key(),
-                required,
-            )?),
-            None => None,
+        let (key_binding, holder_key) = match &options.key_binding {
+            Some(required) => {
+                let (claims, holder_key) = self
+                    .check_key_binding(credential.sd_jwt(), credential.confirmation(), required)
+                    .await?;
+                (Some(claims), Some(holder_key))
+            }
+            None => (None, None),
         };
 
         self.check_status(claims.status.iter().map(CredentialStatus::SdJwt), options)
@@ -315,8 +337,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
 
         Ok(ValidatedSdJwtVc {
             credential,
-            kid,
+            issuer_key,
             key_binding,
+            holder_key,
         })
     }
 
@@ -369,61 +392,89 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         credential: SdJwtCredentialV2,
         options: &SdJwtValidationOptions,
     ) -> Result<ValidatedSdJwtCredentialV2, SdJwtValidationError> {
-        let kid = self.verify_issuer_signature(credential.sd_jwt()).await?;
         let vc = credential.credential();
-        check_issuer(vc.issuer.id().as_str(), &kid)?;
+        let issuer = vc.issuer.id().as_str();
+        let (issuer_key, key) = self
+            .verify_issuer_signature(credential.sd_jwt(), issuer)
+            .await?;
+        check_issuer(issuer, &issuer_key, &key)?;
         options.time.check_claims(credential.claims())?;
         options.time.check(vc.valid_from, vc.valid_until, None)?;
-        let key_binding = match &options.key_binding {
-            Some(required) => Some(self.check_key_binding(
-                credential.sd_jwt(),
-                credential.holder_key(),
-                required,
-            )?),
-            None => None,
+        let (key_binding, holder_key) = match &options.key_binding {
+            Some(required) => {
+                let (claims, holder_key) = self
+                    .check_key_binding(credential.sd_jwt(), credential.confirmation(), required)
+                    .await?;
+                (Some(claims), Some(holder_key))
+            }
+            None => (None, None),
         };
         Ok(ValidatedSdJwtCredentialV2 {
             credential,
-            kid,
+            issuer_key,
             key_binding,
+            holder_key,
         })
     }
 
-    /// Resolves the `kid` of the issuer-signed JWT under `assertionMethod` and verifies the
-    /// signature; the `kid`.
-    async fn verify_issuer_signature(&self, sd_jwt: &SdJwt) -> Result<DidUrl, ValidationError> {
+    /// Resolves the key the issuer-signed JWT names, `issuer` being its issuer, for
+    /// [`KeyRole::Issuer`] and verifies the signature; the reference and the key.
+    async fn verify_issuer_signature(
+        &self,
+        sd_jwt: &SdJwt,
+        issuer: &str,
+    ) -> Result<(KeyReference, Jwk), ValidationError> {
         let jws = sd_jwt.jwt().decode()?;
-        let kid = jws.kid().ok_or(ValidationError::MissingKid)?;
-        let kid = DidUrl::parse(kid).map_err(|source| ValidationError::InvalidKid {
-            kid: kid.to_owned(),
-            source,
-        })?;
-        if kid.path().is_some() || kid.query().is_some() {
-            return Err(ValidationError::KidWithParameters(kid));
-        }
+        let reference = KeyReference::from_jws(&jws, Some(issuer))?;
         let key = self
             .resolver
-            .resolve_key(&kid, VerificationRelationship::AssertionMethod)
+            .resolve_key(&reference, KeyRole::Issuer)
             .await
             .map_err(|source| ValidationError::KeyResolution {
-                kid: kid.clone(),
+                key: Box::new(reference.clone()),
                 source,
             })?;
         jws.verify(&self.verifier, &key)?;
-        Ok(kid)
+        Ok((reference, key))
     }
 
-    /// RFC 9901 §7.3, step 5: the key binding JWT of `sd_jwt`, signed by `holder_key`.
-    fn check_key_binding(
+    /// The holder's key `cnf` names: `cnf.jwk` as it is, since the issuer signed it, or the
+    /// key a `cnf.kid` resolves to for [`KeyRole::Subject`].
+    async fn holder_key(
+        &self,
+        cnf: Option<&Confirmation>,
+    ) -> Result<(KeyReference, Jwk), SdJwtValidationError> {
+        let cnf = cnf.ok_or(SdJwtValidationError::NoHolderKey(
+            KeyReferenceError::Missing,
+        ))?;
+        let reference =
+            KeyReference::from_confirmation(cnf).map_err(SdJwtValidationError::NoHolderKey)?;
+        let key = match &reference {
+            KeyReference::Jwk(jwk) => jwk.public(),
+            reference => self
+                .resolver
+                .resolve_key(reference, KeyRole::Subject)
+                .await
+                .map_err(|source| ValidationError::KeyResolution {
+                    key: Box::new(reference.clone()),
+                    source,
+                })?,
+        };
+        Ok((reference, key))
+    }
+
+    /// RFC 9901 §7.3, step 5: the key binding JWT of `sd_jwt`, signed by the key `cnf` names;
+    /// its claims and that key.
+    async fn check_key_binding(
         &self,
         sd_jwt: &SdJwt,
-        holder_key: Option<&Jwk>,
+        cnf: Option<&Confirmation>,
         required: &KeyBindingOptions,
-    ) -> Result<JwtClaims, SdJwtValidationError> {
+    ) -> Result<(JwtClaims, (KeyReference, Jwk)), SdJwtValidationError> {
         let kb_jwt = sd_jwt
             .key_binding_jwt()
             .ok_or(SdJwtValidationError::KeyBindingRequired)?;
-        let holder_key = holder_key.ok_or(SdJwtValidationError::NoHolderKey)?;
+        let holder_key = self.holder_key(cnf).await?;
         let jws = kb_jwt.decode().map_err(ValidationError::from)?;
         match jws.header().typ.as_deref() {
             Some(super::KB_JWT_TYP) => {}
@@ -435,7 +486,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
                 .into());
             }
         }
-        jws.verify(&self.verifier, holder_key)
+        jws.verify(&self.verifier, &holder_key.1)
             .map_err(ValidationError::from)?;
         let claims: JwtClaims = serde_json::from_slice(jws.payload())
             .map_err(|e| ValidationError::Payload(e.to_string()))?;
@@ -490,7 +541,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
                 found: found.map(str::to_owned),
             });
         }
-        Ok(claims)
+        Ok((claims, holder_key))
     }
 
     /// Checks every status entry with this validator's check, per the policy, at the
@@ -510,16 +561,16 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
     }
 }
 
-/// Checks that `issuer` is the DID of `kid`, the controller of the signing key.
-fn check_issuer(issuer: &str, kid: &DidUrl) -> Result<(), ValidationError> {
-    let issuer_did = Did::parse(issuer).map_err(|_| ValidationError::NotDid {
-        role: "issuer",
-        id: issuer.to_owned(),
-    })?;
-    if issuer_did != *kid.did() {
+/// Checks that `key`, which `reference` resolved to, belongs to `issuer`
+/// ([`KeyReference::binds_to`]).
+fn check_issuer(issuer: &str, reference: &KeyReference, key: &Jwk) -> Result<(), ValidationError> {
+    if !reference.binds_to(Some(issuer), key) {
         return Err(ValidationError::IssuerMismatch {
-            issuer: Uri::from(issuer_did),
-            kid: kid.clone(),
+            issuer: Uri::parse(issuer).map_err(|e| CredentialError::InvalidClaim {
+                claim: "iss",
+                reason: e.to_string(),
+            })?,
+            key: Box::new(reference.clone()),
         });
     }
     Ok(())
@@ -540,21 +591,25 @@ mod status_list {
     use chrono::{DateTime, Utc};
     use url::Url;
 
-    use crate::did::{DidUrl, VerificationRelationship};
     use crate::jose::{DefaultVerifier, JwsVerifier};
     use crate::methods::web::HttpClient;
+    use crate::resolver::{KeyReference, KeyResolver, KeyRole};
     use crate::sd_jwt_vc::{StatusListToken, StatusMechanism};
     use crate::vc::Jwt;
-    use crate::vc::validation::{CredentialStatus, KeyResolver, StatusCheck, StatusError};
+    use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError};
 
     /// A [`StatusCheck`] for the Token Status List: for the `status` claim of an SD-JWT
     /// credential ([`CredentialStatus::SdJwt`]), fetches the status list token from the
-    /// referenced URI with an [`HttpClient`], verifies it was signed by the key its `kid`
-    /// names, resolved under `assertionMethod`, and reads the status at the referenced
-    /// index (Token Status List §8).
+    /// referenced URI with an [`HttpClient`], verifies it was signed by the key its header
+    /// names ([`KeyReference::from_jws`] with the token's `iss`), resolved for
+    /// [`KeyRole::Issuer`], and reads the status at the referenced index (Token Status List
+    /// §8).
     ///
-    /// The check trusts the key `kid` resolves to; whether that key may speak for the list is
-    /// the application's policy to enforce around it, by restricting the resolver, say.
+    /// When the token has an `iss`, the key must belong to it ([`KeyReference::binds_to`]);
+    /// without one, only a key named by a DID URL is accepted, since a key by value or a key
+    /// set could be anybody's. Beyond that the check trusts the key the reference resolves
+    /// to; whether that key may speak for the list is the application's policy to enforce
+    /// around it, by restricting the resolver, say.
     ///
     /// The status list URI comes from the credential, so the client fetches whatever an issuer
     /// names: `client` must enforce the protections `ReqwestClient` (feature `reqwest`) does
@@ -596,29 +651,32 @@ mod status_list {
                 .map_err(|_| StatusError::Unavailable(format!("{uri}: body is not UTF-8")))?;
             let jwt = Jwt::new(body.trim())
                 .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
-            let (header, token) = StatusListToken::decode(&jwt)
+            let (_, token) = StatusListToken::decode(&jwt)
                 .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
-            let kid = header
-                .kid
-                .as_deref()
-                .ok_or_else(|| StatusError::Unavailable(format!("{uri}: no `kid`")))?;
-            let kid = DidUrl::parse(kid).map_err(|e| {
-                StatusError::Unavailable(format!("{uri}: `kid` {kid:?} is not a DID URL: {e}"))
-            })?;
-            if kid.path().is_some() || kid.query().is_some() {
-                return Err(StatusError::Unavailable(format!(
-                    "{uri}: `kid` `{kid}` carries a path or DID parameters"
-                )));
-            }
+            let jws = jwt
+                .decode()
+                .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
+            let iss = token.additional.get("iss").and_then(|iss| iss.as_str());
+            let reference = KeyReference::from_jws(&jws, iss)
+                .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
             let key = self
                 .resolver
-                .resolve_key(&kid, VerificationRelationship::AssertionMethod)
+                .resolve_key(&reference, KeyRole::Issuer)
                 .await
-                .map_err(|e| StatusError::Unavailable(format!("{uri}: resolving `kid`: {e}")))?;
-            jwt.decode()
-                .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?
-                .verify(&self.verifier, &key)
+                .map_err(|e| {
+                    StatusError::Unavailable(format!("{uri}: resolving key {reference}: {e}"))
+                })?;
+            jws.verify(&self.verifier, &key)
                 .map_err(|e| StatusError::Unavailable(format!("{uri}: signature: {e}")))?;
+            let bound = match iss {
+                Some(iss) => reference.binds_to(Some(iss), &key),
+                None => matches!(reference, KeyReference::DidUrl(_)),
+            };
+            if !bound {
+                return Err(StatusError::Unavailable(format!(
+                    "{uri}: key {reference} does not belong to the issuer {iss:?}"
+                )));
+            }
             Ok(token)
         }
     }
