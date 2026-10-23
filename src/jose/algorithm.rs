@@ -40,9 +40,9 @@ pub enum JwsAlgorithm {
     ES256K,
     /// ECDSA with P-384 and SHA-384 (RFC 7518 §3.4).
     ES384,
-    /// RSASSA-PKCS1-v1_5 with SHA-256 (RFC 7518 §3.3).
+    /// RSASSA-PKCS1-v1_5 with SHA-256 (RFC 7518 §3.3), with a key of at least 2048 bits.
     RS256,
-    /// RSASSA-PSS with SHA-256 and MGF1 with SHA-256 (RFC 7518 §3.5).
+    /// RSASSA-PSS with SHA-256 and MGF1 with SHA-256 (RFC 7518 §3.5), with a key of at least 2048 bits.
     PS256,
 }
 

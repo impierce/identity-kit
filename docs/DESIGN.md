@@ -271,7 +271,9 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   queries and fragments; encode a non-default port as `%3A<port>`), DID to document URL mapping
   (`https://host[:port]/.well-known/did.json` when no path segments, else
   `https://host[:port]/<segments>/did.json`), resolver over an injected `HttpClient` trait
-  (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only),
+  (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only, no
+  proxy, since a proxy resolves the host itself; `from_client` wraps an application's own
+  client, proxy included, whose address checks are then the application's),
   producer taking the document URL and setting `@context` to `["https://www.w3.org/ns/did/v1",
   "https://w3id.org/security/suites/jws-2020/v1"]`. For development and tests only, the
   `local-network` feature adds `ReqwestClient::builder` with

@@ -648,6 +648,59 @@ mod reqwest_client {
         }
     }
 
+    /// `new` uses no proxy, whatever the environment says: a proxy resolves the host itself,
+    /// so it would reach the addresses the client refuses. Setting this process's environment
+    /// would need `unsafe` and race with the other tests, so the test runs itself again as a
+    /// child process whose proxy variables all point at a listener here.
+    #[tokio::test]
+    async fn ignores_proxies_from_the_environment() {
+        const CHILD: &str = "IDENTITY_KIT_TEST_PROXY_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            // `localhost` has no public address, so a direct fetch fails before connecting;
+            // through the proxy, the proxy would be asked for `localhost:443` instead.
+            let error = ReqwestClient::new()
+                .unwrap()
+                .get(&url("https://localhost/.well-known/did.json"))
+                .await
+                .unwrap_err();
+            let message = format!("{error}: {:?}", std::error::Error::source(&error));
+            assert!(message.contains("no public address"), "{message}");
+            return;
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        // The test's path inside this test binary, without the binary's own name.
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let name = format!("{module}::ignores_proxies_from_the_environment");
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.args([name.as_str(), "--exact", "--nocapture"]);
+        command.env(CHILD, "1");
+        for variable in ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"] {
+            command.env(variable, &proxy);
+            command.env(variable.to_lowercase(), &proxy);
+        }
+        command.env_remove("NO_PROXY").env_remove("no_proxy");
+        let output = command.output().unwrap();
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // The child must have run the test, not filtered it out.
+        assert!(
+            output.status.success() && report.contains("1 passed"),
+            "{report}"
+        );
+        assert!(
+            listener
+                .accept()
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock),
+            "the client connected to the proxy"
+        );
+    }
+
     #[tokio::test]
     async fn default_methods_register_everything() {
         let resolver =

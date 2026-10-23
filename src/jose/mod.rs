@@ -26,7 +26,8 @@
 //! # Cargo features
 //!
 //! - `secp256k1` (default): ES256K and secp256k1 keys, via `k256`.
-//! - `rsa`: RS256 and PS256, via `rsa`.
+//! - `rsa`: RS256 and PS256, via `rsa`, with keys of at least 2048 bits (RFC 7518 §3.3,
+//!   §3.5).
 
 mod algorithm;
 pub(crate) mod base64url;

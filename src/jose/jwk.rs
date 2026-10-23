@@ -134,6 +134,28 @@ fn decode_member(name: &'static str, value: Option<&str>) -> Result<Vec<u8>, Jwk
     base64url::decode(value).map_err(|_| JwkError::InvalidBase64Url(name))
 }
 
+/// The shortest RSA modulus, in bits, a key may have to verify RS256 or PS256 signatures:
+/// RFC 7518 §3.3 and §3.5 require "a key of size 2048 bits or larger".
+const MIN_RSA_MODULUS_BITS: usize = 2048;
+
+/// Refuses an RSA modulus `n` (big-endian, leading zero octets allowed) shorter than
+/// [`MIN_RSA_MODULUS_BITS`].
+fn check_rsa_modulus_size(n: &[u8]) -> Result<(), JwkError> {
+    let bits = match n.iter().position(|&b| b != 0) {
+        Some(first) => (n.len() - first) * 8 - n[first].leading_zeros() as usize,
+        None => 0,
+    };
+    if bits < MIN_RSA_MODULUS_BITS {
+        return Err(JwkError::InvalidKey {
+            key: "RSA",
+            reason: format!(
+                "the modulus is {bits} bits; RS256 and PS256 need at least {MIN_RSA_MODULUS_BITS}"
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl Jwk {
     /// A key with only `kty` set, the starting point of the `from_*` constructors.
     fn with_kty(kty: &str) -> Self {
@@ -245,8 +267,10 @@ impl Jwk {
     /// An `RSA` key from the big-endian modulus `n` and public exponent `e`.
     ///
     /// Leading zero octets are dropped, as RFC 7518 §6.3.1 requires. The values are not checked
-    /// beyond being non-empty; [`DefaultVerifier`](super::DefaultVerifier) rejects an unusable
-    /// modulus or exponent when the key is used.
+    /// beyond being non-empty, like the other parsers of this crate leave the rules of an
+    /// algorithm to verification: [`DefaultVerifier`](super::DefaultVerifier) and
+    /// [`Jwk::to_decoding_key`] refuse a modulus shorter than 2048 bits (RFC 7518 §3.3, §3.5),
+    /// and the verifier an otherwise unusable modulus or exponent, when the key is used.
     ///
     /// # Errors
     ///
@@ -659,9 +683,19 @@ impl Jwk {
                 reason: "modulus and exponent must not be empty".to_owned(),
             });
         }
+        check_rsa_modulus_size(&n)?;
+        // `rsa` sizes an integer by its octets, so a leading zero octet (which RFC 7518 §6.3.1
+        // forbids but a JWK may carry) would make the modulus one octet longer than its value.
+        let trim = |value: &[u8]| {
+            let first = value
+                .iter()
+                .position(|&b| b != 0)
+                .unwrap_or(value.len() - 1);
+            value[first..].to_vec()
+        };
         rsa::RsaPublicKey::new(
-            rsa::BoxedUint::from_be_slice_vartime(&n),
-            rsa::BoxedUint::from_be_slice_vartime(&e),
+            rsa::BoxedUint::from_be_slice_vartime(&trim(&n)),
+            rsa::BoxedUint::from_be_slice_vartime(&trim(&e)),
         )
         .map_err(|e| JwkError::InvalidKey {
             key: "RSA",
@@ -677,7 +711,9 @@ impl Jwk {
     /// # Errors
     ///
     /// [`JwkError::UnsupportedKeyType`] for any other key, [`JwkError::MissingMember`] when a
-    /// required member is absent and [`JwkError::DecodingKey`] when `jsonwebtoken` rejects the
+    /// required member is absent, [`JwkError::InvalidBase64Url`] for an RSA modulus or exponent
+    /// that is not base64url, [`JwkError::InvalidKey`] for an RSA modulus shorter than 2048 bits
+    /// (RFC 7518 §3.3, §3.5) and [`JwkError::DecodingKey`] when `jsonwebtoken` rejects the
     /// material.
     pub fn to_decoding_key(&self) -> Result<jsonwebtoken::DecodingKey, JwkError> {
         use jsonwebtoken::DecodingKey;
@@ -689,10 +725,13 @@ impl Jwk {
                 self.x().ok_or(JwkError::MissingMember("x"))?,
                 self.y().ok_or(JwkError::MissingMember("y"))?,
             ),
-            ("RSA", _) => DecodingKey::from_rsa_components(
-                self.n().ok_or(JwkError::MissingMember("n"))?,
-                self.e().ok_or(JwkError::MissingMember("e"))?,
-            ),
+            ("RSA", _) => {
+                check_rsa_modulus_size(&self.rsa_public_components()?.0)?;
+                DecodingKey::from_rsa_components(
+                    self.n().ok_or(JwkError::MissingMember("n"))?,
+                    self.e().ok_or(JwkError::MissingMember("e"))?,
+                )
+            }
             _ => return Err(self.unsupported()),
         };
         result.map_err(|e| JwkError::DecodingKey(e.to_string()))
