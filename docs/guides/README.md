@@ -7,7 +7,7 @@ is always current.
 | Guide | Use it to | Main types |
 | ----- | --------- | ---------- |
 | [Keys and DIDs](keys-and-dids.md) | Generate a key in a key store, derive a `did:key` or `did:jwk` for it, and resolve the DID to its document and public key | `InMemoryKeyStore`, `KeyStore`, `DidKey`, `DidJwk`, `Resolver` |
-| [Sign and verify a JWS](sign-and-verify.md) | Sign a payload with a key store key under a DID, and verify a compact JWS by resolving its `kid` | `KeySigner`, `JwsHeader`, `encode_compact`, `CompactJws`, `DefaultVerifier` |
+| [Sign and verify a JWS](sign-and-verify.md) | Sign a payload with a key store key under a DID, and verify a compact JWS by resolving the key its header names | `KeySigner`, `JwsHeader`, `encode_compact`, `CompactJws`, `KeyReference`, `KeyResolver`, `DefaultVerifier` |
 | [Issue and verify a JWT credential](jwt-credentials.md) | Issue a verifiable credential as a JWT, present it in a holder-signed presentation, and validate both | `Credential`, `Presentation`, `Jwt`, `JwtCredentialValidator`, `JwtPresentationValidator` |
 | [Selective disclosure with SD-JWT VC](sd-jwt-vc.md) | Issue an SD-JWT VC with concealed claims, present a subset with key binding, and validate it | `SdJwtVcBuilder`, `SdJwtVc`, `KeyBinding`, `SdJwtCredentialValidator` |
 

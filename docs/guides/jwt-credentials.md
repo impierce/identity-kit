@@ -138,6 +138,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Status.** A credential with `credentialStatus` is checked through a `StatusCheck` you attach
   with `JwtCredentialValidator::with_status_check`; `StatusPolicy` decides what happens to a
   credential whose status cannot be determined.
+- **Finding the keys.** The validators take any `KeyResolver`, not only a DID `Resolver`:
+  `JwksResolver` (feature `jwks`) for issuers with an HTTPS identifier, `JwkResolver` for a key
+  in a `jwk` header, or several in a `CompositeKeyResolver`. Whatever finds the key, the
+  validator checks that it belongs to the issuer (`iss`) or holder.
+- **Not for SD-JWT.** A payload with `_sd`, `_sd_alg` or `...` digests is an SD-JWT, whose
+  concealed claims would look absent here; the validators refuse it with
+  `ValidationError::SdJwtPayload`. Validate it with `SdJwtCredentialValidator`
+  ([next guide](sd-jwt-vc.md)).
 - **Errors are typed.** Validation fails with a `ValidationError` (or
   `PresentationValidationError`) that names the check: `Expired`, `IssuerMismatch`,
   `AudienceMismatch`, `NonceMismatch` and so on. With `FailFast::AllErrors` a presentation

@@ -88,5 +88,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **`did:web`.** The document lives on a web server, so the DID does not change when keys
   rotate. Register `DidWeb` with the resolver; it fetches over HTTPS with a hardened client
   (feature `reqwest`).
+- **One identity, several identifiers.** When a protocol negotiates the identifier and the
+  algorithm (a `did:key` or a `did:jwk`, EdDSA or ES256), `KeyStoreIdentity` (module `identity`)
+  keeps the keys bound to each pair and hands out, for the chosen pair, the `iss`/`sub` value,
+  the public JWK and a `Signer` whose `kid` names the verification method.
 
 Next: [sign and verify a JWS](sign-and-verify.md).

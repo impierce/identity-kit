@@ -29,9 +29,10 @@ cargo add serde_json chrono
    audience and nonce, signed with the holder key. The result serializes to the `~`-separated
    compact form that goes over the wire.
 5. **Validate.** The verifier parses the presentation and runs `SdJwtCredentialValidator`: the
-   issuer's signature and its binding to the DID in `kid`, the disclosures against their
-   digests, the validity period, and the key binding JWT against the `cnf` key, audience and
-   nonce. The validated payload holds the disclosed claims only.
+   issuer's signature with the key its header names (here a DID URL in `kid`) and that key's
+   binding to `iss`, the disclosures against their digests, the validity period, and the key
+   binding JWT against the `cnf` key, audience and nonce. The validated payload holds the
+   disclosed claims only.
 
 ```rust
 use chrono::{Duration, Utc};
@@ -129,8 +130,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Key binding is the verifier's choice.** Without `with_key_binding`, the validator accepts
   the presentation and ignores any key binding JWT. Require it whenever the credential should
   only be usable by its holder.
+- **Issuers with an HTTPS identifier.** The validator takes any `KeyResolver`. With the
+  `jwks` feature, `JwksResolver` finds the issuer's key through the JWT VC issuer metadata of an
+  HTTPS `iss`; a `CompositeKeyResolver` accepts both kinds of issuer.
 - **Status and type metadata.** A credential can point to a Token Status List
-  (`with_status`) that the validator checks through an `SdJwtStatusCheck`, and `TypeMetadata`
+  (`with_status`) that the validator checks through a `StatusCheck`, and `TypeMetadata`
   describes a `vct`: its display, its claims and which of them may be concealed.
 - **VCDM 2.0 with SD-JWT.** `SdJwtCredentialV2Builder` secures a `CredentialV2` with SD-JWT
   (`typ: vc+sd-jwt`); `SdJwtCredentialValidator::validate_v2` validates it.
