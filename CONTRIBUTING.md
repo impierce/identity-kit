@@ -38,6 +38,12 @@ To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-l
 [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/impierce/identity-kit) grades the repository's security practices on every push to `main` and weekly.
 Its Vulnerabilities check reads [`osv-scanner.toml`](osv-scanner.toml), which must ignore the same advisories as `deny.toml`, each with its reason.
 
+### Tests
+
+A pull request that adds or changes functionality adds tests for it, and a bug fix adds a test that fails without the fix.
+Tests check the code against the specifications it implements, so they use the examples and test vectors published in the W3C, IETF, DIF and DID method specifications ([`tests/vectors/`](tests/vectors/)), never the output of another library.
+CI runs them on every pull request with `cargo test --all-features`, on Linux, macOS and Windows.
+
 ### Fuzzing
 
 The parsers are fuzzed with [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) from the [`fuzz/`](fuzz/) crate, a workspace of its own that builds on nightly.
