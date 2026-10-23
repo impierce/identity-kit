@@ -9,6 +9,8 @@
 
 Collection of primitives for SSI libraries and applications: decentralized identifiers (DIDs), key management behind a pluggable key store, and JWT-based verifiable credentials.
 
+Add it to a project with `cargo add identity-kit`. The API reference is on [docs.rs](https://docs.rs/identity-kit).
+
 ---
 
 ## Features
@@ -150,6 +152,7 @@ identity_kit::keys::testsuite::run_with_keys(&store, &[(key_id, JwsAlgorithm::ES
 
 ## Development
 
+Report bugs and propose features in [GitHub issues](https://github.com/impierce/identity-kit/issues).
 See [CONTRIBUTING.md](https://github.com/impierce/identity-kit/blob/HEAD/CONTRIBUTING.md) for how to set up, test and submit changes.
 The parsers are fuzzed continuously with `cargo-fuzz`; [`fuzz/README.md`](https://github.com/impierce/identity-kit/blob/HEAD/fuzz/README.md) explains the targets, their seeds and how to run them.
 To report a vulnerability, see [SECURITY.md](https://github.com/impierce/identity-kit/blob/HEAD/SECURITY.md).
