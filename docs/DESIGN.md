@@ -34,7 +34,8 @@ implemented; [`FEATURES.md`](FEATURES.md) tracks the status of each feature and 
    `miniz_oxide`, `getrandom`, `cryptoki`. SD-JWT itself is implemented in this crate (ADR 0005).
 7. **Developer experience.** A `prelude` per layer (`prelude` for the lower layer,
    `prelude::credentials` for the upper); docs.rs built with `all-features` and `doc_cfg`;
-   `#![forbid(unsafe_code)]`; a rolling six-month MSRV; one `CHANGELOG.md`; `release-plz`.
+   `unsafe_code = "forbid"` in the `[lints.rust]` of every package (the crate, `fuzz/` and
+   `xtask/`); a rolling six-month MSRV; one `CHANGELOG.md`; `release-plz`.
 8. **Extension points are defined here.** A data type lives with the specification that defines
    it (DID Core, JOSE, VC, SD-JWT here; OpenID types in `openid4vc`), but a trait a consumer
    implements is always defined in this crate, even when the need comes from an OpenID flow.
@@ -358,8 +359,9 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
 - Determinism: same inputs produce byte-identical documents and configuration resources.
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
   `cargo tree` in that configuration must not list `chrono`, `miniz_oxide` or `sd-jwt-payload`.
-- `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, clippy pedantic as warnings
-  with `-D warnings` on the default lint set.
+- `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, and clippy with
+  `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds
+  (`dbg_macro`, `todo`, `print_stdout`, `print_stderr`). `clippy::pedantic` is not enabled.
 - Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID
   methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata, linked presentations),
   seeded from the specification vectors (`fuzz/seeds/`, one named file per example; the

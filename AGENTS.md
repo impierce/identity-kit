@@ -16,7 +16,7 @@
 - JWT/JWS and SD-JWT only. No JSON-LD processing.
 - Tests are specification vectors (W3C, RFCs, DIF, method specs), never another library's output.
 - No git or path dependencies; `cargo publish --dry-run` must pass on every pull request.
-- `#![forbid(unsafe_code)]`, clippy clean, `cargo hack --each-feature` clean.
+- `unsafe_code = "forbid"` in `[lints.rust]`, clippy clean, `cargo hack --each-feature` clean.
 
 ## Agent skills
 

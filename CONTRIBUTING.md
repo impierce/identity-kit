@@ -33,6 +33,10 @@ CI proves it by building with `--no-default-features --features did-key,software
 CI also measures test coverage and reports it on the pull request via [Codecov](https://codecov.io/gh/impierce/identity-kit).
 To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and run `cargo llvm-cov --all-features --open`.
 
+[CodeQL](https://codeql.github.com/) scans the Rust code and the workflows on every pull request, with the `security-extended` queries; its alerts appear in the repository's code scanning view.
+[OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/impierce/identity-kit) grades the repository's security practices on every push to `main` and weekly.
+Its Vulnerabilities check reads [`osv-scanner.toml`](osv-scanner.toml), which must ignore the same advisories as `deny.toml`, each with its reason.
+
 ### Fuzzing
 
 The parsers are fuzzed with [`cargo-fuzz`](https://github.com/rust-fuzz/cargo-fuzz) from the [`fuzz/`](fuzz/) crate, a workspace of its own that builds on nightly.

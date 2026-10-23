@@ -190,6 +190,7 @@ fn errors_carry_a_detail_and_a_source() {
     assert_eq!(bare, caused);
     assert_eq!(caused, ResolutionErrorKind::InternalError);
     assert_ne!(caused, ResolutionErrorKind::NotFound);
+    assert_ne!(caused, ResolutionError::new(ResolutionErrorKind::NotFound));
     assert_eq!(HashSet::from([bare, detailed, caused.clone()]).len(), 1);
     let round_trip: ResolutionError =
         serde_json::from_str(&serde_json::to_string(&caused).unwrap()).unwrap();
