@@ -1,10 +1,13 @@
 //! JWT verifiable credentials (VCDM 1.1 §6.3.1, VCDM 2.0 enveloped): arbitrary tokens, claims
 //! sets and credential JSON never panic, what the models accept maps to JWT claims and back
-//! unchanged, and a presentation that decodes, in either profile, decodes every credential.
+//! unchanged, a presentation that decodes, in either profile, decodes every credential, and no
+//! token that decodes is the issuer-signed JWT of an SD-JWT.
 #![no_main]
 
 use chrono::Timelike as _;
-use identity_kit::vc::validation::{decode_presentation, decode_presentation_v2};
+use identity_kit::vc::validation::{
+    decode_credential, decode_credential_v2, decode_presentation, decode_presentation_v2,
+};
 use identity_kit::vc::{
     Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Presentation,
     PresentationV2,
@@ -12,6 +15,7 @@ use identity_kit::vc::{
 use libfuzzer_sys::fuzz_target;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 /// Whether a date of `credential` has what a `NumericDate` cannot carry: a fraction of a second,
 /// or a leap second (`:60`, RFC 3339 §5.6), which chrono keeps as a nanosecond count of a second
@@ -28,6 +32,32 @@ fn json_roundtrip<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>
     let json = serde_json::to_string(value).expect("serializes");
     let again: T = serde_json::from_str(&json).expect("a serialized value parses");
     assert_eq!(&again, value);
+}
+
+/// Whether `value` has what RFC 9901 §4.2 reserves for an SD-JWT: a member `_sd` or `_sd_alg`,
+/// or an array element `{"...": "<digest>"}`.
+fn has_sd_jwt_names(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object
+            .iter()
+            .any(|(name, value)| name == "_sd" || name == "_sd_alg" || has_sd_jwt_names(value)),
+        Value::Array(array) => array.iter().any(|element| {
+            let placeholder = element.as_object().is_some_and(|object| {
+                object.len() == 1 && object.get("...").is_some_and(Value::is_string)
+            });
+            placeholder || has_sd_jwt_names(element)
+        }),
+        _ => false,
+    }
+}
+
+/// Asserts that the payload of `jwt`, which a decode function accepted, is not an SD-JWT's.
+fn assert_plain(jwt: &Jwt) {
+    let payload: Value = serde_json::from_slice(jwt.decode().unwrap().payload()).unwrap();
+    assert!(
+        !has_sd_jwt_names(&payload),
+        "an SD-JWT payload decoded as a plain JWT"
+    );
 }
 
 fn exercise_claims(claims: &JwtClaims) {
@@ -75,7 +105,14 @@ fuzz_target!(|data: &[u8]| {
             if let Ok(claims) = serde_json::from_slice::<JwtClaims>(jws.payload()) {
                 exercise_claims(&claims);
             }
+            if decode_credential(&jwt).is_ok() || decode_credential_v2(&jwt).is_ok() {
+                assert_plain(&jwt);
+            }
             if let Ok(decoded) = decode_presentation(&jwt) {
+                assert_plain(&jwt);
+                for credential in &decoded.presentation.verifiable_credential {
+                    assert_plain(credential);
+                }
                 assert_eq!(
                     decoded.credentials.len(),
                     decoded.presentation.verifiable_credential.len()
@@ -86,6 +123,7 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             if let Ok(decoded) = decode_presentation_v2(&jwt) {
+                assert_plain(&jwt);
                 assert_eq!(
                     decoded.credentials.len(),
                     decoded.presentation.verifiable_credential.len()

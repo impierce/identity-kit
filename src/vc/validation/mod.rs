@@ -19,7 +19,12 @@
 //!    values the options add (`CredentialValidationOptions::additional_typ`).
 //! 2. The payload is a claims set that maps to a [`Credential`](crate::vc::Credential) (or a
 //!    [`CredentialV2`](crate::vc::CredentialV2)), with its registered claims agreeing with the
-//!    credential.
+//!    credential. A payload with `_sd` or `_sd_alg` as a member name anywhere, or an array
+//!    element `{"...": "<digest>"}`, is the issuer-signed JWT of an SD-JWT and is refused
+//!    ([`ValidationError::SdJwtPayload`]), typed or not: read as a plain JWT, its digests would
+//!    be properties and its concealed claims would look absent. The `typ` check alone does not
+//!    catch it, since an untyped token is accepted; `SdJwtCredentialValidator` of `sd_jwt_vc`
+//!    validates it.
 //! 3. The key `kid` names is resolved under the `assertionMethod` relationship and verifies the
 //!    signature.
 //! 4. The issuer is the DID of `kid`: the key that signed is the issuer's.
@@ -43,7 +48,7 @@
 //! accept, what the claims must say) is left to the application, which gets the decoded
 //! credential back. [`decode_credential`], [`decode_credential_v2`], [`decode_presentation`]
 //! and [`decode_presentation_v2`] decode without verifying, for a look at a token before
-//! deciding how to validate it; [`extract_issuer`] and [`extract_holder`] read just the signer's DID.
+//! deciding how to validate it, and refuse an SD-JWT payload as the validators do; [`extract_issuer`] and [`extract_holder`] read just the signer's DID.
 
 use core::time::Duration;
 use std::collections::BTreeSet;
