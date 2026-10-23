@@ -17,6 +17,30 @@ bumped by hand, and `CHANGELOG.md` is never edited by hand.
 3. Approving and merging the release pull request publishes the crate to
    [crates.io](https://crates.io/crates/identity-kit), then tags the commit as `vX.Y.Z` and creates
    a GitHub release with the same changelog.
+4. The workflow then attaches the published `.crate` to the GitHub release, as crates.io serves it,
+   together with its signed [SLSA](https://slsa.dev/) build provenance
+   (`identity-kit-X.Y.Z.crate.intoto.jsonl`); see [Verifying a release](#verifying-a-release).
+
+## Verifying a release
+
+Each release from 0.2.0 on carries SLSA build level 3 provenance, made by
+[`slsa-github-generator`](https://github.com/slsa-framework/slsa-github-generator) and signed through
+Sigstore. It states that the `.crate` was published by `release-plz.yml` in this repository, run by
+the push to `main` that merged the release pull request; the commit it names is the one `vX.Y.Z`
+points to. To check a crate, download both files from the GitHub release and run
+[`slsa-verifier`](https://github.com/slsa-framework/slsa-verifier):
+
+```sh
+slsa-verifier verify-artifact identity-kit-X.Y.Z.crate \
+  --provenance-path identity-kit-X.Y.Z.crate.intoto.jsonl \
+  --source-uri github.com/impierce/identity-kit \
+  --source-branch main
+```
+
+The attached `.crate` is the file crates.io serves: the workflow checks it against the checksum in
+the crates.io index before attaching it. That checksum is also the `checksum` of `identity-kit` in a
+dependent's `Cargo.lock`, so `sha256sum identity-kit-X.Y.Z.crate` ties the provenance to the crate a
+build actually used.
 
 ## Versioning
 
