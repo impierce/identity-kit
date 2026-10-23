@@ -18,6 +18,6 @@ Please include as much of the following as you can:
 
 ## What happens next
 
-We will acknowledge your report, investigate it and keep you updated on our progress in the advisory.
+We acknowledge your report within 14 days, investigate it and keep you updated on our progress in the advisory.
 Once a fix is released, we publish a GitHub Security Advisory and request a [RustSec](https://rustsec.org/) advisory, so that users of `cargo audit` and `cargo deny` are notified.
 Unless you prefer otherwise, we credit you in the advisory.
