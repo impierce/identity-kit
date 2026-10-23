@@ -37,6 +37,11 @@ slsa-verifier verify-artifact identity-kit-X.Y.Z.crate \
   --source-branch main
 ```
 
+If attaching them fails after the crate is published (crates.io slow to index it, a GitHub
+outage), run the Release-plz workflow by hand from `main` (Actions → Release-plz → Run workflow)
+with the release's tag: it attaches the crate and provenance to that release without publishing
+anything.
+
 The attached `.crate` is the file crates.io serves: the workflow checks it against the checksum in
 the crates.io index before attaching it. That checksum is also the `checksum` of `identity-kit` in a
 dependent's `Cargo.lock`, so `sha256sum identity-kit-X.Y.Z.crate` ties the provenance to the crate a

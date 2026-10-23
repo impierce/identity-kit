@@ -3,6 +3,14 @@ name: Release-plz
 on:
   push:
     branches: [main]
+  # Attaches the crate and its provenance to an existing release, when that step failed after
+  # publishing: a rerun would not repeat it, since release-plz finds nothing left to release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The existing release tag to attach the crate and provenance to, e.g. v0.2.0"
+        required: true
+        type: string
 
 permissions: {}
 
@@ -37,6 +45,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: read
       - id: release-plz
+        if: github.event_name == 'push'
         uses: release-plz/action@8921286633dfa0c4020f7f30bd1c14fe19cbb10e # v0.5.142
         with:
           command: release
@@ -46,12 +55,22 @@ jobs:
       # download must match the checksum in the crates.io index. The provenance job signs these
       # files, so anyone can check that a crate came from this workflow.
       - id: crates
-        if: steps.release-plz.outputs.releases_created == 'true'
+        if: steps.release-plz.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           RELEASES: ${{ steps.release-plz.outputs.releases }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          # Started by hand for an existing release: `identity-kit` is the only released package.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if ! [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+              echo "::error::tag must look like v1.2.3, not $TAG"
+              exit 1
+            fi
+            RELEASES=$(jq -nc --arg version "${BASH_REMATCH[1]}" --arg tag "$TAG" \
+              '[{package_name: "identity-kit", version: $version, tag: $tag}]')
+          fi
           mkdir crates
           # The sparse index path of a crate name (https://doc.rust-lang.org/cargo/reference/registry-index.html#index-files).
           index_path() {
@@ -110,7 +129,7 @@ jobs:
   # Open or update the release PR with the next version and changelog.
   release-pr:
     name: Release PR
-    if: github.repository_owner == 'impierce'
+    if: github.repository_owner == 'impierce' && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
