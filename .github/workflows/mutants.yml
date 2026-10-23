@@ -66,6 +66,7 @@ jobs:
             echo "### Mutants, shard $SHARD"
             echo
             jq -r '"\(.caught) caught, \(.missed) missed, \(.timeout) timed out, \(.unviable) unviable, of \(.total_mutants)"' mutants.out/outcomes.json
+            # shellcheck disable=SC2016 # literal backticks, for Markdown code spans
             if [ -s mutants.out/missed.txt ]; then echo; sed 's/^/- `/; s/$/`/' mutants.out/missed.txt; fi
           } >> "$GITHUB_STEP_SUMMARY"
       - if: always()
@@ -80,9 +81,11 @@ jobs:
   # same key labels.
   pkcs11:
     name: Mutants (PKCS#11)
-    if: github.repository_owner == 'impierce' && inputs.files == ''
+    if: github.repository_owner == 'impierce'
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    env:
+      FILES: ${{ inputs.files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -94,7 +97,16 @@ jobs:
         with:
           tool: cargo-mutants@27.1.0
           fallback: none
+      # Ask cargo-mutants itself whether the `files` glob selects `pkcs11.rs`, so this matches
+      # what the shards would have run.
+      - name: Check the file filter
+        id: filter
+        run: |
+          if [ -z "$FILES" ] || cargo mutants --list-files -f "$FILES" | grep -x 'src/keys/pkcs11.rs' >/dev/null; then
+            echo "selected=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Set up SoftHSM2
+        if: steps.filter.outputs.selected == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y softhsm2 opensc
@@ -109,6 +121,7 @@ jobs:
             echo "PKCS11_PIN=1234"
           } >> "$GITHUB_ENV"
       - name: Test the mutants
+        if: steps.filter.outputs.selected == 'true'
         run: |
           status=0
           cargo mutants -j 1 -f src/keys/pkcs11.rs || status=$?
@@ -121,6 +134,7 @@ jobs:
             echo "### Mutants, PKCS#11"
             echo
             jq -r '"\(.caught) caught, \(.missed) missed, \(.timeout) timed out, \(.unviable) unviable, of \(.total_mutants)"' mutants.out/outcomes.json
+            # shellcheck disable=SC2016 # literal backticks, for Markdown code spans
             if [ -s mutants.out/missed.txt ]; then echo; sed 's/^/- `/; s/$/`/' mutants.out/missed.txt; fi
           } >> "$GITHUB_STEP_SUMMARY"
       - if: always()
