@@ -56,7 +56,8 @@ pub fn ecdsa_signature_from_der(
 }
 
 /// A raw `r || s` signature for `alg`, with `s` normalized to the lower half of the group order
-/// for ES256K. ES256 and ES384 signatures are returned unchanged once their length is checked.
+/// for ES256K. ES256 and ES384 signatures are returned unchanged once their length is checked:
+/// [`DefaultVerifier`](super::DefaultVerifier) accepts either `s` for ES256.
 ///
 /// ECDSA over secp256k1 accepts `s` and `n - s` alike, but
 /// [`DefaultVerifier`](super::DefaultVerifier), like most secp256k1 verifiers, accepts only the

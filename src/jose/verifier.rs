@@ -71,6 +71,20 @@ impl<T: JwsVerifier + ?Sized> JwsVerifier for std::sync::Arc<T> {
 /// Before the signature is checked, the key's own restrictions are: a key whose `alg` names
 /// another algorithm, whose `use` is not `sig` or whose `key_ops` lacks `verify` is rejected.
 ///
+/// # ECDSA malleability
+///
+/// When an ECDSA signature `(r, s)` verifies, so does `(r, n - s)`, where `n` is the group order.
+/// RFC 7518 §3.4 asks for no canonical `s`, and ES256 verification accepts both, so anyone
+/// holding an ES256 JWS can produce a second, different compact serialization of it that
+/// verifies just the same. ES256K accepts only the lower `s`, as `k256` and most secp256k1
+/// verifiers do ([`normalize_ecdsa_signature`](super::normalize_ecdsa_signature) brings a
+/// signer's output into that form).
+///
+/// The signature still means the same: the signer did sign those claims. What it rules out is
+/// treating a token's bytes as unique. An application that keeps a replay cache or deduplicates
+/// tokens identifies a token by its claims (`jti`, `iss`, `nonce`), not by its compact
+/// serialization or a hash of it.
+///
 /// # Examples
 ///
 /// ```

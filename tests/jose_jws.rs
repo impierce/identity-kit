@@ -5,7 +5,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use identity_kit::jose::{
     CompactJws, DefaultVerifier, Jwk, JwkError, JwsAlgorithm, JwsError, JwsHeader, JwsVerifier,
-    SignError, Signer, VerificationError, encode_compact,
+    SignError, Signer, VerificationError, encode_compact, normalize_ecdsa_signature,
 };
 use serde_json::{Value, json};
 
@@ -142,6 +142,53 @@ fn rfc7515_a3_es256_verifies() {
         )
         .unwrap();
     assert!(jsonwebtoken_verifies(&jws, &rfc7515_a3_key()));
+}
+
+/// The order `n` of the P-256 group (SEC 2 §2.4.2), big-endian.
+const P256_ORDER: [u8; 32] = [
+    0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17, 0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51,
+];
+
+/// `n - s` for a P-256 `s` below `n`, big-endian.
+fn p256_order_minus(s: &[u8]) -> Vec<u8> {
+    let mut out = vec![0; 32];
+    let mut borrow = 0i16;
+    for i in (0..32).rev() {
+        let mut digit = i16::from(P256_ORDER[i]) - i16::from(s[i]) - borrow;
+        borrow = i16::from(digit < 0);
+        digit += 256 * borrow;
+        out[i] = u8::try_from(digit).unwrap();
+    }
+    out
+}
+
+#[test]
+fn es256_verifies_s_and_n_minus_s_alike() {
+    // ECDSA signatures are malleable: when `(r, s)` verifies, so does `(r, n - s)`. RFC 7518 §3.4
+    // asks for no canonical `s`, and `DefaultVerifier` accepts both for ES256. RFC 7515 A.3's
+    // own signature carries the upper `s` of the two.
+    let (r, s) = RFC7515_A3_SIGNATURE.split_at(32);
+    let lower_s = p256_order_minus(s);
+    assert!(s > lower_s.as_slice());
+    let other = [r, &lower_s].concat();
+
+    let original = rfc7515_a3_jws();
+    let reencoded = compact(r#"{"alg":"ES256"}"#, RFC7515_PAYLOAD, &other);
+    assert_ne!(original, reencoded);
+    for token in [&original, &reencoded] {
+        let jws = CompactJws::decode(token).unwrap();
+        jws.verify(&DefaultVerifier, &rfc7515_a3_key()).unwrap();
+        assert_eq!(jws.payload(), RFC7515_PAYLOAD);
+    }
+
+    // `normalize_ecdsa_signature` leaves an ES256 signature as it is, whichever `s` it has.
+    for signature in [RFC7515_A3_SIGNATURE, &other] {
+        assert_eq!(
+            normalize_ecdsa_signature(JwsAlgorithm::ES256, signature).unwrap(),
+            signature
+        );
+    }
 }
 
 #[test]
