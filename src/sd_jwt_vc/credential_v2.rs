@@ -257,7 +257,10 @@ impl SdJwtCredentialV2 {
         &self.processed
     }
 
-    /// The holder's public key from `cnf`, if given by value.
+    /// The holder's public key from `cnf`, if given by value. A key given by reference
+    /// ([`Confirmation::kid`]) is in [`confirmation`](Self::confirmation), and
+    /// [`KeyReference::from_confirmation`](crate::resolver::KeyReference::from_confirmation)
+    /// reads either.
     pub fn holder_key(&self) -> Option<&Jwk> {
         self.cnf.as_ref()?.jwk.as_ref()
     }

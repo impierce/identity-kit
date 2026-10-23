@@ -8,15 +8,16 @@
 mod common;
 
 use chrono::{DateTime, TimeZone as _, Utc};
-use identity_kit::did::{Did, DidUrl, Uri, VerificationRelationship};
+use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, DecodedPresentationV2, FailFast, JwtPresentationValidator,
-    KeyResolutionError, KeyResolver, PresentationValidationError, PresentationValidationOptions,
-    SubjectHolderRelationship, TimeOptions, ValidationError, decode_credential_v2,
-    decode_presentation, decode_presentation_v2,
+    KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
+    PresentationValidationError, PresentationValidationOptions, SubjectHolderRelationship,
+    TimeOptions, ValidationError, decode_credential_v2, decode_presentation,
+    decode_presentation_v2,
 };
 use identity_kit::vc::{
     CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Presentation,
@@ -120,7 +121,7 @@ async fn enveloped_presentation_example() {
     let error = validator().validate_v2(&jwt, &options()).await.unwrap_err();
     assert!(matches!(
         presentation_error(error),
-        ValidationError::InvalidKid { kid, .. } if kid == "ExHkBMW9fmbkvV266mRpuP2sUY_N_EWIN1lapUzO8ro"
+        ValidationError::KeyReference(KeyReferenceError::InvalidKid { kid, .. }) if kid == "ExHkBMW9fmbkvV266mRpuP2sUY_N_EWIN1lapUzO8ro"
     ));
 }
 
@@ -216,15 +217,21 @@ async fn suite_presentation_with_bad_media_type() {
         presentation_error(error),
         ValidationError::UnexpectedTyp { found, .. } if found == "bad+typ"
     ));
-    // Accepting its `typ` gets as far as the key: the suite names keys by thumbprint, not by
-    // DID URL, and the validator binds the holder to a DID (ADR 0004).
+    // Accepting its `typ` gets as far as the key: the holder is an HTTPS URL and `kid` a
+    // thumbprint, so the key is in the holder's key set (ADR 0006), which a DID resolver does
+    // not look in.
     let error = validator()
         .validate_v2(&jwt, &options().with_additional_typ("bad+typ"))
         .await
         .unwrap_err();
     assert!(matches!(
         presentation_error(error),
-        ValidationError::InvalidKid { kid, .. } if kid == "2aOHaQxsWVT4mLsUkdtlCnUV-au0BBR-5yPYaPaCc5k"
+        ValidationError::KeyResolution {
+            key,
+            source: KeyResolutionError::Unsupported(_),
+        } if matches!(&*key, KeyReference::Jwks { issuer, kid }
+            if issuer.as_str() == "https://example.issuer/vc-jose-cose"
+                && kid == "2aOHaQxsWVT4mLsUkdtlCnUV-au0BBR-5yPYaPaCc5k")
     ));
 }
 
@@ -541,7 +548,7 @@ async fn presentation_errors() {
         .unwrap();
     assert!(matches!(
         check(signed_by_issuer, options()).await,
-        ValidationError::HolderMismatch { kid, .. } if kid == issuer.kid
+        ValidationError::HolderMismatch { key, .. } if *key == KeyReference::DidUrl(issuer.kid.clone())
     ));
 
     // Expired, and the audience and nonce of another exchange.
@@ -574,13 +581,13 @@ struct AssertionMethodOnly(Resolver);
 impl KeyResolver for AssertionMethodOnly {
     async fn resolve_key(
         &self,
-        url: &DidUrl,
-        relationship: VerificationRelationship,
+        key: &KeyReference,
+        role: KeyRole,
     ) -> Result<Jwk, KeyResolutionError> {
-        if relationship == VerificationRelationship::Authentication {
+        if role == KeyRole::Subject {
             return Err(KeyResolutionError::msg("not under `authentication`"));
         }
-        self.0.resolve_key(url, relationship).await
+        self.0.resolve_key(key, role).await
     }
 }
 
