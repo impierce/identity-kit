@@ -34,6 +34,7 @@ CI also measures test coverage and reports it on the pull request via [Codecov](
 To see it locally, install [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) and run `cargo llvm-cov --all-features --open`.
 
 [CodeQL](https://codeql.github.com/) scans the Rust code and the workflows on every pull request, with the `security-extended` queries; its alerts appear in the repository's code scanning view.
+`tests/` and `fuzz/` are left out ([`.github/codeql/codeql-config.yml`](.github/codeql/codeql-config.yml)): their specification vectors hold fixed keys and nonces on purpose.
 [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/impierce/identity-kit) grades the repository's security practices on every push to `main` and weekly.
 Its Vulnerabilities check reads [`osv-scanner.toml`](osv-scanner.toml), which must ignore the same advisories as `deny.toml`, each with its reason.
 
