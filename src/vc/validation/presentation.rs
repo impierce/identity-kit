@@ -265,7 +265,8 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     /// The checks are those of [`validate`](Self::validate), with the profile's own shape:
     /// `typ`, when present, is `vp+jwt` (or one of `options.additional_typ`); the payload is
     /// the presentation, with `iss` and `jti` agreeing with `holder` and `id` and no `vp`
-    /// claim; the holder, from `holder` or else `iss`, is required and is the DID of `kid`.
+    /// claim; the holder, from `holder` or else `iss`, is required and owns the signing key
+    /// ([`KeyReference::binds_to`](crate::resolver::KeyReference::binds_to)).
     /// Each credential is unwrapped from its `EnvelopedVerifiableCredential` and validated
     /// under `options.credentials`: an `application/vc+jwt` one with
     /// [`JwtCredentialValidator::validate_v2`]; with the `sd-jwt` feature, an
