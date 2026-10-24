@@ -61,7 +61,8 @@ fuzz/run.sh sd_jwt 600      # one target, ten minutes
 Testing every mutant takes hours, so the `Mutants` workflow runs weekly and when started by hand from the Actions tab, optionally limited to a glob such as `src/jose/**`, not on pull requests.
 It splits the crate across twelve jobs, and tests `src/keys/pkcs11.rs` in a job of its own against a SoftHSM2 token.
 Each job lists its missed mutants in the run summary; they are findings to triage, and the run does not fail on them.
-[`.cargo/mutants.toml`](.cargo/mutants.toml) holds the configuration.
+A missed mutant gets a test that fails with it, or a fix when that test shows a bug.
+Only a mutant no test can catch (a trivial impl, or an equivalent change no input tells apart) goes into `exclude_re` in [`.cargo/mutants.toml`](.cargo/mutants.toml), the configuration, with a comment that says why.
 
 To check the mutants of your own change before opening a pull request:
 

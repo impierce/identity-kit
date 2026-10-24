@@ -554,6 +554,7 @@ async fn composite_tries_resolvers_in_order() {
         .with_shared(found.clone())
         .with_shared(never.clone());
     assert_eq!(composite.len(), 3);
+    assert!(!composite.is_empty());
     assert_eq!(
         composite
             .resolve_key(&reference, KeyRole::Issuer)

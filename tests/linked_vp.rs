@@ -21,9 +21,9 @@ use identity_kit::linked_vp::{
     LinkedVpValidationOptions, LinkedVpValidator, PRESENTATION_TYP, SERVICE_TYPE, decode, service,
     services,
 };
-use identity_kit::methods::DidKey;
 use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
-use identity_kit::resolver::{DidResolver, Resolver};
+use identity_kit::methods::{DidJwk, DidKey};
+use identity_kit::resolver::{CompositeKeyResolver, DidResolver, JwkResolver, Resolver};
 use identity_kit::vc::validation::{
     CredentialValidationOptions, FailFast, JwtCredentialValidator, JwtPresentationValidator,
     KeyReference, PresentationValidationError, PresentationValidationOptions,
@@ -691,6 +691,42 @@ async fn key_of_another_did_is_refused_before_resolving_it() {
         ValidationError::HolderMismatch { key, .. } if *key == KeyReference::DidUrl(foreign.clone())
     ));
     assert_eq!(documents.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn embedded_key_must_be_the_did_jwk_of_the_holder() {
+    let signer = Ed25519Signer::rfc8037();
+    let did = DidJwk::did(&signer.public_jwk()).unwrap();
+    let claims = LinkedPresentationBuilder::new(did.clone())
+        .with_id(Uri::parse(PUBLISHED_URL).unwrap())
+        .with_issued_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
+        .with_expiration(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        .jwt_claims()
+        .unwrap();
+    let mut header = JwsHeader::new(JwsAlgorithm::EdDSA).with_typ("JWT");
+    header.jwk = Some(signer.public_jwk());
+    let jwt = Jwt::sign(&header, &claims, &signer).await.unwrap();
+    let validator = LinkedVpValidator::new(
+        CompositeKeyResolver::new().with(JwkResolver),
+        DefaultVerifier,
+    );
+    let decoded = validator.validate(&jwt, &did, &options()).await.unwrap();
+    assert_eq!(decoded.holder(), Some(&Uri::from(did.clone())));
+
+    // An embedded key binds only to its `did:jwk`, not to the same key's `did:key`.
+    let mut claims = claims;
+    let other = DidKey::did(&signer.public_jwk()).unwrap();
+    claims.iss = Some(other.to_string());
+    claims.additional["vp"]["holder"] = json!(other.as_str());
+    let jwt = Jwt::sign(&header, &claims, &signer).await.unwrap();
+    let error = validator
+        .validate(&jwt, &other, &options())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        presentation_error(error),
+        ValidationError::HolderMismatch { key, .. } if matches!(*key, KeyReference::Jwk(_))
+    ));
 }
 
 #[tokio::test]

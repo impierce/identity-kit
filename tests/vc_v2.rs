@@ -186,6 +186,17 @@ fn jose_presentation_example_with_enveloped_credential() {
         presentation_payload()
     );
     assert_eq!(PresentationV2::from_jwt_claims(&claims).unwrap(), built);
+
+    let named = built
+        .with_id(Uri::parse("urn:uuid:3978344f-8596-4c3a-a978-8fcaba3903c5").unwrap())
+        .with_type("ExamplePresentation");
+    assert_eq!(
+        named.id.as_ref().map(Uri::as_str),
+        Some("urn:uuid:3978344f-8596-4c3a-a978-8fcaba3903c5")
+    );
+    assert!(named.has_type("VerifiablePresentation"));
+    assert!(named.has_type("ExamplePresentation"));
+    assert!(!named.has_type("ExampleDegreeCredential"));
 }
 
 #[test]
@@ -468,4 +479,26 @@ fn builder_reproduces_the_jose_example() {
     let roundtrip: CredentialV2 =
         serde_json::from_value(serde_json::to_value(&with_status).unwrap()).unwrap();
     assert_eq!(roundtrip, with_status);
+}
+
+#[test]
+fn validity_period_may_be_a_single_instant() {
+    // VCDM 2.0, Validity Period: `validUntil` may equal `validFrom`.
+    let credential: CredentialV2 = serde_json::from_str(CREDENTIAL).unwrap();
+    assert!(credential.has_type("ExampleDegreeCredential"));
+    assert!(!credential.has_type("ExamplePresentation"));
+    let entry = TypedObject::new("BitstringStatusListEntry");
+    assert!(entry.has_type("BitstringStatusListEntry"));
+    assert!(!entry.has_type("StatusList2021Entry"));
+    let from = Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap();
+    credential.clone().with_valid_until(from).check().unwrap();
+    assert_eq!(
+        credential
+            .with_valid_until(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 23).unwrap())
+            .check(),
+        Err(CredentialError::InvalidValidity {
+            from: "validFrom",
+            until: "validUntil"
+        })
+    );
 }
