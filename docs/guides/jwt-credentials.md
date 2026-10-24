@@ -136,9 +136,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - **Time.** The validators use the current time unless `with_time(TimeOptions::at(..))` says
   otherwise; `TimeOptions::with_leeway` allows for clock skew between parties.
-- **Status.** A credential with `credentialStatus` is checked through a `StatusCheck` you attach
-  with `JwtCredentialValidator::with_status_check`; `StatusPolicy` decides what happens to a
-  credential whose status cannot be determined.
+- **Status.** A credential with `credentialStatus`, or with a Token Status List `status` claim
+  (handed to the check as `CredentialStatus::SdJwt`, feature `sd-jwt`), is checked through a
+  `StatusCheck` you attach with `JwtCredentialValidator::with_status_check`; `StatusPolicy`
+  decides what happens to a credential whose status cannot be determined.
 - **Finding the keys.** The validators take any `KeyResolver`, not only a DID `Resolver`:
   `JwksResolver` (feature `jwks`) for issuers with an HTTPS identifier, `JwkResolver` for a key
   in a `jwk` header, or several in a `CompositeKeyResolver`. Whatever finds the key, the
