@@ -117,6 +117,53 @@ impl HttpClient for Mock {
     }
 }
 
+/// A client that answers with the media type it was asked for.
+struct Echo;
+
+#[async_trait::async_trait]
+impl HttpClient for Echo {
+    async fn get(&self, _: &Url) -> Result<HttpResponse, HttpError> {
+        Ok(HttpResponse::new(200, "no media type"))
+    }
+
+    async fn get_accepting(&self, _: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
+        Ok(HttpResponse::new(200, media_type))
+    }
+}
+
+#[tokio::test]
+async fn get_accepting_is_forwarded_and_defaults_to_get() {
+    let target = url("https://example.com/statuslists/1");
+    let accept = "application/statuslist+jwt";
+    // `&T`, `Box<T>` and `Arc<T>` pass the media type on, rather than falling back to `get`.
+    async fn ask<C: HttpClient>(client: C, url: &Url, accept: &str) -> String {
+        let response = client.get_accepting(url, accept).await.unwrap();
+        String::from_utf8(response.body).unwrap()
+    }
+    assert_eq!(ask(Echo, &target, accept).await, accept);
+    assert_eq!(ask(&Echo, &target, accept).await, accept);
+    assert_eq!(ask(Box::new(Echo), &target, accept).await, accept);
+    let boxed: Box<dyn HttpClient> = Box::new(Echo);
+    assert_eq!(ask(boxed, &target, accept).await, accept);
+    assert_eq!(
+        ask(std::sync::Arc::new(Echo), &target, accept).await,
+        accept
+    );
+
+    // A client implementing `get` only answers `get_accepting` with it.
+    let mock = Mock::serving(target.as_str(), 200, "{}");
+    assert_eq!(
+        mock.get_accepting(&target, accept).await.unwrap(),
+        mock.get(&target).await.unwrap()
+    );
+    assert_eq!(mock.calls.lock().unwrap().len(), 2);
+
+    // A redirect carries its target; nothing else does.
+    let moved = HttpResponse::new(302, Vec::new()).with_location("/statuslists/2");
+    assert_eq!(moved.location.as_deref(), Some("/statuslists/2"));
+    assert_eq!(HttpResponse::new(200, Vec::new()).location, None);
+}
+
 #[test]
 fn did_to_url_mapping_examples() {
     // did:web specification, "Create" and "Optional Path Considerations".
@@ -743,10 +790,119 @@ mod local_network {
     use std::net::IpAddr;
 
     use identity_kit::methods::web::{LocalNetwork, ReqwestClient};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[tokio::test]
+    async fn sends_the_media_type_and_decodes_gzip() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/statuslists/1"))
+            .and(header("accept", "application/statuslist+jwt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_bytes(gzip(b"a compressed body")),
+            )
+            .mount(&server)
+            .await;
+        let target = url(&format!(
+            "https://127.0.0.1:{}/statuslists/1",
+            server.address().port()
+        ));
+        let client = loopback();
+        let response = client
+            .get_accepting(&target, "application/statuslist+jwt")
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"a compressed body");
+        let requests = server.received_requests().await.unwrap();
+        let headers = &requests[0].headers;
+        assert_eq!(headers["accept"], "application/statuslist+jwt");
+        assert!(
+            headers["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("gzip")
+        );
+        // `get` asks for no media type in particular, so the server's mock does not match.
+        assert_eq!(client.get(&target).await.unwrap().status, 404);
+        assert_eq!(
+            server.received_requests().await.unwrap()[1].headers["accept"],
+            "*/*"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_body_limit_counts_decoded_bytes() {
+        let server = MockServer::start().await;
+        let expanding = gzip(&[b'a'; 4096]);
+        assert!(expanding.len() < 100, "{}", expanding.len());
+        Mock::given(method("GET"))
+            .and(path("/expanding"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_bytes(expanding),
+            )
+            .mount(&server)
+            .await;
+        let target = url(&format!(
+            "https://127.0.0.1:{}/expanding",
+            server.address().port()
+        ));
+        // A hundred bytes on the wire, four thousand once decoded.
+        let error = loopback()
+            .with_max_body(1000)
+            .get(&target)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds 1000 bytes"), "{error}");
+        let response = loopback().with_max_body(4096).get(&target).await.unwrap();
+        assert_eq!(response.body, [b'a'; 4096]);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_is_returned_not_followed() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/moved"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/statuslists/1"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/created"))
+            .respond_with(ResponseTemplate::new(201).insert_header("location", "/statuslists/1"))
+            .mount(&server)
+            .await;
+        let port = server.address().port();
+        let client = loopback();
+        let response = client
+            .get(&url(&format!("https://127.0.0.1:{port}/moved")))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 302);
+        assert_eq!(response.location.as_deref(), Some("/statuslists/1"));
+        let response = client
+            .get(&url(&format!("https://127.0.0.1:{port}/created")))
+            .await
+            .unwrap();
+        assert_eq!((response.status, response.location), (201, None));
+        // Two requests: the redirect target was not fetched.
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|r| r.url.path() != "/statuslists/1"));
+    }
 
     fn loopback() -> ReqwestClient {
         ReqwestClient::builder()

@@ -71,7 +71,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | -------------------- | ------- | ------------------------------------------------------------- |
 | `did-key`, `did-jwk` | on      | nothing: `bs58` and the multicodec header are always compiled in `jose` (ADR 0003) |
 | `did-web`            | on      | nothing; the method works over any injected `HttpClient`      |
-| `reqwest`            | on      | `reqwest` with `rustls` and `ring`: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
+| `reqwest`            | on      | `reqwest` with `rustls`, `ring` and gzip decoding: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
 | `local-network` | off  | Development and tests only: `ReqwestClient::builder` opt-ins for loopback and private addresses (implies `reqwest`) |
 | `secp256k1`          | on      | `k256`                                                        |
 | `rsa`                | off     | `rsa`                                                         |
@@ -272,9 +272,11 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   queries and fragments; encode a non-default port as `%3A<port>`), DID to document URL mapping
   (`https://host[:port]/.well-known/did.json` when no path segments, else
   `https://host[:port]/<segments>/did.json`), resolver over an injected `HttpClient` trait
-  (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only, no
-  proxy, since a proxy resolves the host itself; `from_client` wraps an application's own
-  client, proxy included, whose address checks are then the application's),
+  (`ReqwestClient` default: HTTPS only, no redirects (a 3xx comes back with its `Location` for
+  a caller that follows it through the client again), 1 MiB limit counted after gzip decoding,
+  public addresses only, no proxy, since a proxy resolves the host itself; `from_client` wraps
+  an application's own client, proxy included, whose address checks are then the
+  application's; `get_accepting` sends an `Accept` header),
   producer taking the document URL and setting `@context` to `["https://www.w3.org/ns/did/v1",
   "https://w3id.org/security/suites/jws-2020/v1"]`. For development and tests only, the
   `local-network` feature adds `ReqwestClient::builder` with
@@ -323,7 +325,9 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   `assertionMethod`, `iss` or `issuer` bound to the party it names, time claims and validity
   period, key binding with `KeyBindingOptions` and the holder key from `cnf` (`jwk` or `kid`)
   under `authentication`, the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
-  `credentialStatus`, `StatusListCheck` over an `HttpClient`).
+  `credentialStatus`, `StatusListCheck` over an `HttpClient`: `Accept:
+  application/statuslist+jwt`, and at most three redirects, each target `https` and fetched
+  through the client again so that every hop passes its address checks).
   `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
   (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
