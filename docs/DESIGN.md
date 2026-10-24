@@ -303,7 +303,8 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   `assertionMethod` or `authentication`), `TimeOptions` (explicit `now`, leeway), issuer and
   holder binding to the party the `KeyReference` names, audience and nonce, accepted `typ` beyond the profile's,
   `SubjectHolderRelationship`, `FailFast`, one format-agnostic `StatusCheck` trait over
-  `CredentialStatus::Vcdm` (and `CredentialStatus::SdJwt` with `sd-jwt`) with a `StatusPolicy`,
+  `CredentialStatus::Vcdm` (and `CredentialStatus::SdJwt` with `sd-jwt`, for the `status` claim
+  of SD-JWT and JWT credentials alike, Token Status List §6.1) with a `StatusPolicy`,
   `extract_issuer`/`extract_holder` (ADR 0004, ADR 0006); `ClaimPath` (SD-JWT VC §5.6.1, OID4VP §7 claims path pointer),
   re-exported from `sd_jwt_vc`.
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,

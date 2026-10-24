@@ -599,11 +599,11 @@ mod status_list {
     use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError};
 
     /// A [`StatusCheck`] for the Token Status List: for the `status` claim of an SD-JWT
-    /// credential ([`CredentialStatus::SdJwt`]), fetches the status list token from the
-    /// referenced URI with an [`HttpClient`], verifies it was signed by the key its header
-    /// names ([`KeyReference::from_jws`] with the token's `iss`), resolved for
-    /// [`KeyRole::Issuer`], and reads the status at the referenced index (Token Status List
-    /// §8).
+    /// credential or of a JWT credential ([`CredentialStatus::SdJwt`]), fetches the status
+    /// list token from the referenced URI with an [`HttpClient`], verifies it was signed by
+    /// the key its header names ([`KeyReference::from_jws`] with the token's `iss`), resolved
+    /// for [`KeyRole::Issuer`], and reads the status at the referenced index (Token Status
+    /// List §8).
     ///
     /// When the token has an `iss`, the key must belong to it ([`KeyReference::binds_to`]);
     /// without one, only a key named by a DID URL is accepted, since a key by value or a key

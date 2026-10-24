@@ -9,8 +9,7 @@
 //! resolves DID URLs; a [`CompositeKeyResolver`](crate::resolver::CompositeKeyResolver) adds
 //! keys by value ([`JwkResolver`](crate::resolver::JwkResolver)) or the key sets of HTTPS
 //! issuers (`JwksResolver`, feature `jwks`). A [`StatusCheck`] is a third, optional extension
-//! point, for `credentialStatus`, shared with the SD-JWT validators, which hand it the
-//! `status` claim.
+//! point, for `credentialStatus` and the `status` claim, shared with the SD-JWT validators.
 //!
 //! # What is checked
 //!
@@ -39,7 +38,12 @@
 //!    set.
 //! 5. `nbf`, `exp` and `iat`, and the credential's own validity period, hold at the validation
 //!    time, within the leeway.
-//! 6. `credentialStatus` passes the [`StatusCheck`], per the [`StatusPolicy`].
+//! 6. `credentialStatus` passes the [`StatusCheck`], per the [`StatusPolicy`], and so does a
+//!    `status` claim, which the Token Status List defines for any JWT (§6.1), as
+//!    `CredentialStatus::SdJwt` after the `credentialStatus` entries. With the `sd-jwt`
+//!    feature a `status` claim that does not parse, or names no status mechanism, is
+//!    refused; without it the claim cannot be checked, so it fails under
+//!    [`StatusPolicy::Strict`] and is ignored otherwise.
 //!
 //! For a presentation ([`JwtPresentationValidator`]): the same for the presentation JWT, with
 //! the key resolved for [`KeyRole::Subject`] (`authentication`) and bound to the holder, plus the expected
@@ -107,8 +111,8 @@ pub use presentation::{
 pub enum CredentialStatus<'a> {
     /// A `credentialStatus` entry of a VCDM credential.
     Vcdm(&'a TypedObject),
-    /// The `status` claim of an SD-JWT VC, or of a VCDM 2.0 credential secured with SD-JWT
-    /// (IETF Token Status List and other mechanisms).
+    /// The `status` claim of an SD-JWT VC, of a VCDM 2.0 credential secured with SD-JWT, or of
+    /// a JWT credential of either profile (IETF Token Status List §6.1 and other mechanisms).
     #[cfg(feature = "sd-jwt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
     SdJwt(&'a crate::sd_jwt_vc::Status),
@@ -139,11 +143,11 @@ impl CredentialStatus<'_> {
 ///
 /// One check serves both credential formats: the validators hand it every `credentialStatus`
 /// entry of a VCDM credential as [`CredentialStatus::Vcdm`] and the `status` claim of an
-/// SD-JWT credential as `CredentialStatus::SdJwt` (feature `sd-jwt`), so an application
-/// implements status checking once. A check that does not understand an entry reports
-/// [`StatusError::Unsupported`], which the [`StatusPolicy`] decides about. `StatusListCheck`
-/// of `sd_jwt_vc::validation` (features `sd-jwt` and `did-web`) checks the Token Status List
-/// and reports every VCDM entry as unsupported.
+/// SD-JWT credential, or of a JWT credential, as `CredentialStatus::SdJwt` (feature
+/// `sd-jwt`), so an application implements status checking once. A check that does not
+/// understand an entry reports [`StatusError::Unsupported`], which the [`StatusPolicy`]
+/// decides about. `StatusListCheck` of `sd_jwt_vc::validation` (features `sd-jwt` and
+/// `did-web`) checks the Token Status List and reports every VCDM entry as unsupported.
 ///
 /// # Examples
 ///
@@ -232,8 +236,69 @@ pub(crate) async fn check_statuses<'a>(
     Ok(())
 }
 
+/// The `status` claim of a JWT credential, which the Token Status List defines for any JWT
+/// (§6.1): a `sd_jwt_vc::Status` with the `sd-jwt` feature, uninhabited without it.
+#[cfg(feature = "sd-jwt")]
+pub(super) type StatusClaim = crate::sd_jwt_vc::Status;
+
+/// The `status` claim of a JWT credential, which the Token Status List defines for any JWT
+/// (§6.1): a `sd_jwt_vc::Status` with the `sd-jwt` feature, uninhabited without it.
+#[cfg(not(feature = "sd-jwt"))]
+pub(super) enum StatusClaim {}
+
+/// The `status` claim of `claims`, for the [`StatusCheck`] beside the `credentialStatus`
+/// entries.
+///
+/// With the `sd-jwt` feature the claim is parsed, and one that does not parse, or names no
+/// status mechanism, is an [`InvalidClaim`](crate::vc::CredentialError::InvalidClaim)
+/// whatever the `policy`. Without it the claim cannot be handed to a check, so it fails under
+/// [`StatusPolicy::Strict`] as an unchecked entry and is ignored otherwise.
+pub(super) fn status_claim(
+    claims: &JwtClaims,
+    policy: StatusPolicy,
+) -> Result<Option<StatusClaim>, ValidationError> {
+    let Some(status) = claims.additional.get("status") else {
+        return Ok(None);
+    };
+    #[cfg(feature = "sd-jwt")]
+    {
+        let _ = policy;
+        let invalid = |reason: String| crate::vc::CredentialError::InvalidClaim {
+            claim: "status",
+            reason,
+        };
+        let status: StatusClaim =
+            serde_json::from_value(status.clone()).map_err(|e| invalid(e.to_string()))?;
+        // The claim references at least one status mechanism (Token Status List §6.1).
+        if status.is_empty() {
+            return Err(invalid("names no status mechanism".to_owned()).into());
+        }
+        Ok(Some(status))
+    }
+    #[cfg(not(feature = "sd-jwt"))]
+    {
+        let _ = status;
+        match policy {
+            StatusPolicy::Strict => Err(ValidationError::StatusUnchecked("status".to_owned())),
+            _ => Ok(None),
+        }
+    }
+}
+
+/// `status` as the entry a [`StatusCheck`] is handed.
+pub(super) fn status_claim_entry(status: &StatusClaim) -> CredentialStatus<'_> {
+    #[cfg(feature = "sd-jwt")]
+    {
+        CredentialStatus::SdJwt(status)
+    }
+    #[cfg(not(feature = "sd-jwt"))]
+    {
+        match *status {}
+    }
+}
+
 /// What to do about a status entry: a `credentialStatus` entry, or the `status` claim of an
-/// SD-JWT credential.
+/// SD-JWT credential or of a JWT credential.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum StatusPolicy {
@@ -244,7 +309,7 @@ pub enum StatusPolicy {
     /// Entries of a type the [`StatusCheck`] does not support, or any entry when there is no
     /// check, are ignored.
     SkipUnsupported,
-    /// `credentialStatus` is ignored.
+    /// Every status entry is ignored: `credentialStatus` and the `status` claim.
     SkipAll,
 }
 

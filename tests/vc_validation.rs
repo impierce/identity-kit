@@ -1162,3 +1162,285 @@ async fn custom_key_resolver() {
     assert!(source.inner().unwrap().is::<std::io::Error>());
     assert!(!source.is_unsupported());
 }
+
+// ---------------------------------------------------------------------------------------------
+// The `status` claim of a JWT credential (Token Status List §6.1)
+// ---------------------------------------------------------------------------------------------
+
+const LIST_URI: &str = "https://example.com/statuslists/1";
+
+/// `credential` signed by `issuer` with a `status` claim referencing index `idx` of
+/// [`LIST_URI`].
+async fn issue_with_status_claim(issuer: &Issuer, credential: &Credential, idx: u64) -> Jwt {
+    issue(issuer, credential, |claims| {
+        claims.additional.insert(
+            "status".to_owned(),
+            json!({ "status_list": { "uri": LIST_URI, "idx": idx } }),
+        );
+    })
+    .await
+}
+
+#[cfg(feature = "sd-jwt")]
+mod status_claim {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    /// A check over a Token Status List in which index 1 is revoked; `CredentialStatusList2017`
+    /// entries pass. It records the mechanism of every entry it is handed, in order.
+    #[derive(Default)]
+    struct Recording(Mutex<Vec<String>>);
+
+    #[async_trait::async_trait]
+    impl StatusCheck for Recording {
+        async fn check(
+            &self,
+            status: CredentialStatus<'_>,
+            _: DateTime<Utc>,
+        ) -> Result<(), StatusError> {
+            self.0.lock().unwrap().push(status.mechanism());
+            match status {
+                CredentialStatus::SdJwt(status) => match &status.status_list {
+                    Some(reference) if reference.idx == 1 => {
+                        Err(StatusError::Invalid("revoked".to_owned()))
+                    }
+                    Some(_) => Ok(()),
+                    None => Err(StatusError::Unsupported("no `status_list`".to_owned())),
+                },
+                CredentialStatus::Vcdm(entry) if entry.has_type("CredentialStatusList2017") => {
+                    Ok(())
+                }
+                other => Err(StatusError::Unsupported(other.mechanism())),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn status_claim_is_checked() {
+        let (issuer, holder) = (issuer(), holder());
+        let credential = credential(&issuer.did, &holder.did);
+        let valid = issue_with_status_claim(&issuer, &credential, 0).await;
+        let revoked = issue_with_status_claim(&issuer, &credential, 1).await;
+        let check = Arc::new(Recording::default());
+        let validator = credential_validator().with_status_check(Arc::clone(&check));
+
+        assert!(validator.validate(&valid, &at(now())).await.is_ok());
+        assert_eq!(*check.0.lock().unwrap(), ["status_list"]);
+        assert!(matches!(
+            validator.validate(&revoked, &at(now())).await,
+            Err(ValidationError::Status(StatusError::Invalid(reason))) if reason == "revoked"
+        ));
+
+        // With `credentialStatus` as well, both are checked, `credentialStatus` first.
+        check.0.lock().unwrap().clear();
+        let list = TypedObject::new("CredentialStatusList2017")
+            .with_id(Uri::parse("https://example.edu/status/24").unwrap());
+        let both = issue_with_status_claim(&issuer, &credential.clone().with_status(list), 0).await;
+        assert!(validator.validate(&both, &at(now())).await.is_ok());
+        assert_eq!(
+            *check.0.lock().unwrap(),
+            ["CredentialStatusList2017", "status_list"]
+        );
+    }
+
+    #[tokio::test]
+    async fn status_claim_follows_the_status_policy() {
+        let (issuer, holder) = (issuer(), holder());
+        let credential = credential(&issuer.did, &holder.did);
+        let revoked = issue_with_status_claim(&issuer, &credential, 1).await;
+        let options = |policy| at(now()).with_status(policy);
+
+        // Without a check, the claim can only be skipped.
+        let validator = credential_validator();
+        assert!(matches!(
+            validator.validate(&revoked, &options(StatusPolicy::Strict)).await,
+            Err(ValidationError::StatusUnchecked(mechanism)) if mechanism == "status_list"
+        ));
+        for policy in [StatusPolicy::SkipUnsupported, StatusPolicy::SkipAll] {
+            assert!(validator.validate(&revoked, &options(policy)).await.is_ok());
+        }
+
+        // With one, only `SkipAll` lets a revoked credential through.
+        let validator = credential_validator().with_status_check(Recording::default());
+        for policy in [StatusPolicy::Strict, StatusPolicy::SkipUnsupported] {
+            assert!(matches!(
+                validator.validate(&revoked, &options(policy)).await,
+                Err(ValidationError::Status(StatusError::Invalid(_)))
+            ));
+        }
+        assert!(
+            validator
+                .validate(&revoked, &options(StatusPolicy::SkipAll))
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_status_claim_is_refused() {
+        let (issuer, holder) = (issuer(), holder());
+        let credential = credential(&issuer.did, &holder.did);
+        let validator = credential_validator().with_status_check(Recording::default());
+        for status in [
+            json!("revoked"),
+            json!({ "status_list": { "uri": LIST_URI, "idx": "one" } }),
+            json!({ "status_list": { "idx": 0 } }),
+            // No status mechanism at all (Token Status List §6.1).
+            json!({}),
+        ] {
+            let jwt = issue(&issuer, &credential, |claims| {
+                claims
+                    .additional
+                    .insert("status".to_owned(), status.clone());
+            })
+            .await;
+            // Refused whatever the policy.
+            for policy in [StatusPolicy::Strict, StatusPolicy::SkipAll] {
+                let result = validator
+                    .validate(&jwt, &at(now()).with_status(policy))
+                    .await;
+                assert!(
+                    matches!(
+                        &result,
+                        Err(ValidationError::Credential(CredentialError::InvalidClaim {
+                            claim: "status",
+                            ..
+                        }))
+                    ),
+                    "{status}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn status_claim_of_presented_credential_is_checked() {
+        let (issuer, holder) = (issuer(), holder());
+        let credential = credential(&issuer.did, &holder.did);
+        let valid = issue_with_status_claim(&issuer, &credential, 0).await;
+        let revoked = issue_with_status_claim(&issuer, &credential, 1).await;
+        let vp = present(&holder, vec![valid, revoked], |_| {}).await;
+        let validator = presentation_validator().with_status_check(Recording::default());
+        let options = presentation_options().with_fail_fast(FailFast::AllErrors);
+
+        let error = validator.validate(&vp, &options).await.unwrap_err();
+        assert!(error.presentation.is_none());
+        assert_eq!(error.credentials.keys().copied().collect::<Vec<_>>(), [1]);
+        assert!(matches!(
+            error.credentials[&1],
+            ValidationError::Status(StatusError::Invalid(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn status_claim_of_v2_credential_is_checked() {
+        let (issuer, holder) = (issuer(), holder());
+        let credential = CredentialV2::new(
+            &issuer.did,
+            Subject::new(&holder.did)
+                .with_property("degree", json!({ "type": "ExampleBachelorDegree" })),
+        )
+        .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap());
+        let header = JwsHeader::new(JwsAlgorithm::EdDSA)
+            .with_typ(CredentialV2::JWT_TYP)
+            .with_kid(issuer.kid.as_str());
+        let check = Arc::new(Recording::default());
+        let validator = credential_validator().with_status_check(Arc::clone(&check));
+
+        for (idx, valid) in [(0, true), (1, false)] {
+            let claims = credential.to_jwt_claims().with_claim(
+                "status",
+                json!({ "status_list": { "uri": LIST_URI, "idx": idx } }),
+            );
+            let jwt = Jwt::sign(&header, &claims, &issuer.signer).await.unwrap();
+            let result = validator.validate_v2(&jwt, &at(now())).await;
+            assert_eq!(result.is_ok(), valid, "{idx}: {result:?}");
+        }
+        assert_eq!(*check.0.lock().unwrap(), ["status_list", "status_list"]);
+
+        let claims = credential
+            .to_jwt_claims()
+            .with_claim("status", json!("revoked"));
+        let malformed = Jwt::sign(&header, &claims, &issuer.signer).await.unwrap();
+        assert!(matches!(
+            validator.validate_v2(&malformed, &at(now())).await,
+            Err(ValidationError::Credential(CredentialError::InvalidClaim {
+                claim: "status",
+                ..
+            }))
+        ));
+    }
+
+    #[cfg(feature = "did-web")]
+    #[tokio::test]
+    async fn status_list_check_reads_the_status_claim() {
+        use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
+        use identity_kit::sd_jwt_vc::validation::StatusListCheck;
+        use identity_kit::sd_jwt_vc::{StatusList, StatusListToken, StatusType};
+        use url::Url;
+
+        /// A client serving one status list token at [`LIST_URI`].
+        struct Served(String);
+
+        #[async_trait::async_trait]
+        impl HttpClient for Served {
+            async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
+                match url.as_str() {
+                    LIST_URI => Ok(HttpResponse::new(200, self.0.as_bytes())),
+                    _ => Err(HttpError::msg("connection refused")),
+                }
+            }
+        }
+
+        let (issuer, holder) = (issuer(), holder());
+        let mut list = StatusList::new(1, 8).unwrap();
+        list.set(1, StatusType::INVALID).unwrap();
+        let token = StatusListToken::new(LIST_URI, JwtClaims::timestamp(NBF).unwrap(), list)
+            .with_expires_at(JwtClaims::timestamp(EXP).unwrap());
+        let header = JwsHeader::new(JwsAlgorithm::EdDSA)
+            .with_typ(StatusListToken::TYP)
+            .with_kid(issuer.kid.as_str());
+        let token = identity_kit::jose::encode_compact(
+            &header,
+            &serde_json::to_vec(&token).unwrap(),
+            &issuer.signer,
+        )
+        .await
+        .unwrap();
+        let check = StatusListCheck::new(Served(token), resolver(), DefaultVerifier);
+        let validator = credential_validator().with_status_check(check);
+        let credential = credential(&issuer.did, &holder.did);
+
+        let valid = issue_with_status_claim(&issuer, &credential, 0).await;
+        let result = validator.validate(&valid, &at(now())).await;
+        assert!(result.is_ok(), "{result:?}");
+        let revoked = issue_with_status_claim(&issuer, &credential, 1).await;
+        assert!(matches!(
+            validator.validate(&revoked, &at(now())).await,
+            Err(ValidationError::Status(StatusError::Invalid(_)))
+        ));
+    }
+}
+
+/// Without the `sd-jwt` feature the claim cannot reach a check, so `Strict` refuses it.
+#[cfg(not(feature = "sd-jwt"))]
+#[tokio::test]
+async fn status_claim_without_sd_jwt_feature() {
+    let (issuer, holder) = (issuer(), holder());
+    let credential = credential(&issuer.did, &holder.did);
+    let jwt = issue_with_status_claim(&issuer, &credential, 1).await;
+    let options = |policy| at(now()).with_status(policy);
+    for validator in [
+        credential_validator(),
+        credential_validator().with_status_check(Checker),
+    ] {
+        assert!(matches!(
+            validator.validate(&jwt, &options(StatusPolicy::Strict)).await,
+            Err(ValidationError::StatusUnchecked(mechanism)) if mechanism == "status"
+        ));
+        for policy in [StatusPolicy::SkipUnsupported, StatusPolicy::SkipAll] {
+            assert!(validator.validate(&jwt, &options(policy)).await.is_ok());
+        }
+    }
+}
