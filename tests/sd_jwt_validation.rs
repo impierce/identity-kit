@@ -702,6 +702,7 @@ async fn disclosures_nested_beyond_the_limit_are_refused_before_any_key_is_resol
 #[cfg(feature = "did-web")]
 mod status_list_check {
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
     use identity_kit::resolver::{CompositeKeyResolver, JwkResolver};
@@ -935,5 +936,231 @@ mod status_list_check {
             check.check(CredentialStatus::SdJwt(&listed), now).await,
             Err(StatusError::Unavailable(_))
         ));
+    }
+
+    /// A client serving fixed responses and recording each request with the media type it
+    /// asked for.
+    #[derive(Default)]
+    struct Routed {
+        routes: HashMap<String, HttpResponse>,
+        requests: Mutex<Vec<(String, Option<String>)>>,
+    }
+
+    impl Routed {
+        fn with(mut self, url: &str, response: HttpResponse) -> Self {
+            self.routes.insert(url.to_owned(), response);
+            self
+        }
+
+        fn redirect(self, url: &str, status: u16, location: &str) -> Self {
+            self.with(
+                url,
+                HttpResponse::new(status, Vec::new()).with_location(location),
+            )
+        }
+
+        fn respond(&self, url: &Url, accept: Option<&str>) -> Result<HttpResponse, HttpError> {
+            self.requests
+                .lock()
+                .unwrap()
+                .push((url.to_string(), accept.map(str::to_owned)));
+            self.routes
+                .get(url.as_str())
+                .cloned()
+                .ok_or_else(|| HttpError::msg("connection refused"))
+        }
+
+        /// The URLs requested so far, forgotten after.
+        fn take(&self) -> Vec<String> {
+            let requests = std::mem::take(&mut *self.requests.lock().unwrap());
+            for (url, accept) in &requests {
+                assert_eq!(
+                    accept.as_deref(),
+                    Some(StatusListToken::MEDIA_TYPE),
+                    "{url}"
+                );
+            }
+            requests.into_iter().map(|(url, _)| url).collect()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HttpClient for Routed {
+        async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
+            self.respond(url, None)
+        }
+
+        async fn get_accepting(
+            &self,
+            url: &Url,
+            media_type: &str,
+        ) -> Result<HttpResponse, HttpError> {
+            self.respond(url, Some(media_type))
+        }
+    }
+
+    /// A signed status list token for the reference `uri`, all statuses valid.
+    async fn token_for(issuer: &Issuer, uri: &str) -> HttpResponse {
+        let token = StatusListToken::new(uri, issued_at(), StatusList::new(1, 8).unwrap())
+            .with_expires_at(expires_at())
+            .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
+            .await
+            .unwrap();
+        HttpResponse::new(200, token.as_str())
+    }
+
+    #[cfg(feature = "local-network")]
+    #[tokio::test]
+    async fn reads_gzip_encoded_and_redirected_tokens_through_reqwest() {
+        use identity_kit::methods::web::ReqwestClient;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let gzip = |data: &[u8]| {
+            use std::io::Write as _;
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(data).unwrap();
+            encoder.finish().unwrap()
+        };
+        let issuer = issuer();
+        let server = MockServer::start().await;
+        let base = format!("https://127.0.0.1:{}", server.address().port());
+        let serve = |route: &'static str, response: ResponseTemplate| {
+            Mock::given(method("GET"))
+                .and(path(route))
+                .and(header("accept", StatusListToken::MEDIA_TYPE))
+                .respond_with(response)
+        };
+        let token = |n: u8| {
+            let (issuer, uri) = (&issuer, format!("{base}/statuslists/{n}"));
+            async move { token_for(issuer, &uri).await }
+        };
+        let gzipped = |body: Vec<u8>| {
+            ResponseTemplate::new(200)
+                .insert_header("content-type", StatusListToken::MEDIA_TYPE)
+                .insert_header("content-encoding", "gzip")
+                .set_body_bytes(gzip(&body))
+        };
+        // Compressed; uncompressed; redirected to a compressed one.
+        serve("/statuslists/1", gzipped(token(1).await.body))
+            .mount(&server)
+            .await;
+        serve(
+            "/statuslists/2",
+            ResponseTemplate::new(200).set_body_bytes(token(2).await.body),
+        )
+        .mount(&server)
+        .await;
+        serve(
+            "/statuslists/3",
+            ResponseTemplate::new(302).insert_header("location", "/served/3"),
+        )
+        .mount(&server)
+        .await;
+        serve("/served/3", gzipped(token(3).await.body))
+            .mount(&server)
+            .await;
+
+        let check = StatusListCheck::new(
+            ReqwestClient::builder()
+                .dangerous_allow_loopback()
+                .build()
+                .unwrap(),
+            Resolver::builder().with(DidKey::default()).build(),
+            DefaultVerifier,
+        );
+        for n in 1..=3 {
+            let status =
+                Status::status_list(StatusListRef::new(format!("{base}/statuslists/{n}"), 0));
+            let result = check
+                .check(CredentialStatus::SdJwt(&status), issued_at())
+                .await;
+            assert!(result.is_ok(), "{n}: {result:?}");
+        }
+        assert_eq!(server.received_requests().await.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn follows_redirects_through_the_client() {
+        let issuer = issuer();
+        let at = |path: &str| format!("https://example.com/{path}");
+        let mut client = Routed::default()
+            // One redirect to an absolute URL, and one to a relative one.
+            .redirect(&at("a"), 302, "https://example.com/served/a")
+            .with(&at("served/a"), token_for(&issuer, &at("a")).await)
+            .redirect(&at("lists/b"), 301, "../served/b")
+            .with(&at("served/b"), token_for(&issuer, &at("lists/b")).await)
+            // Three redirects, the most followed, and four.
+            .redirect(&at("c"), 303, "/c1")
+            .redirect(&at("c1"), 307, "/c2")
+            .redirect(&at("c2"), 308, "/served/c")
+            .with(&at("served/c"), token_for(&issuer, &at("c")).await)
+            .redirect(&at("d"), 302, "/d1")
+            .redirect(&at("d1"), 302, "/d2")
+            .redirect(&at("d2"), 302, "/d3")
+            .redirect(&at("d3"), 302, "/served/d")
+            .with(&at("served/d"), token_for(&issuer, &at("d")).await)
+            // A loop, plain `http`, and a redirect that names no target.
+            .redirect(&at("loop"), 302, "/loop2")
+            .redirect(&at("loop2"), 302, "/loop")
+            .redirect(&at("plain"), 302, "http://example.com/served/plain")
+            .with(&at("nowhere"), HttpResponse::new(302, Vec::new()))
+            // A target that is no URL, and one the client cannot reach.
+            .redirect(&at("malformed"), 302, "https://[::1")
+            .redirect(&at("gone"), 302, "/unreachable");
+        // 304 and 300 are not redirects to follow: an error status like any other.
+        for (path, status) in [("not-modified", 304), ("choices", 300)] {
+            client = client.redirect(&at(path), status, "/served/a");
+        }
+        // Shared, so the requests stay readable; `Arc` forwards `get_accepting`.
+        let client = std::sync::Arc::new(client);
+        let check = StatusListCheck::new(
+            std::sync::Arc::clone(&client),
+            Resolver::builder().with(DidKey::default()).build(),
+            DefaultVerifier,
+        );
+        let run = |uri: String| {
+            let check = &check;
+            async move {
+                let status = Status::status_list(StatusListRef::new(uri, 0));
+                check
+                    .check(CredentialStatus::SdJwt(&status), issued_at())
+                    .await
+            }
+        };
+
+        for (start, hops) in [
+            ("a", vec!["a", "served/a"]),
+            ("lists/b", vec!["lists/b", "served/b"]),
+            ("c", vec!["c", "c1", "c2", "served/c"]),
+        ] {
+            let result = run(at(start)).await;
+            assert!(result.is_ok(), "{start}: {result:?}");
+            let requested: Vec<String> = hops.into_iter().map(at).collect();
+            assert_eq!(client.take(), requested, "{start}");
+        }
+        for (start, reason, last) in [
+            ("d", "more than 3 redirects", "d3"),
+            ("loop", "redirect loop at https://example.com/loop", "loop2"),
+            ("plain", "which is not HTTPS", "plain"),
+            ("nowhere", "HTTP 302 without a `Location`", "nowhere"),
+            ("malformed", r#"redirect to "https://[::1""#, "malformed"),
+            (
+                "gone",
+                "fetching https://example.com/unreachable: connection refused",
+                "unreachable",
+            ),
+            ("not-modified", "HTTP 304", "not-modified"),
+            ("choices", "HTTP 300", "choices"),
+        ] {
+            let result = run(at(start)).await;
+            assert!(
+                matches!(&result, Err(StatusError::Unavailable(r)) if r.contains(reason)),
+                "{start}: {result:?}"
+            );
+            // Nothing past the refused hop was requested.
+            assert_eq!(client.take().last(), Some(&at(last)), "{start}");
+        }
     }
 }

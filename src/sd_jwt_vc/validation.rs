@@ -592,7 +592,7 @@ mod status_list {
     use url::Url;
 
     use crate::jose::{DefaultVerifier, JwsVerifier};
-    use crate::methods::web::HttpClient;
+    use crate::methods::web::{HttpClient, HttpResponse};
     use crate::resolver::{KeyReference, KeyResolver, KeyRole};
     use crate::sd_jwt_vc::{StatusListToken, StatusMechanism};
     use crate::vc::Jwt;
@@ -611,14 +611,33 @@ mod status_list {
     /// to; whether that key may speak for the list is the application's policy to enforce
     /// around it, by restricting the resolver, say.
     ///
-    /// The status list URI comes from the credential, so the client fetches whatever an issuer
-    /// names: `client` must enforce the protections `ReqwestClient` (feature `reqwest`) does
-    /// (HTTPS only, no redirects, no non-public addresses after name resolution, a body limit
-    /// and a timeout), or the status check becomes a request forgery primitive.
+    /// # Fetching
+    ///
+    /// Every request asks for `application/statuslist+jwt` ([`StatusListToken::MEDIA_TYPE`])
+    /// through [`HttpClient::get_accepting`]. `ReqwestClient` (feature `reqwest`) also
+    /// negotiates gzip, which the draft recommends Status Providers use.
+    ///
+    /// A 301, 302, 303, 307 or 308 response is followed, as the draft recommends: its
+    /// [`location`](HttpResponse::location) is resolved against the URL
+    /// that returned it and fetched with a new request through the same client, so that every
+    /// hop passes the client's checks. The check refuses a target that is not `https`, a URL
+    /// already visited (a loop), a redirect without a `Location`, and more than
+    /// [`MAX_REDIRECTS`](Self::MAX_REDIRECTS) redirects.
+    ///
+    /// The status list URI comes from the credential, and a redirect target from whoever serves
+    /// it, so the client fetches whatever an issuer names: `client` must enforce the protections
+    /// `ReqwestClient` does (HTTPS only, no redirects of its own, no non-public addresses after
+    /// name resolution, a body limit and a timeout), or the status check becomes a request
+    /// forgery primitive.
     pub struct StatusListCheck<C, R, V = DefaultVerifier> {
         client: C,
         resolver: R,
         verifier: V,
+    }
+
+    impl<C, R, V> StatusListCheck<C, R, V> {
+        /// The most redirects one status list fetch follows.
+        pub const MAX_REDIRECTS: usize = 3;
     }
 
     impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusListCheck<C, R, V> {
@@ -632,15 +651,55 @@ mod status_list {
             }
         }
 
+        /// The response for `uri`, following redirects as the type documentation describes.
+        async fn get(&self, uri: &str) -> Result<HttpResponse, StatusError> {
+            let mut url = Url::parse(uri)
+                .map_err(|e| StatusError::Unavailable(format!("`uri` {uri:?}: {e}")))?;
+            let mut visited = vec![url.clone()];
+            loop {
+                let response = self
+                    .client
+                    .get_accepting(&url, StatusListToken::MEDIA_TYPE)
+                    .await
+                    .map_err(|e| StatusError::Unavailable(format!("fetching {url}: {e}")))?;
+                if !matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+                    return Ok(response);
+                }
+                if visited.len() > Self::MAX_REDIRECTS {
+                    return Err(StatusError::Unavailable(format!(
+                        "fetching {uri}: more than {} redirects",
+                        Self::MAX_REDIRECTS
+                    )));
+                }
+                let location = response.location.ok_or_else(|| {
+                    StatusError::Unavailable(format!(
+                        "fetching {url}: HTTP {} without a `Location`",
+                        response.status
+                    ))
+                })?;
+                let next = url.join(&location).map_err(|e| {
+                    StatusError::Unavailable(format!(
+                        "fetching {url}: redirect to {location:?}: {e}"
+                    ))
+                })?;
+                if next.scheme() != "https" {
+                    return Err(StatusError::Unavailable(format!(
+                        "fetching {url}: redirect to {next}, which is not HTTPS"
+                    )));
+                }
+                if visited.contains(&next) {
+                    return Err(StatusError::Unavailable(format!(
+                        "fetching {uri}: redirect loop at {next}"
+                    )));
+                }
+                visited.push(next.clone());
+                url = next;
+            }
+        }
+
         /// The status list token at `uri`, fetched and verified.
         async fn fetch(&self, uri: &str) -> Result<StatusListToken, StatusError> {
-            let url = Url::parse(uri)
-                .map_err(|e| StatusError::Unavailable(format!("`uri` {uri:?}: {e}")))?;
-            let response = self
-                .client
-                .get(&url)
-                .await
-                .map_err(|e| StatusError::Unavailable(format!("fetching {uri}: {e}")))?;
+            let response = self.get(uri).await?;
             if !(200..300).contains(&response.status) {
                 return Err(StatusError::Unavailable(format!(
                     "fetching {uri}: HTTP {}",

@@ -14,13 +14,17 @@ use super::{HttpClient, HttpError, HttpResponse};
 ///
 /// - speaks HTTPS only, with the platform's root certificates and `rustls`;
 /// - follows no redirect, so a document is fetched from the URL its DID maps to and nowhere
-///   else;
+///   else: a 3xx response is returned with its `Location` in [`HttpResponse::location`], for a
+///   caller that follows redirects to fetch each target through this client again;
+/// - sends `Accept` when asked through [`HttpClient::get_accepting`], and
+///   `Accept-Encoding: gzip`, decoding a gzip-encoded body;
 /// - resolves host names itself and refuses loopback, private, link-local and other
 ///   non-public addresses, so a DID cannot point the resolver at internal services;
 /// - uses no proxy, whatever `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` or the platform's
 ///   settings say: a proxy resolves the host itself, so it would reach the addresses refused
 ///   above;
-/// - stops reading a body over [`DEFAULT_MAX_BODY`](Self::DEFAULT_MAX_BODY) bytes;
+/// - stops reading a body over [`DEFAULT_MAX_BODY`](Self::DEFAULT_MAX_BODY) bytes, counted
+///   after decoding, so a small compressed body cannot expand past the limit;
 /// - times out after [`DEFAULT_TIMEOUT`](Self::DEFAULT_TIMEOUT).
 ///
 /// [`ReqwestClient::from_client`] wraps a client the application configured itself, keeping
@@ -137,8 +141,19 @@ impl ReqwestClient {
 #[async_trait::async_trait]
 impl HttpClient for ReqwestClient {
     async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
+        self.fetch(url, None).await
+    }
+
+    async fn get_accepting(&self, url: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
+        self.fetch(url, Some(media_type)).await
+    }
+}
+
+impl ReqwestClient {
+    /// Fetches `url`, sending `accept` as the `Accept` header when given.
+    async fn fetch(&self, url: &Url, accept: Option<&str>) -> Result<HttpResponse, HttpError> {
         #[cfg(feature = "local-network")]
-        if let Some(response) = self.get_local(url).await? {
+        if let Some(response) = self.get_local(url, accept).await? {
             return Ok(response);
         }
         if url.scheme() != "https" {
@@ -153,9 +168,7 @@ impl HttpClient for ReqwestClient {
         if literal.is_some_and(|ip| !is_public(ip)) {
             return Err(HttpError::msg(format!("`{url}` is not a public address")));
         }
-        let response = self
-            .client
-            .get(url.as_str())
+        let response = request(&self.client, url, accept)
             .send()
             .await
             .map_err(HttpError::new)?;
@@ -163,9 +176,28 @@ impl HttpClient for ReqwestClient {
     }
 }
 
-/// The status and at most `max_body` bytes of body of `response`.
+/// A `GET` of `url` with `accept` as the `Accept` header, when given.
+fn request(client: &reqwest::Client, url: &Url, accept: Option<&str>) -> reqwest::RequestBuilder {
+    let request = client.get(url.as_str());
+    match accept {
+        Some(media_type) => request.header(reqwest::header::ACCEPT, media_type),
+        None => request,
+    }
+}
+
+/// The status, the `Location` of a redirect and at most `max_body` bytes of decoded body of
+/// `response`.
 async fn read(mut response: reqwest::Response, max_body: usize) -> Result<HttpResponse, HttpError> {
     let status = response.status().as_u16();
+    let location = if response.status().is_redirection() {
+        response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|location| location.to_str().ok())
+            .map(str::to_owned)
+    } else {
+        None
+    };
     if response
         .content_length()
         .is_some_and(|len| len > max_body as u64)
@@ -183,7 +215,11 @@ async fn read(mut response: reqwest::Response, max_body: usize) -> Result<HttpRe
         }
         body.extend_from_slice(&chunk);
     }
-    Ok(HttpResponse::new(status, body))
+    let response = HttpResponse::new(status, body);
+    Ok(match location {
+        Some(location) => response.with_location(location),
+        None => response,
+    })
 }
 
 #[cfg(feature = "local-network")]
@@ -195,7 +231,7 @@ mod local {
 
     use url::{Host, Url};
 
-    use super::{HttpError, HttpResponse, ReqwestClient, is_public, read};
+    use super::{HttpError, HttpResponse, ReqwestClient, is_public, read, request};
 
     /// The local address ranges a [`ReqwestClient`] may reach besides the public internet.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,7 +327,11 @@ mod local {
 
         /// Fetches `url` over plain `http` when every address of its host is in an allowed
         /// local range; `None` when the public rules apply.
-        pub(super) async fn get_local(&self, url: &Url) -> Result<Option<HttpResponse>, HttpError> {
+        pub(super) async fn get_local(
+            &self,
+            url: &Url,
+            accept: Option<&str>,
+        ) -> Result<Option<HttpResponse>, HttpError> {
             if self.local == LocalNetwork::NONE || !matches!(url.scheme(), "https" | "http") {
                 return Ok(None);
             }
@@ -328,8 +368,7 @@ mod local {
                 builder = builder.resolve_to_addrs(name, &pinned);
             }
             let client = builder.build().map_err(HttpError::new)?;
-            let response = client
-                .get(target.as_str())
+            let response = request(&client, &target, accept)
                 .send()
                 .await
                 .map_err(HttpError::new)?;
