@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/impierce/identity-kit"
 keywords = ["did", "ssi", "digital-credentials", "vc"]
 categories = ["cryptography", "authentication"]
-include = ["/src", "/tests/vectors", "/CHANGELOG.md", "/README.md", "/LICENSE"]
+include = ["/src", "/tests/vectors", "/docs/guides", "/CHANGELOG.md", "/README.md", "/LICENSE"]
 
 [package.metadata.docs.rs]
 all-features = true

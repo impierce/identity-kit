@@ -32,6 +32,17 @@ Add it to a project with `cargo add identity-kit`. The API reference is on [docs
 ✅ implemented, 📋 planned. The full checklist, with Cargo features, tracking issues and links to every specification, is in [`docs/FEATURES.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/FEATURES.md).
 The architecture is described in [`docs/DESIGN.md`](https://github.com/impierce/identity-kit/blob/HEAD/docs/DESIGN.md).
 
+## Guides
+
+Step-by-step guides for the most common use cases, each a complete program that runs as a test of the crate:
+
+- [Keys and DIDs](https://github.com/impierce/identity-kit/blob/HEAD/docs/guides/keys-and-dids.md): generate a key in a key store, derive a `did:key` or `did:jwk`, resolve it
+- [Sign and verify a JWS](https://github.com/impierce/identity-kit/blob/HEAD/docs/guides/sign-and-verify.md): sign under a DID with a key store key, verify by resolving the key the header names
+- [Issue and verify a JWT credential](https://github.com/impierce/identity-kit/blob/HEAD/docs/guides/jwt-credentials.md): issue a verifiable credential, present it, validate both
+- [Selective disclosure with SD-JWT VC](https://github.com/impierce/identity-kit/blob/HEAD/docs/guides/sd-jwt-vc.md): issue with concealed claims, present a subset with key binding, validate
+
+The [guide index](https://github.com/impierce/identity-kit/blob/HEAD/docs/guides/README.md) says which types each one uses.
+
 ## Cargo features
 
 All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `resolver`) is always compiled.
