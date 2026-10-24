@@ -1,0 +1,143 @@
+# OpenSSF Security Insights (https://github.com/ossf/security-insights), read by tools such as the
+# OpenSSF Best Practices badge. Keep it true: update it when a fact here changes, and bump
+# `last-reviewed` when checking it without changes.
+header:
+  schema-version: 2.2.0
+  last-updated: '2026-10-24'
+  last-reviewed: '2026-10-24'
+  url: https://raw.githubusercontent.com/impierce/identity-kit/main/security-insights.yml
+
+project:
+  name: identity-kit
+  homepage: https://github.com/impierce/identity-kit
+  administrators:
+    - name: Daniel Mader
+      affiliation: Impierce
+      social: https://github.com/daniel-mader
+      primary: true
+  repositories:
+    - name: identity-kit
+      url: https://github.com/impierce/identity-kit
+      comment: |
+        The `identity-kit` crate: DIDs, pluggable key storage and JWT-based verifiable credentials.
+  documentation:
+    design: https://github.com/impierce/identity-kit/blob/main/docs/DESIGN.md
+    quickstart-guide: https://github.com/impierce/identity-kit/blob/main/README.md
+    detailed-guide: https://docs.rs/identity-kit
+    release-process: https://github.com/impierce/identity-kit/blob/main/docs/RELEASE.md
+    support-policy: https://github.com/impierce/identity-kit/blob/main/SECURITY.md#supported-versions
+    signature-verification: https://github.com/impierce/identity-kit/blob/main/docs/RELEASE.md#verifying-a-release
+  vulnerability-reporting:
+    reports-accepted: true
+    bug-bounty-available: false
+    policy: https://github.com/impierce/identity-kit/blob/main/SECURITY.md
+    comment: |
+      Report vulnerabilities privately through GitHub's private vulnerability reporting:
+      https://github.com/impierce/identity-kit/security/advisories/new
+
+repository:
+  url: https://github.com/impierce/identity-kit
+  status: active
+  accepts-change-request: true
+  accepts-automated-change-request: true
+  core-team:
+    - name: Daniel Mader
+      affiliation: Impierce
+      social: https://github.com/daniel-mader
+      primary: true
+    - name: nanderstabel
+      social: https://github.com/nanderstabel
+      primary: false
+  documentation:
+    contributing-guide: https://github.com/impierce/identity-kit/blob/main/CONTRIBUTING.md
+    review-policy: https://github.com/impierce/identity-kit/blob/main/CONTRIBUTING.md#pull-requests
+    security-policy: https://github.com/impierce/identity-kit/blob/main/SECURITY.md
+  license:
+    url: https://github.com/impierce/identity-kit/blob/main/LICENSE
+    expression: Apache-2.0
+  release:
+    automated-pipeline: true
+    distribution-points:
+      - uri: pkg:cargo/identity-kit
+        comment: crates.io, https://crates.io/crates/identity-kit
+      - uri: https://github.com/impierce/identity-kit/releases
+        comment: GitHub releases, with the published `.crate` and its SLSA provenance
+    changelog: https://github.com/impierce/identity-kit/blob/main/CHANGELOG.md
+    attestations:
+      - name: SLSA provenance
+        predicate-uri: https://slsa.dev/provenance/v0.2
+        location: https://github.com/impierce/identity-kit/releases/download/v{version}/identity-kit-{version}.crate.intoto.jsonl
+        comment: |
+          SLSA build level 3 provenance of the `.crate` published to crates.io, signed through
+          Sigstore. Replace {version} with the release version, and verify it with
+          `slsa-verifier` as docs/RELEASE.md describes.
+  security:
+    assessments:
+      self:
+        comment: |
+          No self-assessment has been published yet.
+    tools:
+      - name: cargo-deny
+        type: SCA
+        rulesets: [deny.toml]
+        integration:
+          adhoc: true
+          ci: true
+          release: false
+        results: {}
+        comment: |
+          RustSec advisories on every pull request, on `main` and on a schedule (audit.yml);
+          licenses, banned crates and sources on every pull request and on `main` (license.yml).
+      - name: Dependabot
+        type: SCA
+        rulesets: [default]
+        integration:
+          adhoc: true
+          ci: false
+          release: false
+        results: {}
+        comment: |
+          Weekly update pull requests for Cargo dependencies and GitHub Actions
+          (.github/dependabot.yml).
+      - name: CodeQL
+        type: SAST
+        rulesets: [default]
+        integration:
+          adhoc: true
+          ci: true
+          release: false
+        results: {}
+        comment: |
+          Rust and GitHub Actions analysis on every pull request, on `main` and on a schedule
+          (codeql.yml).
+      - name: Clippy
+        type: SAST
+        rulesets: [default]
+        integration:
+          adhoc: false
+          ci: true
+          release: false
+        results: {}
+        comment: |
+          `cargo clippy -D warnings` on every pull request (qa.yml).
+      - name: cargo-fuzz
+        type: fuzzing
+        rulesets: [default]
+        integration:
+          adhoc: true
+          ci: true
+          release: false
+        results: {}
+        comment: |
+          libFuzzer targets for the parsers in fuzz/, run on every pull request and on a
+          schedule (fuzz.yml).
+      - name: OpenSSF Scorecard
+        type: other
+        rulesets: [default]
+        integration:
+          adhoc: true
+          ci: false
+          release: false
+        results: {}
+        comment: |
+          Supply-chain checks on `main` and on a schedule (scorecard.yml).
