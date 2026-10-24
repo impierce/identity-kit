@@ -110,7 +110,7 @@
   "delivery_unsigned_status": "Met",
   "delivery_unsigned_justification": "No hash is fetched over HTTP. Cargo and the release workflow use HTTPS only.",
   "vulnerabilities_fixed_60_days_status": "Met",
-  "vulnerabilities_fixed_60_days_justification": "No known vulnerabilities. Dependencies are checked against RustSec on every Cargo change and daily (`cargo deny`), and by OSV Scanner through OpenSSF Scorecard.",
+  "vulnerabilities_fixed_60_days_justification": "No known vulnerability affects the library. Two RustSec advisories are ignored, with the reason recorded in `deny.toml` and `osv-scanner.toml`: RUSTSEC-2023-0071 (Marvin attack in `rsa`), which concerns private-key operations, while this crate only verifies RSA signatures (docs/adr/0001-rsa-verification-only.md); and RUSTSEC-2026-0387 (`crypto-bigint` before 0.7.6), whose only remaining copy, 0.5.5, comes from a test-only dev-dependency and never ships in the crate. Dependencies are checked against RustSec on every Cargo change and daily (`cargo deny`), and by OSV Scanner through OpenSSF Scorecard.",
   "vulnerabilities_critical_fixed_status": "Met",
   "vulnerabilities_critical_fixed_justification": "No critical vulnerabilities have been reported. SECURITY.md describes how fixes and advisories are published.",
   "no_leaked_credentials_status": "Met",
