@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/impierce/identity-kit/compare/v0.2.0...v0.2.1) - 2026-10-24
+
+### Added
+
+- *(vc)* check `status` claim of JWT credentials ([#94](https://github.com/impierce/identity-kit/pull/94))
+
+### Documentation
+
+- state vulnerability response time, test policy and bug reporting ([#91](https://github.com/impierce/identity-kit/pull/91))
+
 ## [0.2.0](https://github.com/impierce/identity-kit/compare/v0.1.0...v0.2.0) - 2026-10-23
 
 ### Added
