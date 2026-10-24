@@ -317,6 +317,7 @@ async fn issued_credential_round_trips() {
     // Every disclosure is applied; the issued payload carries the digests and the decoys.
     assert_eq!(issued.processed().disclosed.len(), 3);
     assert!(!issued.payload().contains_key("_sd_alg"));
+    assert_eq!(issued.payload()["issuer"], issuer.did.as_str());
     let raw = issued.sd_jwt().payload().unwrap();
     assert_eq!(raw["_sd_alg"], "sha-256");
     assert_eq!(raw["credentialSubject"]["_sd"].as_array().unwrap().len(), 4);

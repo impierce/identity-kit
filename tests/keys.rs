@@ -1136,6 +1136,92 @@ async fn the_suite_checks_the_signature_form() {
     testsuite::run(&Truncating(InMemoryKeyStore::new())).await;
 }
 
+/// A store that claims to hold every key id it is asked about.
+struct Presumptuous(InMemoryKeyStore);
+
+#[async_trait::async_trait]
+impl KeyStore for Presumptuous {
+    fn capabilities(&self) -> KeyStoreCapabilities {
+        self.0.capabilities()
+    }
+
+    async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError> {
+        self.0.public_jwk(key).await
+    }
+
+    async fn sign(
+        &self,
+        key: &KeyId,
+        alg: JwsAlgorithm,
+        data: &[u8],
+    ) -> Result<Vec<u8>, KeyStoreError> {
+        self.0.sign(key, alg, data).await
+    }
+
+    async fn exists(&self, _: &KeyId) -> Result<bool, KeyStoreError> {
+        Ok(true)
+    }
+
+    async fn generate(&self, spec: KeySpec) -> Result<KeyId, KeyStoreError> {
+        self.0.generate(spec).await
+    }
+
+    async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> {
+        self.0.delete(key).await
+    }
+}
+
+#[tokio::test]
+#[should_panic(expected = "exists reports an unknown key as present")]
+async fn the_suite_checks_unknown_keys() {
+    testsuite::run(&Presumptuous(InMemoryKeyStore::new())).await;
+}
+
+/// A store whose EdDSA signatures have the right length but a flipped last bit.
+struct Forging(InMemoryKeyStore);
+
+#[async_trait::async_trait]
+impl KeyStore for Forging {
+    fn capabilities(&self) -> KeyStoreCapabilities {
+        self.0.capabilities()
+    }
+
+    async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError> {
+        self.0.public_jwk(key).await
+    }
+
+    async fn sign(
+        &self,
+        key: &KeyId,
+        alg: JwsAlgorithm,
+        data: &[u8],
+    ) -> Result<Vec<u8>, KeyStoreError> {
+        let mut signature = self.0.sign(key, alg, data).await?;
+        if alg == JwsAlgorithm::EdDSA {
+            *signature.last_mut().unwrap() ^= 1;
+        }
+        Ok(signature)
+    }
+
+    async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError> {
+        self.0.exists(key).await
+    }
+
+    async fn generate(&self, spec: KeySpec) -> Result<KeyId, KeyStoreError> {
+        self.0.generate(spec).await
+    }
+
+    async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> {
+        self.0.delete(key).await
+    }
+}
+
+#[tokio::test]
+#[should_panic(expected = "does not verify with its public JWK")]
+async fn the_suite_verifies_signatures() {
+    testsuite::run(&Forging(InMemoryKeyStore::new())).await;
+}
+
 /// A store whose ES256K signatures carry `n - s`, the upper of the two valid `s` values.
 #[cfg(feature = "secp256k1")]
 struct HighS(InMemoryKeyStore);

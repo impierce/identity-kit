@@ -637,6 +637,7 @@ async fn status_policies() {
         .is_ok()
     );
 
+    assert!(!validator().has_status_check());
     let checked = validator().with_status_check(FixedStatus(list));
     assert!(checked.has_status_check());
     assert!(checked.validate(valid.sd_jwt(), &options()).await.is_ok());

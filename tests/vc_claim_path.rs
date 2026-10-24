@@ -79,6 +79,10 @@ fn claim_path_examples_of_sd_jwt_vc_and_oid4vp() {
             claim_path!["degrees", 1, "type"]
         ]
     );
+    assert_eq!(
+        claim_path!["degrees", 1].resolve(&credential).unwrap(),
+        vec![claim_path!["degrees", 1]]
+    );
 }
 
 #[test]
@@ -117,6 +121,14 @@ fn paths_are_json_arrays_of_names_indexes_and_null() {
     let credential = json!({ "name": "Arthur Dent" });
     assert_eq!(
         claim_path!["name", "first"].select(&credential),
+        Err(ClaimPathError {
+            path: claim_path!["name", "first"],
+            depth: 1,
+            expected: "an object"
+        })
+    );
+    assert_eq!(
+        claim_path!["name", "first"].resolve(&credential),
         Err(ClaimPathError {
             path: claim_path!["name", "first"],
             depth: 1,

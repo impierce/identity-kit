@@ -184,6 +184,12 @@ fn url_to_did() {
         did_from_url(&url("https://example.com/a%20b/c~d/e!f/g%zz")).unwrap(),
         did("did:web:example.com:a%20b:c%7Ed:e%21f:g%25zz")
     );
+    // An escape after a byte that is no hex digit is kept; hex digits two bytes after an
+    // unencoded byte do not make it an escape, nor does a `%` with one hex digit.
+    assert_eq!(
+        did_from_url(&url("https://example.com/x%20/~ab/abc%2x0")).unwrap(),
+        did("did:web:example.com:x%20:%7Eab:abc%252x0")
+    );
     // Only the file name at the end is dropped: `.well-known` elsewhere is a path segment.
     assert_eq!(
         did_from_url(&url("https://example.com/.well-known/x/did.json")).unwrap(),
@@ -329,6 +335,10 @@ fn did_to_url_rejections() {
             .to_string(),
         "`did:web:192.0.2.1` is not a valid did:web: the host is an IP address"
     );
+    // Three dots, written either way, are no dot segment but an ordinary name.
+    for three in ["did:web:example.com:...", "did:web:example.com:%2E%2E%2E"] {
+        assert!(document_url(&did(three)).is_ok(), "{three}");
+    }
 }
 
 #[tokio::test]

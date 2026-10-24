@@ -523,6 +523,21 @@ fn rsa_keys_need_a_modulus_and_an_exponent() {
             }))
         );
     }
+    // An exponent of zero octets only is refused, not trimmed past its end.
+    for e in ["AA", "AAA"] {
+        let key: Jwk =
+            serde_json::from_value(json!({ "kty": "RSA", "n": RFC7515_A2_N, "e": e })).unwrap();
+        assert!(
+            matches!(
+                jws.verify(&DefaultVerifier, &key),
+                Err(VerificationError::Key(JwkError::InvalidKey {
+                    key: "RSA",
+                    ..
+                }))
+            ),
+            "e {e:?}"
+        );
+    }
 }
 
 #[test]
