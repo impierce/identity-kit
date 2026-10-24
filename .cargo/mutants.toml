@@ -49,10 +49,8 @@ exclude_re = [
     'src/resolver/registry\.rs:\d+:\d+: replace Resolver::builder -> ResolverBuilder with Default::default\(\)',
     # An index one byte past the end fails the byte lookup that follows just the same.
     'src/sd_jwt_vc/status\.rs:\d+:\d+: replace < with <= in StatusList::position',
-    # The temporary file next to a relative path: `""` and `"."` name the same directory. In
-    # `.` for an absolute path, it differs only when the working directory is on another file
-    # system, which a test cannot arrange portably.
-    'src/keys/software\.rs:\d+:\d+: (replace match guard !dir\.as_os_str\(\)\.is_empty\(\) with (true|false)|delete !) in write_atomically',
+    # The directory of the temporary file for a bare file name: `""` and `"."` are the same.
+    'src/keys/software\.rs:\d+:\d+: replace match guard !dir\.as_os_str\(\)\.is_empty\(\) with true in write_atomically',
 
     # PKCS#11 paths SoftHSM cannot reach: it offers both RSA mechanisms, and its calls neither
     # panic nor get cancelled.
