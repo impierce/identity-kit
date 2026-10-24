@@ -35,8 +35,6 @@ exclude_re = [
     'src/methods/web/mod\.rs:\d+:\d+: replace && with \|\| in percent_decode',
     # For n > 21 or n <= -6, `n - 1`, `n + 1` and `n / 1` share their sign and are never zero.
     'src/methods/jcs\.rs:140:\d+: replace (- with [+/]|< with <=) in write_number',
-    # Two `Instant` reads are never equal.
-    'src/resolver/(cache|jwks)\.rs:\d+:\d+: replace > with >= in Entry::is_live',
     # `store` runs after a miss; only two concurrent fetches of one issuer could tell `||` apart.
     'src/resolver/jwks\.rs:164:\d+: replace && with \|\| in JwksResolver<C>::store',
     # `ResolverBuilder::new` is `Default::default`.
@@ -49,7 +47,4 @@ exclude_re = [
     # PKCS#11 paths SoftHSM cannot reach (both RSA mechanisms; no panics or cancellation).
     'src/keys/pkcs11\.rs:\d+:\d+: delete match arm JwsAlgorithm::PS256 in Pkcs11KeyStore::open_with',
     'src/keys/pkcs11\.rs:\d+:\d+: replace match guard e\.is_panic\(\) with (true|false) in Pkcs11KeyStore::blocking',
-
-    # Only the description changes: an object without `properties` allows any member anyway.
-    'src/openapi\.rs:\d+:\d+: replace any_object -> ObjectBuilder with Default::default\(\)',
 ]

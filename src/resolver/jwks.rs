@@ -396,3 +396,19 @@ impl From<JwksError> for KeyResolutionError {
         Self::new(error)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_entry_expires_at_its_instant() {
+        let now = Instant::now();
+        let entry = Entry {
+            keys: Arc::from([]),
+            expires_at: Some(now),
+        };
+        assert!(entry.is_live(now - Duration::from_nanos(1)));
+        assert!(!entry.is_live(now));
+    }
+}

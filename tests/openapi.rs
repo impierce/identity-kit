@@ -506,6 +506,35 @@ fn did_configuration_resource_validates() {
     }
 }
 
+/// The map branches of `@context` and `serviceEndpoint` are open objects with a description.
+#[test]
+fn map_branches_are_described_open_objects() {
+    use utoipa::PartialSchema;
+
+    for (schema, pointer, description) in [
+        (
+            DidDocument::schema(),
+            "/properties/@context/oneOf/2",
+            "A context object.",
+        ),
+        (
+            Service::schema(),
+            "/properties/serviceEndpoint/oneOf/2",
+            "An endpoint map.",
+        ),
+    ] {
+        let schema = serde_json::to_value(schema).unwrap();
+        assert_eq!(
+            schema.pointer(pointer),
+            Some(&json!({
+                "type": "object",
+                "description": description,
+                "additionalProperties": true,
+            })),
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Claim paths
 // ---------------------------------------------------------------------------------------------
