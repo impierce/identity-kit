@@ -907,7 +907,7 @@ fn disclosures_nested_beyond_the_limit_are_refused() {
     };
     assert!(wrapped(SdJwtBuilder::MAX_DEPTH - 8).is_ok());
     assert!(too_deep(wrapped(SdJwtBuilder::MAX_DEPTH - 7)));
-    // Plain arrays count the same: the chain under `wraps` arrays in the member `a`.
+    // Plain arrays count towards the depth too.
     let in_arrays = |wraps: usize| {
         let (inner, disclosures) = disclosure_chain(&[Link::Property; 8]);
         let payload = json!({ "a": (0..wraps).fold(inner, |inner, _| json!([inner])) });

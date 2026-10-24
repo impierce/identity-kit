@@ -285,7 +285,6 @@ async fn key_binding_errors() {
         validator.validate(presentation.sd_jwt(), &stale).await,
         Err(SdJwtValidationError::KeyBindingTooOld { .. })
     ));
-    // Exactly `max_age` old is still young enough.
     let oldest = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
             .with_time(TimeOptions::at(now() + chrono::TimeDelta::seconds(60)))

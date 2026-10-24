@@ -311,8 +311,7 @@ fn every_schema_compiles_with_its_references_resolved() {
     );
 }
 
-/// A document that registers one type alone still resolves every `$ref` of its schema:
-/// `ToSchema::schemas` names each component the schema refers to.
+/// Each type's `ToSchema::schemas` names every schema its `$ref`s point to.
 #[test]
 fn every_schema_names_the_schemas_it_refers_to() {
     fn alone<T: ToSchema>() {

@@ -505,7 +505,6 @@ fn multiple_subjects_have_no_jwt_form() {
         Err(CredentialError::MultipleSubjects(2))
     );
 
-    // One subject in an array is one subject: its `id` is the `sub`, and back.
     let mut one = serde_json::to_value(&credential).unwrap();
     one["credentialSubject"].as_array_mut().unwrap().truncate(1);
     let one: Credential = serde_json::from_value(one).unwrap();
@@ -593,7 +592,6 @@ fn typed_objects_and_builders() {
             until: "expirationDate"
         })
     );
-    // One that expires the instant it is issued is valid for that instant.
     let instant = Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap();
     Credential::new(
         uri("did:example:issuer"),

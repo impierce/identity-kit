@@ -8,56 +8,48 @@ profile = "mutants"
 
 # Mutants left out of the run, each class with the reason no test should catch it.
 exclude_re = [
-    # Trivial trait impls: string views, string comparison, hashing and serde messages carry
-    # no behaviour a caller relies on. Of `Debug`, only the empty output goes, which leaks
-    # nothing; its other mutants (the private members `Jwk` hides) stay in.
+    # Trivial impls no caller relies on; of `Debug`, only the empty output (which leaks nothing).
     '<impl AsRef<str> for \w+>::as_ref',
     '<impl PartialEq<&?str> for \w+>::eq',
     '<impl Hash for \w+>::hash',
     '<impl (core::)?(fmt::)?Debug for .+>::fmt -> (core::)?fmt::Result with Ok\(Default::default\(\)\)',
     '<impl Visitor<.de> for \w+>::expecting',
 
-    # Equivalent mutants: no input tells them apart from the original. A pattern pinned to a
-    # line stops matching when the code moves, and the mutant shows up as missed again.
-    # The skipped `:` (`?`) is itself accepted by the id (query) loop that follows.
+    # Equivalent mutants. A line-pinned pattern stops matching when the code moves.
+    # The skipped `:` (`?`) is accepted by the loop that follows.
     'src/did/syntax\.rs:551:\d+: replace \+= with [-*]= in scan_did',
     'src/did/syntax\.rs:614:\d+: replace \+= with [-*]= in scan_url_suffix',
     # Starting at the `:` or the last scheme character: both are URI characters.
     'src/did/uri\.rs:93:\d+: replace \+ with [-*] in validate_uri',
-    # OR of bits that never overlap: the low seven bits and the continuation bit, a length
-    # byte count and 0x80, two hex digits, a status written into zeroed bits.
+    # OR of bits that never overlap.
     'src/jose/multikey\.rs:\d+:\d+: replace \| with \^ in varint::encode',
     'src/jose/pkcs1\.rs:\d+:\d+: replace \| with \^ in (tlv|read_tlv)',
     'src/methods/web/mod\.rs:\d+:\d+: replace \| with \^ in percent_decode',
     'src/sd_jwt_vc/status\.rs:\d+:\d+: replace \| with \^ in StatusList::set',
-    # The fallback for an all-zero length, which the long form (at least 0x80) never has.
+    # Fallback for an all-zero length, which the long form never has.
     'src/jose/pkcs1\.rs:108:\d+: replace - with [+/] in tlv',
-    # Trimming an all-zero integer to nothing or to one zero octet: the same value, zero.
+    # An all-zero integer trimmed to nothing or to one zero octet is still zero.
     'src/jose/jwk\.rs:\d+:\d+: replace - with / in Jwk::rsa_public_key',
-    # `did:web` decodes only DIDs that passed DID syntax, where every `%` starts two hex digits.
+    # DID syntax already guarantees two hex digits after every `%`.
     'src/methods/web/mod\.rs:\d+:\d+: replace match guard hi\.is_ascii_hexdigit\(\) && lo\.is_ascii_hexdigit\(\) with true in percent_decode',
     'src/methods/web/mod\.rs:\d+:\d+: replace && with \|\| in percent_decode',
-    # The exponent branch of JCS runs for n > 21 or n <= -6, where `n - 1`, `n + 1` and
-    # `n / 1` share their sign and are never zero.
+    # For n > 21 or n <= -6, `n - 1`, `n + 1` and `n / 1` share their sign and are never zero.
     'src/methods/jcs\.rs:140:\d+: replace (- with [+/]|< with <=) in write_number',
-    # An entry that expires at exactly the current `Instant`: two clock reads are never equal.
+    # Two `Instant` reads are never equal.
     'src/resolver/(cache|jwks)\.rs:\d+:\d+: replace > with >= in Entry::is_live',
-    # `store` runs after a miss, so an entry of the issuer has expired and the purge removes
-    # it; only two concurrent fetches of one issuer could tell `||` apart.
+    # `store` runs after a miss; only two concurrent fetches of one issuer could tell `||` apart.
     'src/resolver/jwks\.rs:164:\d+: replace && with \|\| in JwksResolver<C>::store',
     # `ResolverBuilder::new` is `Default::default`.
     'src/resolver/registry\.rs:\d+:\d+: replace Resolver::builder -> ResolverBuilder with Default::default\(\)',
-    # An index one byte past the end fails the byte lookup that follows just the same.
+    # One byte past the end fails the lookup that follows just the same.
     'src/sd_jwt_vc/status\.rs:\d+:\d+: replace < with <= in StatusList::position',
-    # The directory of the temporary file for a bare file name: `""` and `"."` are the same.
+    # For a bare file name, `""` and `"."` are the same directory.
     'src/keys/software\.rs:\d+:\d+: replace match guard !dir\.as_os_str\(\)\.is_empty\(\) with true in write_atomically',
 
-    # PKCS#11 paths SoftHSM cannot reach: it offers both RSA mechanisms, and its calls neither
-    # panic nor get cancelled.
+    # PKCS#11 paths SoftHSM cannot reach (both RSA mechanisms; no panics or cancellation).
     'src/keys/pkcs11\.rs:\d+:\d+: delete match arm JwsAlgorithm::PS256 in Pkcs11KeyStore::open_with',
     'src/keys/pkcs11\.rs:\d+:\d+: replace match guard e\.is_panic\(\) with (true|false) in Pkcs11KeyStore::blocking',
 
-    # The free-form object of the OpenAPI schemas: JSON Schema allows any member of an object
-    # without `properties` already, so only the description changes.
+    # Only the description changes: an object without `properties` allows any member anyway.
     'src/openapi\.rs:\d+:\d+: replace any_object -> ObjectBuilder with Default::default\(\)',
 ]

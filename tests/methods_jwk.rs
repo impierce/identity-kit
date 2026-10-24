@@ -219,8 +219,7 @@ async fn create_operation() {
         DidJwk::document(&did(&too_long)),
         Err(ResolutionErrorKind::InvalidDid.into())
     );
-    // One byte shorter, at the limit, it is past the length check and fails on its content: the
-    // padded id is no longer valid base64url of a JSON object.
+    // At the limit, it passes the length check and fails on its content.
     let at_limit = &too_long[..DidJwk::MAX_DID_LEN];
     let error = DidJwk::document(&did(at_limit)).unwrap_err();
     assert_eq!(error.kind(), &ResolutionErrorKind::InvalidDid);

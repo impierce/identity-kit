@@ -392,7 +392,6 @@ fn status_claim_of_a_referenced_token() {
         })
     ));
     assert!(Status::new().is_empty());
-    // Either mechanism alone makes a status.
     assert!(!status.is_empty());
     assert!(!other.is_empty());
 
@@ -463,8 +462,7 @@ fn status_list_encoding_of_section_4() {
     assert!(!rebuilt.is_empty());
     assert!(StatusList::new(1, 0).unwrap().is_empty());
 
-    // Setting a status replaces the one there, here at a bit offset of 2, and leaves its
-    // neighbours alone.
+    // Overwriting a status leaves its neighbours alone.
     assert_eq!(rebuilt.get(1), Some(StatusType::SUSPENDED));
     rebuilt.set(1, StatusType::INVALID).unwrap();
     assert_eq!(rebuilt.get(1), Some(StatusType::INVALID));
@@ -911,8 +909,7 @@ fn claim_metadata_validation_of_a_presentation() {
         wrong_kind.check_claims(processed, false),
         Err(TypeMetadataError::Path(error)) if error.expected == "an array"
     ));
-    // `cnf` of the issued credential, an object of one member, is plain: no placeholder of an
-    // undisclosed element.
+    // `cnf`, an object of one member, is not an undisclosed-element placeholder.
     let plain =
         TypeMetadata::new("x").with_claim(ClaimMetadata::new(["cnf"]).with_sd(SdPolicy::Never));
     assert!(issuance.processed().as_issued().contains_key("cnf"));

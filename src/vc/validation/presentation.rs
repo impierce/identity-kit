@@ -330,8 +330,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
             let credential =
                 SdJwtCredentialV2::from_sd_jwt_with(sd_jwt, &options.credentials.additional_typ)
                     .map_err(crate::sd_jwt_vc::SdJwtValidationError::from)?;
-            // The status is checked below, with this validator's check and both kinds of
-            // status entries, so the SD-JWT options carry no policy.
+            // No status policy here: the status is checked below, for both kinds of entry.
             let sd_jwt_options = SdJwtValidationOptions {
                 time: options.credentials.time,
                 key_binding: options.key_binding.clone(),

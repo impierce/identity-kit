@@ -464,10 +464,7 @@ mod tests {
             "93.184.216.34",
             "2606:2800:220:1:248:1893:25c8:1946",
             "1.1.1.1",
-            // Each matches one half of a reserved range's condition, not both: the second octet
-            // of 100.64.0.0/10 or the first outside it, 192.0.0.0/24 by its second or third
-            // octet only, the second octet of 198.18.0.0/15, and the IPv6 documentation and NAT64
-            // prefixes by one segment.
+            // Near misses: each matches only one half of a reserved range's condition.
             "8.64.0.1",
             "100.128.0.1",
             "8.0.0.8",

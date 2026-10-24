@@ -204,7 +204,6 @@ mod tests {
             (1.0, "1"),
             (-56.0, "-56"),
             (4.5, "4.5"),
-            // The decimal point right before the first digit: `0.` and the digits.
             (0.5, "0.5"),
             (0.125, "0.125"),
             (0.002, "0.002"),

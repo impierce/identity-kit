@@ -184,8 +184,7 @@ fn url_to_did() {
         did_from_url(&url("https://example.com/a%20b/c~d/e!f/g%zz")).unwrap(),
         did("did:web:example.com:a%20b:c%7Ed:e%21f:g%25zz")
     );
-    // An escape after a byte that is no hex digit is kept; hex digits two bytes after an
-    // unencoded byte do not make it an escape, nor does a `%` with one hex digit.
+    // Only `%` with two hex digits is an escape; any other `%` is encoded.
     assert_eq!(
         did_from_url(&url("https://example.com/x%20/~ab/abc%2x0")).unwrap(),
         did("did:web:example.com:x%20:%7Eab:abc%252x0")
@@ -822,8 +821,7 @@ mod local_network {
         assert!(error.to_string().contains("exceeds 4 bytes"), "{error}");
     }
 
-    /// Fetches, with at most `max_body` bytes of body, a response whose body has no
-    /// `Content-Length` and is sent as the given chunks.
+    /// Fetches a body sent as `chunks` without `Content-Length`, reading at most `max_body` bytes.
     async fn get_chunked(
         chunks: &'static [&'static str],
         max_body: usize,
@@ -854,13 +852,10 @@ mod local_network {
 
     #[tokio::test]
     async fn a_streamed_body_is_limited_too() {
-        // A body without `Content-Length` is counted as it arrives: over the limit by its second
-        // chunk, or by its first.
         let error = get_chunked(&["hello", "world"], 6).await.unwrap_err();
         assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
         let error = get_chunked(&["helloworld"], 6).await.unwrap_err();
         assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
-        // A body of exactly the limit is read.
         let response = get_chunked(&["hello", "world"], 10).await.unwrap();
         assert_eq!(response.body, b"helloworld");
     }
@@ -873,7 +868,6 @@ mod local_network {
             .mount(&server)
             .await;
         let target = url(&format!("https://127.0.0.1:{}/x", server.address().port()));
-        // `Content-Length` 10 against limits of 10 and 9.
         let response = loopback().with_max_body(10).get(&target).await.unwrap();
         assert_eq!(response.body, b"helloworld");
         let error = loopback().with_max_body(9).get(&target).await.unwrap_err();
@@ -882,8 +876,7 @@ mod local_network {
 
     #[tokio::test]
     async fn only_web_urls_are_fetched_when_local_addresses_are_allowed() {
-        // The local rules apply to `http` and `https` alone; anything else is refused as it is
-        // without them, before a host is looked for.
+        // Other schemes are refused before any host lookup.
         for other in ["file:///etc/passwd", "ftp://127.0.0.1/did.json"] {
             let error = loopback().get(&url(other)).await.unwrap_err();
             assert!(

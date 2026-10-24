@@ -10,8 +10,7 @@ async fn saves_in_the_directory_of_the_key_file() {
     let keys = tempfile::tempdir().unwrap();
     let path = keys.path().join("keys.json");
 
-    // A working directory that no longer exists: nothing can be created in `.`, not even by
-    // root, to whom permissions are no obstacle.
+    // A deleted working directory: nothing can be created in `.`, not even by root.
     let gone = tempfile::tempdir().unwrap().keep();
     std::env::set_current_dir(&gone).unwrap();
     std::fs::remove_dir(&gone).unwrap();

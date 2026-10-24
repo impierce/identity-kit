@@ -557,8 +557,7 @@ impl KeyStore for Yielding {
 
 #[tokio::test]
 async fn concurrent_generation_keeps_the_first_key() {
-    // Two calls for the same unbound pair both generate a key; the first bound stays, and the
-    // other key is deleted.
+    // Both calls generate a key; the first one bound stays and the other is deleted.
     let store = Arc::new(InMemoryKeyStore::new());
     let identity = KeyStoreIdentity::new(Arc::new(Yielding(Arc::clone(&store))))
         .with_producer(DidKey::default())

@@ -1341,8 +1341,7 @@ async fn presentation_credential_errors_are_reported_by_index() {
 
 #[tokio::test]
 async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
-    // Valid from 2026: not yet valid at the time the credential options name (2025), whatever
-    // the clock says.
+    // Checked at the time of the credential options (2025), not the clock.
     let (issuer, signer) = issuer();
     let (holder, _) = holder();
     let later = builder(

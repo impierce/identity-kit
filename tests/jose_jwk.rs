@@ -100,7 +100,6 @@ fn rfc7517_a2_private_key_keeps_d_in_json_but_not_in_debug_or_display() {
         debug.contains("MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4"),
         "{debug}"
     );
-    // Members the struct does not name are shown when there are any.
     assert!(!debug.contains("additional"), "{debug}");
     let mut extended = jwk.public();
     extended

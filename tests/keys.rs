@@ -873,8 +873,7 @@ async fn key_signer_from_a_known_public_jwk_checks_the_key() {
     KeySigner::from_public_jwk(&store, id, JwsAlgorithm::ES256, p256.with_alg("ES256")).unwrap();
 }
 
-/// A store that claims every algorithm and is asked nothing else: `from_public_jwk` consults
-/// only its capabilities, so the key-type check is reached for every algorithm.
+/// A store that claims every algorithm; `from_public_jwk` consults nothing else.
 struct EveryAlgorithm;
 
 #[async_trait::async_trait]
@@ -940,7 +939,6 @@ fn key_signer_from_a_known_public_jwk_needs_both_kty_and_crv() {
     ] {
         assert!(fits(alg, fitting), "{alg} with a {}", fitting.kty());
         for other in others {
-            // Same `kty` and another curve, or another `kty` altogether.
             assert!(
                 !fits(alg, other),
                 "{alg} with `kty` {} and `crv` {:?}",

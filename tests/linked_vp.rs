@@ -695,7 +695,6 @@ async fn key_of_another_did_is_refused_before_resolving_it() {
 
 #[tokio::test]
 async fn embedded_key_must_be_the_did_jwk_of_the_holder() {
-    // The RFC 8037 key's `did:jwk` presents with the key itself in `jwk`, which binds to it.
     let signer = Ed25519Signer::rfc8037();
     let did = DidJwk::did(&signer.public_jwk()).unwrap();
     let claims = LinkedPresentationBuilder::new(did.clone())
@@ -714,8 +713,7 @@ async fn embedded_key_must_be_the_did_jwk_of_the_holder() {
     let decoded = validator.validate(&jwt, &did, &options()).await.unwrap();
     assert_eq!(decoded.holder(), Some(&Uri::from(did.clone())));
 
-    // Claimed for the same key's `did:key`, it is refused: an embedded key binds only to its
-    // `did:jwk` or thumbprint, so that DID would have to name the key by `kid`.
+    // An embedded key binds only to its `did:jwk`, not to the same key's `did:key`.
     let mut claims = claims;
     let other = DidKey::did(&signer.public_jwk()).unwrap();
     claims.iss = Some(other.to_string());

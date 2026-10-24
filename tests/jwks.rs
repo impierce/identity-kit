@@ -338,7 +338,6 @@ async fn key_sets_are_cached_per_issuer() {
     resolve(&resolver, ISSUER, "key-1").await.unwrap();
     assert_eq!(resolver.client().fetched().len(), 2);
 
-    // An expired entry is fetched again.
     let web = Web::default().serve(
         WELL_KNOWN,
         json!({"issuer": ISSUER, "jwks": {"keys": [ed25519("key-1")]}}),
@@ -379,7 +378,6 @@ async fn other_references_are_unsupported() {
 
 #[tokio::test]
 async fn a_failed_fetch_keeps_its_cause() {
-    // The error chain reaches the HTTP client's error through the resolution error.
     let error = JwksResolver::new(Web::default())
         .resolve_key(&reference(ISSUER, "key-1"), KeyRole::Issuer)
         .await

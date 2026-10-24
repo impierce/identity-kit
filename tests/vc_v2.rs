@@ -187,7 +187,6 @@ fn jose_presentation_example_with_enveloped_credential() {
     );
     assert_eq!(PresentationV2::from_jwt_claims(&claims).unwrap(), built);
 
-    // The other builder methods, and the type check.
     let named = built
         .with_id(Uri::parse("urn:uuid:3978344f-8596-4c3a-a978-8fcaba3903c5").unwrap())
         .with_type("ExamplePresentation");
@@ -484,8 +483,7 @@ fn builder_reproduces_the_jose_example() {
 
 #[test]
 fn validity_period_may_be_a_single_instant() {
-    // VCDM 2.0, Validity Period: `validUntil` must not precede `validFrom`; equal is a
-    // one-instant period.
+    // VCDM 2.0, Validity Period: `validUntil` may equal `validFrom`.
     let credential: CredentialV2 = serde_json::from_str(CREDENTIAL).unwrap();
     assert!(credential.has_type("ExampleDegreeCredential"));
     assert!(!credential.has_type("ExamplePresentation"));
