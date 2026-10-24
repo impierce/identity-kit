@@ -86,8 +86,9 @@ repository:
           release: false
         results: {}
         comment: |
-          RustSec advisories on every pull request, on `main` and on a schedule (audit.yml);
-          licenses, banned crates and sources on every pull request and on `main` (license.yml).
+          RustSec advisories daily, and on pull requests and pushes to `main` that change
+          `Cargo.toml`, `Cargo.lock` or `deny.toml` (audit.yml). Licenses, banned crates and
+          sources on those same pull requests and pushes (license.yml).
       - name: Dependabot
         type: SCA
         rulesets: [default]
@@ -101,15 +102,16 @@ repository:
           (.github/dependabot.yml).
       - name: CodeQL
         type: SAST
-        rulesets: [default]
+        rulesets: [security-extended]
         integration:
           adhoc: true
           ci: true
           release: false
         results: {}
         comment: |
-          Rust and GitHub Actions analysis on every pull request, on `main` and on a schedule
-          (codeql.yml).
+          Rust and GitHub Actions analysis with the `security-extended` queries on every pull
+          request, on `main` and weekly (codeql.yml). `tests/` and `fuzz/` are excluded, since
+          they hold specification vectors on purpose (.github/codeql/codeql-config.yml).
       - name: Clippy
         type: SAST
         rulesets: [default]
@@ -129,8 +131,8 @@ repository:
           release: false
         results: {}
         comment: |
-          libFuzzer targets for the parsers in fuzz/, run on every pull request and on a
-          schedule (fuzz.yml).
+          libFuzzer targets for the parsers in fuzz/, run daily and on pull requests that
+          change `src/`, `fuzz/`, `Cargo.toml` or `Cargo.lock` (fuzz.yml).
       - name: OpenSSF Scorecard
         type: other
         rulesets: [default]
