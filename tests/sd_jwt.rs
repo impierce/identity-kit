@@ -114,6 +114,7 @@ fn disclosure_for_an_object_property() {
         assert_eq!(disclosure.value(), &json!("Möbius"));
         assert!(!disclosure.is_element());
         assert_eq!(disclosure.as_str(), variant);
+        assert_eq!(disclosure.to_string(), variant);
     }
     assert_eq!(
         Disclosure::parse(canonical)

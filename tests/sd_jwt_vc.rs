@@ -837,6 +837,19 @@ fn extending_type_metadata() {
 }
 
 #[test]
+fn sd_policy_names() {
+    // The values of `sd` (SD-JWT VC §5.6.4), in serde and in `Display` alike.
+    for (policy, name) in [
+        (SdPolicy::Always, "always"),
+        (SdPolicy::Allowed, "allowed"),
+        (SdPolicy::Never, "never"),
+    ] {
+        assert_eq!(policy.to_string(), name);
+        assert_eq!(serde_json::to_value(policy).unwrap(), name);
+    }
+}
+
+#[test]
 fn claim_metadata_validation_of_a_presentation() {
     // The §2.3.2 presentation: `address` and `is_over_65` disclosed, the rest withheld.
     let presentation = SdJwtVc::parse(vector!(
@@ -898,10 +911,12 @@ fn claim_metadata_validation_of_a_presentation() {
         wrong_kind.check_claims(processed, false),
         Err(TypeMetadataError::Path(error)) if error.expected == "an array"
     ));
-    // `cnf`, an object of one member, is plain: no placeholder of an undisclosed element.
+    // `cnf` of the issued credential, an object of one member, is plain: no placeholder of an
+    // undisclosed element.
     let plain =
         TypeMetadata::new("x").with_claim(ClaimMetadata::new(["cnf"]).with_sd(SdPolicy::Never));
-    assert!(plain.check_claims(processed, false).is_ok());
+    assert!(issuance.processed().as_issued().contains_key("cnf"));
+    assert!(plain.check_claims(issuance.processed(), false).is_ok());
 
     // Undisclosed array elements count as present and disclosable, with nothing beneath.
     let simple =

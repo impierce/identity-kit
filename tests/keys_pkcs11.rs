@@ -143,6 +143,7 @@ async fn ps256_is_the_other_rsa_algorithm() {
         &["identity-kit-testsuite-ps256", "ps256-only", "ps256-4096"],
     )
     .await;
+    assert_eq!(store.options().rsa_algorithm, JwsAlgorithm::PS256);
     let capabilities = store.capabilities();
     assert_eq!(capabilities.algorithms, [JwsAlgorithm::PS256]);
     testsuite::run(&store).await;
