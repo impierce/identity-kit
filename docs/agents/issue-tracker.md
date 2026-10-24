@@ -31,7 +31,7 @@ Create a GitHub issue.
 
 ## When a skill says "fetch the relevant ticket"
 
-Run `gh issue view <number> --comments`.
+Read it as in **Read an issue** above, with its labels and comments as JSON.
 
 ## Wayfinding operations
 
