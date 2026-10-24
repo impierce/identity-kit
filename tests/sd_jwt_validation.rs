@@ -1105,7 +1105,10 @@ mod status_list_check {
             .redirect(&at("loop"), 302, "/loop2")
             .redirect(&at("loop2"), 302, "/loop")
             .redirect(&at("plain"), 302, "http://example.com/served/plain")
-            .with(&at("nowhere"), HttpResponse::new(302, Vec::new()));
+            .with(&at("nowhere"), HttpResponse::new(302, Vec::new()))
+            // A target that is no URL, and one the client cannot reach.
+            .redirect(&at("malformed"), 302, "https://[::1")
+            .redirect(&at("gone"), 302, "/unreachable");
         // 304 and 300 are not redirects to follow: an error status like any other.
         for (path, status) in [("not-modified", 304), ("choices", 300)] {
             client = client.redirect(&at(path), status, "/served/a");
@@ -1142,6 +1145,12 @@ mod status_list_check {
             ("loop", "redirect loop at https://example.com/loop", "loop2"),
             ("plain", "which is not HTTPS", "plain"),
             ("nowhere", "HTTP 302 without a `Location`", "nowhere"),
+            ("malformed", r#"redirect to "https://[::1""#, "malformed"),
+            (
+                "gone",
+                "fetching https://example.com/unreachable: connection refused",
+                "unreachable",
+            ),
             ("not-modified", "HTTP 304", "not-modified"),
             ("choices", "HTTP 300", "choices"),
         ] {
