@@ -41,8 +41,9 @@
 //! 6. `credentialStatus` passes the [`StatusCheck`], per the [`StatusPolicy`], and so does a
 //!    `status` claim, which the Token Status List defines for any JWT (§6.1), as
 //!    `CredentialStatus::SdJwt` after the `credentialStatus` entries. With the `sd-jwt`
-//!    feature a `status` claim that does not parse is refused; without it the claim cannot
-//!    be checked, so it fails under [`StatusPolicy::Strict`] and is ignored otherwise.
+//!    feature a `status` claim that does not parse, or names no status mechanism, is
+//!    refused; without it the claim cannot be checked, so it fails under
+//!    [`StatusPolicy::Strict`] and is ignored otherwise.
 //!
 //! For a presentation ([`JwtPresentationValidator`]): the same for the presentation JWT, with
 //! the key resolved for [`KeyRole::Subject`] (`authentication`) and bound to the holder, plus the expected
@@ -248,9 +249,9 @@ pub(super) enum StatusClaim {}
 /// The `status` claim of `claims`, for the [`StatusCheck`] beside the `credentialStatus`
 /// entries.
 ///
-/// With the `sd-jwt` feature the claim is parsed, and one that does not parse is an
-/// [`InvalidClaim`](crate::vc::CredentialError::InvalidClaim) whatever the `policy`, as in an
-/// SD-JWT credential. Without it the claim cannot be handed to a check, so it fails under
+/// With the `sd-jwt` feature the claim is parsed, and one that does not parse, or names no
+/// status mechanism, is an [`InvalidClaim`](crate::vc::CredentialError::InvalidClaim)
+/// whatever the `policy`. Without it the claim cannot be handed to a check, so it fails under
 /// [`StatusPolicy::Strict`] as an unchecked entry and is ignored otherwise.
 pub(super) fn status_claim(
     claims: &JwtClaims,
@@ -262,15 +263,17 @@ pub(super) fn status_claim(
     #[cfg(feature = "sd-jwt")]
     {
         let _ = policy;
-        serde_json::from_value(status.clone())
-            .map(Some)
-            .map_err(|e| {
-                crate::vc::CredentialError::InvalidClaim {
-                    claim: "status",
-                    reason: e.to_string(),
-                }
-                .into()
-            })
+        let invalid = |reason: String| crate::vc::CredentialError::InvalidClaim {
+            claim: "status",
+            reason,
+        };
+        let status: StatusClaim =
+            serde_json::from_value(status.clone()).map_err(|e| invalid(e.to_string()))?;
+        // The claim references at least one status mechanism (Token Status List §6.1).
+        if status.is_empty() {
+            return Err(invalid("names no status mechanism".to_owned()).into());
+        }
+        Ok(Some(status))
     }
     #[cfg(not(feature = "sd-jwt"))]
     {

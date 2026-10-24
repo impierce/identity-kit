@@ -1286,6 +1286,8 @@ mod status_claim {
             json!("revoked"),
             json!({ "status_list": { "uri": LIST_URI, "idx": "one" } }),
             json!({ "status_list": { "idx": 0 } }),
+            // No status mechanism at all (Token Status List §6.1).
+            json!({}),
         ] {
             let jwt = issue(&issuer, &credential, |claims| {
                 claims
@@ -1293,7 +1295,7 @@ mod status_claim {
                     .insert("status".to_owned(), status.clone());
             })
             .await;
-            // Refused whatever the policy, as in an SD-JWT credential.
+            // Refused whatever the policy.
             for policy in [StatusPolicy::Strict, StatusPolicy::SkipAll] {
                 let result = validator
                     .validate(&jwt, &at(now()).with_status(policy))
@@ -1356,6 +1358,18 @@ mod status_claim {
             assert_eq!(result.is_ok(), valid, "{idx}: {result:?}");
         }
         assert_eq!(*check.0.lock().unwrap(), ["status_list", "status_list"]);
+
+        let claims = credential
+            .to_jwt_claims()
+            .with_claim("status", json!("revoked"));
+        let malformed = Jwt::sign(&header, &claims, &issuer.signer).await.unwrap();
+        assert!(matches!(
+            validator.validate_v2(&malformed, &at(now())).await,
+            Err(ValidationError::Credential(CredentialError::InvalidClaim {
+                claim: "status",
+                ..
+            }))
+        ));
     }
 
     #[cfg(feature = "did-web")]
