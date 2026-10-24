@@ -873,6 +873,84 @@ async fn key_signer_from_a_known_public_jwk_checks_the_key() {
     KeySigner::from_public_jwk(&store, id, JwsAlgorithm::ES256, p256.with_alg("ES256")).unwrap();
 }
 
+/// A store that claims every algorithm and is asked nothing else: `from_public_jwk` consults
+/// only its capabilities, so the key-type check is reached for every algorithm.
+struct EveryAlgorithm;
+
+#[async_trait::async_trait]
+impl KeyStore for EveryAlgorithm {
+    fn capabilities(&self) -> KeyStoreCapabilities {
+        KeyStoreCapabilities::new([
+            JwsAlgorithm::EdDSA,
+            JwsAlgorithm::ES256,
+            JwsAlgorithm::ES256K,
+            JwsAlgorithm::ES384,
+            JwsAlgorithm::RS256,
+            JwsAlgorithm::PS256,
+        ])
+    }
+
+    async fn public_jwk(&self, _: &KeyId) -> Result<Jwk, KeyStoreError> {
+        unreachable!("from_public_jwk does not ask for the public key")
+    }
+
+    async fn sign(&self, _: &KeyId, _: JwsAlgorithm, _: &[u8]) -> Result<Vec<u8>, KeyStoreError> {
+        unreachable!("from_public_jwk does not sign")
+    }
+
+    async fn exists(&self, _: &KeyId) -> Result<bool, KeyStoreError> {
+        unreachable!("from_public_jwk does not look the key up")
+    }
+}
+
+#[test]
+fn key_signer_from_a_known_public_jwk_needs_both_kty_and_crv() {
+    // DID Core §A.2, Example 20: secp256k1, P-384 and P-521 keys.
+    let secp256k1 = jwk(r#"{"kty":"EC","crv":"secp256k1",
+        "x":"Z4Y3NNOxv0J6tCgqOBFnHnaZhJF6LdulT7z8A-2D5_8",
+        "y":"i5a2NtJoUKXkLm6q8nOEu9WOkso1Ag6FTUT6k_LMnGk"}"#);
+    let p384 = jwk(r#"{"kty":"EC","crv":"P-384",
+        "x":"VUZKSlUwMGdpSXplekRwODhzX2N4U1BYdHVYWUZsaXVDR25kZ1U0UXA4bDkxeHpE",
+        "y":"jq4QoAHKiIzezDp88s_cxSPXtuXYFliuCGndgU4Qp8l91xzD1spCmFIzQgVjqvcP"}"#);
+    let p521 = jwk(r#"{"kty":"EC","crv":"P-521",
+        "x":"VTI5c1lYSmZWMmx1WkhNZ0dQTXhaYkhtSnBEU3UtSXZwdUtpZ0VOMnB6Z1d0U28tLVJ3ZC1uNzhuclduWnplRGMx",
+        "y":"UW5WNVgwSnBkR052YVc0Z1VqY1B6LVpoZWNaRnliT3FMSUpqVk9sTEVUSDd1UGx5RzBnRW9NV25JWlhoUVZ5cFB5"}"#);
+    // The did:jwk specification's X25519 example: an OKP key that is not Ed25519.
+    let x25519 =
+        jwk(r#"{"kty":"OKP","crv":"X25519","x":"3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08"}"#);
+    let ed25519 = jwk(RFC8037_A1).public();
+    let p256 = jwk(RFC7515_A3_KEY).public();
+    // The RSA key of RFC 7517 A.2 without its `alg`, which names RS256.
+    let keys: Value = serde_json::from_str(RFC7517_A2).unwrap();
+    let rsa: Jwk = serde_json::from_value(
+        json!({ "kty": "RSA", "n": keys["keys"][1]["n"], "e": keys["keys"][1]["e"] }),
+    )
+    .unwrap();
+
+    let fits = |alg, public: &Jwk| {
+        KeySigner::from_public_jwk(EveryAlgorithm, KeyId::new("k"), alg, public.clone()).is_ok()
+    };
+    for (alg, fitting, others) in [
+        (JwsAlgorithm::EdDSA, &ed25519, [&x25519, &p256, &rsa]),
+        (JwsAlgorithm::ES256, &p256, [&p521, &secp256k1, &ed25519]),
+        (JwsAlgorithm::ES256K, &secp256k1, [&p256, &p384, &ed25519]),
+        (JwsAlgorithm::ES384, &p384, [&p521, &p256, &x25519]),
+        (JwsAlgorithm::RS256, &rsa, [&p256, &ed25519, &x25519]),
+        (JwsAlgorithm::PS256, &rsa, [&p384, &secp256k1, &x25519]),
+    ] {
+        assert!(fits(alg, fitting), "{alg} with a {}", fitting.kty());
+        for other in others {
+            // Same `kty` and another curve, or another `kty` altogether.
+            assert!(
+                !fits(alg, other),
+                "{alg} with `kty` {} and `crv` {:?}",
+                other.kty(),
+                other.crv()
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------------------------

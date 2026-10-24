@@ -469,3 +469,21 @@ fn builder_reproduces_the_jose_example() {
         serde_json::from_value(serde_json::to_value(&with_status).unwrap()).unwrap();
     assert_eq!(roundtrip, with_status);
 }
+
+#[test]
+fn validity_period_may_be_a_single_instant() {
+    // VCDM 2.0, Validity Period: `validUntil` must not precede `validFrom`; equal is a
+    // one-instant period.
+    let credential: CredentialV2 = serde_json::from_str(CREDENTIAL).unwrap();
+    let from = Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap();
+    credential.clone().with_valid_until(from).check().unwrap();
+    assert_eq!(
+        credential
+            .with_valid_until(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 23).unwrap())
+            .check(),
+        Err(CredentialError::InvalidValidity {
+            from: "validFrom",
+            until: "validUntil"
+        })
+    );
+}

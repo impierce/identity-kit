@@ -571,6 +571,16 @@ fn typed_objects_and_builders() {
             until: "expirationDate"
         })
     );
+    // One that expires the instant it is issued is valid for that instant.
+    let instant = Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap();
+    Credential::new(
+        uri("did:example:issuer"),
+        instant,
+        Subject::new(uri("did:example:subject")),
+    )
+    .with_expiration_date(instant)
+    .check()
+    .unwrap();
 }
 
 #[test]

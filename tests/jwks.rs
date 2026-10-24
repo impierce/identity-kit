@@ -337,6 +337,19 @@ async fn key_sets_are_cached_per_issuer() {
     resolve(&resolver, ISSUER, "key-1").await.unwrap();
     resolve(&resolver, ISSUER, "key-1").await.unwrap();
     assert_eq!(resolver.client().fetched().len(), 2);
+
+    // An expired entry is fetched again.
+    let web = Web::default().serve(
+        WELL_KNOWN,
+        json!({"issuer": ISSUER, "jwks": {"keys": [ed25519("key-1")]}}),
+    );
+    let resolver = JwksResolver::new(web).with_ttl(Duration::from_millis(20));
+    resolve(&resolver, ISSUER, "key-1").await.unwrap();
+    resolve(&resolver, ISSUER, "key-1").await.unwrap();
+    assert_eq!(resolver.client().fetched().len(), 1);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    resolve(&resolver, ISSUER, "key-1").await.unwrap();
+    assert_eq!(resolver.client().fetched().len(), 2);
     assert!(format!("{resolver:?}").starts_with("JwksResolver {"));
 }
 
@@ -362,6 +375,17 @@ async fn other_references_are_unsupported() {
         );
     }
     assert!(resolver.client().fetched().is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_fetch_keeps_its_cause() {
+    // The error chain reaches the HTTP client's error through the resolution error.
+    let error = JwksResolver::new(Web::default())
+        .resolve_key(&reference(ISSUER, "key-1"), KeyRole::Issuer)
+        .await
+        .unwrap_err();
+    let cause = std::error::Error::source(&error).expect("the HTTP error");
+    assert_eq!(cause.to_string(), format!("no route to {WELL_KNOWN}"));
 }
 
 /// The identity credential of SD-JWT VC §2.3, presented with key binding, its issuer key found

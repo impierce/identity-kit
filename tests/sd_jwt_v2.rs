@@ -1339,6 +1339,36 @@ async fn presentation_credential_errors_are_reported_by_index() {
 }
 
 #[tokio::test]
+async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
+    // Valid from 2026: not yet valid at the time the credential options name (2025), whatever
+    // the clock says.
+    let (issuer, signer) = issuer();
+    let (holder, _) = holder();
+    let later = builder(
+        credential(&issuer.did, &holder.did)
+            .with_valid_from(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+    )
+    .sign(&signer)
+    .await
+    .unwrap();
+    let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(later.sd_jwt())]).await;
+    let errors = credential_errors(
+        presentation_validator()
+            .validate_v2(&vp, &presentation_options())
+            .await
+            .unwrap_err(),
+    );
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [(0, ValidationError::NotYetValid { not_before, .. })]
+                if *not_before == Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+        ),
+        "{errors:?}"
+    );
+}
+
+#[tokio::test]
 async fn presentation_status_checks() {
     let credential = with_statuses().await;
     let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(credential.sd_jwt())]).await;
