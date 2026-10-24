@@ -11,6 +11,6 @@ reason = "rsa is used for signature verification only; no private-key operations
 [[IgnoredVulns]]
 # Timing side channels in `crypto-bigint` < 0.7.6. The library is on 0.7.6; what is left is
 # 0.5.5, which no 0.5 release fixes, reached only through the `jsonwebtoken` dev-dependency
-# (`rust_crypto`) that tests use to cross-check verification with public test keys.
+# (`rust_crypto`) that tests use to sign and verify with published RFC test keys.
 id = "RUSTSEC-2026-0387"
-reason = "crypto-bigint 0.5.5 is a dev-dependency only, verifying with public test keys"
+reason = "crypto-bigint 0.5.5 is a dev-dependency only, used with published RFC test keys"
