@@ -285,6 +285,17 @@ async fn key_binding_errors() {
         validator.validate(presentation.sd_jwt(), &stale).await,
         Err(SdJwtValidationError::KeyBindingTooOld { .. })
     ));
+    let oldest = options().with_key_binding(
+        KeyBindingOptions::new(AUDIENCE, NONCE)
+            .with_time(TimeOptions::at(now() + chrono::TimeDelta::seconds(60)))
+            .with_max_age(Duration::from_secs(60)),
+    );
+    assert!(
+        validator
+            .validate(presentation.sd_jwt(), &oldest)
+            .await
+            .is_ok()
+    );
     // A `max_age` beyond what the clock represents bounds nothing, and never panics.
     let unbounded = with_key_binding().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
@@ -625,6 +636,7 @@ async fn status_policies() {
         .is_ok()
     );
 
+    assert!(!validator().has_status_check());
     let checked = validator().with_status_check(FixedStatus(list));
     assert!(checked.has_status_check());
     assert!(checked.validate(valid.sd_jwt(), &options()).await.is_ok());

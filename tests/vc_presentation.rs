@@ -270,6 +270,17 @@ fn structural_requirements_and_builder() {
         ])
     );
     assert_eq!(presentation.properties["nonce"], "343s$FSFDa-");
+    assert_eq!(
+        serde_json::to_value(&presentation.context).unwrap(),
+        json!([
+            "https://www.w3.org/2018/credentials/v1",
+            "https://www.w3.org/2018/credentials/examples/v1"
+        ])
+    );
+    assert!(presentation.has_type("CredentialManagerPresentation"));
+    assert!(!presentation.has_type("OtherPresentation"));
+    let jwt: Jwt = EXAMPLE_31.parse().unwrap();
+    assert_eq!(jwt.into_string(), EXAMPLE_31);
     let roundtrip: Presentation =
         serde_json::from_value(serde_json::to_value(&presentation).unwrap()).unwrap();
     assert_eq!(roundtrip, presentation);

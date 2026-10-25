@@ -392,6 +392,8 @@ fn status_claim_of_a_referenced_token() {
         })
     ));
     assert!(Status::new().is_empty());
+    assert!(!status.is_empty());
+    assert!(!other.is_empty());
 
     let sd_jwt = SdJwt::parse(vector!("status_list", "referenced_sd_jwt.txt")).unwrap();
     assert_eq!(
@@ -548,6 +550,15 @@ fn status_list_encoding_of_section_4() {
         serde_json::from_value::<StatusList>(value).unwrap(),
         rebuilt
     );
+    assert!(!rebuilt.is_empty());
+    assert!(StatusList::new(1, 0).unwrap().is_empty());
+
+    // Overwriting a status leaves its neighbours alone.
+    assert_eq!(rebuilt.get(1), Some(StatusType::SUSPENDED));
+    rebuilt.set(1, StatusType::INVALID).unwrap();
+    assert_eq!(rebuilt.get(1), Some(StatusType::INVALID));
+    assert_eq!(rebuilt.get(0), two_bit.get(0));
+    assert_eq!(rebuilt.get(2), two_bit.get(2));
 
     // Errors.
     assert!(matches!(
@@ -685,6 +696,15 @@ fn status_list_token_of_section_5_and_8() {
     assert_eq!(StatusType::INVALID.to_string(), "INVALID (0x01)");
     assert_eq!(StatusType(0x0c).to_string(), "0x0c");
     assert!(StatusType::VALID.is_valid());
+    // The registered values of Token Status List §7, by number and by name.
+    for (status, value, name) in [
+        (StatusType::VALID, 0, "VALID"),
+        (StatusType::INVALID, 1, "INVALID"),
+        (StatusType::SUSPENDED, 2, "SUSPENDED"),
+    ] {
+        assert_eq!(status.value(), value);
+        assert_eq!(status.name(), Some(name));
+    }
 
     // `typ` is required.
     let plain: Jwt = unsigned_jwt(&json!({"alg": "ES256"}), &payload)
@@ -879,6 +899,15 @@ fn extending_type_metadata() {
         relaxing.extend(&base),
         Err(TypeMetadataError::IllegalOverride { property: "sd", .. })
     ));
+    // Repeating the fixed policy is no override.
+    let repeating = TypeMetadata::new("https://example.com/child")
+        .with_extends("https://example.com/base", None)
+        .with_claim(ClaimMetadata::new(["email"]).with_sd(SdPolicy::Never));
+    let effective = repeating.extend(&base).unwrap();
+    assert_eq!(
+        effective.claim(&claim_path!["email"]).unwrap().sd_policy(),
+        SdPolicy::Never
+    );
     let optional = TypeMetadata::new("https://example.com/child")
         .with_extends("https://example.com/base", None)
         .with_claim(ClaimMetadata::new(["name"]).with_mandatory(false));
@@ -894,6 +923,19 @@ fn extending_type_metadata() {
         .with_extends("https://example.com/base", None)
         .with_display(identity_kit::sd_jwt_vc::DisplayMetadata::new("de", "Kind"));
     assert_eq!(own.extend(&base).unwrap().display[0].name, "Kind");
+}
+
+#[test]
+fn sd_policy_names() {
+    // The values of `sd` (SD-JWT VC §5.6.4), in serde and in `Display` alike.
+    for (policy, name) in [
+        (SdPolicy::Always, "always"),
+        (SdPolicy::Allowed, "allowed"),
+        (SdPolicy::Never, "never"),
+    ] {
+        assert_eq!(policy.to_string(), name);
+        assert_eq!(serde_json::to_value(policy).unwrap(), name);
+    }
 }
 
 #[test]
@@ -951,8 +993,18 @@ fn claim_metadata_validation_of_a_presentation() {
     let wrong_kind = TypeMetadata::new("x").with_claim(ClaimMetadata::new(["iss", "x"]));
     assert!(matches!(
         wrong_kind.check_claims(processed, false),
-        Err(TypeMetadataError::Path(_))
+        Err(TypeMetadataError::Path(error)) if error.expected == "an object" && error.depth == 1
     ));
+    let wrong_kind = TypeMetadata::new("x").with_claim(ClaimMetadata::new(claim_path!["iss", 0]));
+    assert!(matches!(
+        wrong_kind.check_claims(processed, false),
+        Err(TypeMetadataError::Path(error)) if error.expected == "an array"
+    ));
+    // `cnf`, an object of one member, is not an undisclosed-element placeholder.
+    let plain =
+        TypeMetadata::new("x").with_claim(ClaimMetadata::new(["cnf"]).with_sd(SdPolicy::Never));
+    assert!(issuance.processed().as_issued().contains_key("cnf"));
+    assert!(plain.check_claims(issuance.processed(), false).is_ok());
 
     // Undisclosed array elements count as present and disclosable, with nothing beneath.
     let simple =

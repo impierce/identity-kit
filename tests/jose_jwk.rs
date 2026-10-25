@@ -100,6 +100,13 @@ fn rfc7517_a2_private_key_keeps_d_in_json_but_not_in_debug_or_display() {
         debug.contains("MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4"),
         "{debug}"
     );
+    assert!(!debug.contains("additional"), "{debug}");
+    let mut extended = jwk.public();
+    extended
+        .additional_mut()
+        .insert("ext".to_owned(), json!(true));
+    let debug = format!("{extended:?}");
+    assert!(debug.contains("additional"), "{debug}");
 
     let display = jwk.to_string();
     assert!(

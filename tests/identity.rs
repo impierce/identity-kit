@@ -519,6 +519,63 @@ async fn generate_missing_generates_once_and_reuses() {
     assert_eq!(store.key_ids().len(), 2);
 }
 
+/// A store that lets other tasks run while it generates a key.
+struct Yielding(Arc<InMemoryKeyStore>);
+
+#[async_trait::async_trait]
+impl KeyStore for Yielding {
+    fn capabilities(&self) -> KeyStoreCapabilities {
+        self.0.capabilities()
+    }
+
+    async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError> {
+        self.0.public_jwk(key).await
+    }
+
+    async fn sign(
+        &self,
+        key: &KeyId,
+        alg: JwsAlgorithm,
+        data: &[u8],
+    ) -> Result<Vec<u8>, KeyStoreError> {
+        self.0.sign(key, alg, data).await
+    }
+
+    async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError> {
+        self.0.exists(key).await
+    }
+
+    async fn generate(&self, spec: KeySpec) -> Result<KeyId, KeyStoreError> {
+        tokio::task::yield_now().await;
+        self.0.generate(spec).await
+    }
+
+    async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> {
+        self.0.delete(key).await
+    }
+}
+
+#[tokio::test]
+async fn concurrent_generation_keeps_the_first_key() {
+    // Both calls generate a key; the first one bound stays and the other is deleted.
+    let store = Arc::new(InMemoryKeyStore::new());
+    let identity = KeyStoreIdentity::new(Arc::new(Yielding(Arc::clone(&store))))
+        .with_producer(DidKey::default())
+        .generate_missing(true);
+    let kind = did_kind("did:key");
+    let (first, second) = tokio::join!(
+        identity.identifier(&kind, JwsAlgorithm::EdDSA),
+        identity.identifier(&kind, JwsAlgorithm::EdDSA),
+    );
+    assert_eq!(first.unwrap(), second.unwrap());
+    let keys = store.key_ids();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(
+        identity.bindings(),
+        [(kind, JwsAlgorithm::EdDSA, keys[0].clone())]
+    );
+}
+
 #[tokio::test]
 async fn generate_missing_refuses_what_it_cannot_generate() {
     let (identity, store) = identity();

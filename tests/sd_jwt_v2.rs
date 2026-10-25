@@ -317,6 +317,7 @@ async fn issued_credential_round_trips() {
     // Every disclosure is applied; the issued payload carries the digests and the decoys.
     assert_eq!(issued.processed().disclosed.len(), 3);
     assert!(!issued.payload().contains_key("_sd_alg"));
+    assert_eq!(issued.payload()["issuer"], issuer.did.as_str());
     let raw = issued.sd_jwt().payload().unwrap();
     assert_eq!(raw["_sd_alg"], "sha-256");
     assert_eq!(raw["credentialSubject"]["_sd"].as_array().unwrap().len(), 4);
@@ -1336,6 +1337,35 @@ async fn presentation_credential_errors_are_reported_by_index() {
             .unwrap_err(),
     );
     assert!(matches!(&errors[0], (0, ValidationError::Signature(_))));
+}
+
+#[tokio::test]
+async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
+    // Checked at the time of the credential options (2025), not the clock.
+    let (issuer, signer) = issuer();
+    let (holder, _) = holder();
+    let later = builder(
+        credential(&issuer.did, &holder.did)
+            .with_valid_from(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+    )
+    .sign(&signer)
+    .await
+    .unwrap();
+    let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(later.sd_jwt())]).await;
+    let errors = credential_errors(
+        presentation_validator()
+            .validate_v2(&vp, &presentation_options())
+            .await
+            .unwrap_err(),
+    );
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [(0, ValidationError::NotYetValid { not_before, .. })]
+                if *not_before == Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+        ),
+        "{errors:?}"
+    );
 }
 
 #[tokio::test]
