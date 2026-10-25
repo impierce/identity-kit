@@ -410,6 +410,97 @@ fn status_claim_of_a_referenced_token() {
 }
 
 #[test]
+fn status_type_names_and_numbers() {
+    // Token Status List, "OAuth Status Types" registry: the names of their own serialize as
+    // names, every other value (`APPLICATION_SPECIFIC` 0x03 and 0x0C-0x0F included) as a number.
+    for (status, serialized) in [
+        (StatusType::VALID, json!("VALID")),
+        (StatusType::INVALID, json!("INVALID")),
+        (StatusType::SUSPENDED, json!("SUSPENDED")),
+        (StatusType(0x03), json!(3)),
+        (StatusType(0x0C), json!(12)),
+        (StatusType(255), json!(255)),
+    ] {
+        assert_eq!(serde_json::to_value(status).unwrap(), serialized);
+        assert_eq!(
+            serde_json::from_value::<StatusType>(serialized).unwrap(),
+            status
+        );
+    }
+    // A number may also come as a decimal string, as `FromStr` reads it.
+    assert_eq!(
+        serde_json::from_value::<StatusType>(json!("12")).unwrap(),
+        StatusType(12)
+    );
+    for rejected in [
+        json!("APPLICATION_SPECIFIC"),
+        json!("valid"),
+        json!("REVOKED"),
+        json!(""),
+        json!("256"),
+        json!("+1"),
+        json!(" 1"),
+        json!(256),
+        json!(-1),
+        json!(1.0),
+        json!(null),
+        json!([0]),
+    ] {
+        assert!(
+            serde_json::from_value::<StatusType>(rejected.clone()).is_err(),
+            "{rejected}"
+        );
+    }
+
+    // `FromStr` accepts the same strings as `Deserialize`.
+    for (text, status) in [
+        ("VALID", StatusType::VALID),
+        ("INVALID", StatusType::INVALID),
+        ("SUSPENDED", StatusType::SUSPENDED),
+        ("0", StatusType::VALID),
+        ("3", StatusType(3)),
+        ("255", StatusType(255)),
+    ] {
+        assert_eq!(text.parse::<StatusType>().unwrap(), status);
+        assert_eq!(
+            serde_json::from_value::<StatusType>(json!(text)).unwrap(),
+            status
+        );
+    }
+    for text in ["APPLICATION_SPECIFIC", "Valid", "256", "-1", "0x01", ""] {
+        assert!(
+            matches!(
+                text.parse::<StatusType>(),
+                Err(StatusListError::UnknownStatusType(ref s)) if s == text
+            ),
+            "{text}"
+        );
+        assert!(serde_json::from_value::<StatusType>(json!(text)).is_err());
+    }
+    assert_eq!(
+        "Valid".parse::<StatusType>().unwrap_err().to_string(),
+        r#""Valid" is not VALID, INVALID, SUSPENDED or a number in 0..=255"#
+    );
+
+    // A status type inside a consumer's own model.
+    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    struct Revocation {
+        index: u64,
+        status: StatusType,
+    }
+    let revocation = Revocation {
+        index: 7,
+        status: StatusType::INVALID,
+    };
+    let text = serde_json::to_string(&revocation).unwrap();
+    assert_eq!(text, r#"{"index":7,"status":"INVALID"}"#);
+    assert_eq!(
+        serde_json::from_str::<Revocation>(&text).unwrap(),
+        revocation
+    );
+}
+
+#[test]
 fn status_list_encoding_of_section_4() {
     // §4.1 and §4.2: 16 statuses of 1 bit, 12 statuses of 2 bits.
     let one_bit: StatusList =

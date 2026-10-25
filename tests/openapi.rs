@@ -30,6 +30,8 @@ fn openapi() -> Value {
     add::<identity_kit::vc::ClaimPath>(&mut schemas);
     #[cfg(feature = "sd-jwt")]
     add::<identity_kit::sd_jwt_vc::TypeMetadata>(&mut schemas);
+    #[cfg(feature = "sd-jwt")]
+    add::<identity_kit::sd_jwt_vc::StatusType>(&mut schemas);
     document(schemas)
 }
 
@@ -279,6 +281,7 @@ fn every_schema_compiles_with_its_references_resolved() {
         "DisplayMetadata",
         "ClaimMetadata",
         "ClaimDisplay",
+        "StatusType",
     ] {
         assert!(components.contains_key(name), "{name}");
     }
@@ -330,6 +333,8 @@ fn every_schema_names_the_schemas_it_refers_to() {
     alone::<identity_kit::vc::ClaimPath>();
     #[cfg(feature = "sd-jwt")]
     alone::<identity_kit::sd_jwt_vc::TypeMetadata>();
+    #[cfg(feature = "sd-jwt")]
+    alone::<identity_kit::sd_jwt_vc::StatusType>();
 }
 
 #[test]
@@ -634,5 +639,26 @@ fn type_metadata_examples_validate() {
     ] {
         validator.rejects(&invalid);
         assert!(TypeMetadata::parse(invalid.to_string().as_bytes()).is_err());
+    }
+}
+
+#[cfg(feature = "sd-jwt")]
+#[test]
+fn status_type_schema() {
+    use identity_kit::sd_jwt_vc::StatusType;
+
+    // The schema takes what `StatusType` serializes to: a name of its own, or a number.
+    let validator = Validator::of("StatusType");
+    for status in [0, 1, 2, 3, 0x0C, 255].map(StatusType) {
+        validator.accepts(&serde_json::to_string(&status).unwrap());
+    }
+    for rejected in [
+        json!("APPLICATION_SPECIFIC"),
+        json!("valid"),
+        json!(256),
+        json!(-1),
+        json!(1.5),
+    ] {
+        validator.rejects(&rejected);
     }
 }
