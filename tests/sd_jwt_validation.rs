@@ -721,9 +721,10 @@ mod status_list_check {
     use std::error::Error as _;
     use std::sync::Mutex;
 
-    use identity_kit::jose::VerificationError;
+    use identity_kit::jose::{JwsError, VerificationError};
     use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
     use identity_kit::resolver::{CompositeKeyResolver, JwkResolver, KeyResolutionError};
+    use identity_kit::sd_jwt_vc::StatusListError;
     use identity_kit::sd_jwt_vc::validation::StatusListCheck;
     use identity_kit::vc::TypedObject;
     use url::Url;
@@ -860,6 +861,9 @@ mod status_list_check {
             (8, anonymous),
             (9, other_iss.as_str().to_owned()),
             (10, unresolvable.as_str().to_owned()),
+            (11, "not a token".to_owned()),
+            // The list at `LIST_URI`, served under another URI.
+            (12, token.as_str().to_owned()),
         ] {
             served.insert(format!("https://example.com/statuslists/{n}"), (200, token));
         }
@@ -961,6 +965,30 @@ mod status_list_check {
             ),
             "{error:?}"
         );
+        // A body that is not a status list token, a token of another list, and a URI that is not
+        // a URL are invalid references or lists, each with its cause.
+        let error = status_error("https://example.com/statuslists/11", 0).await;
+        assert!(
+            matches!(&error, StatusError::InvalidList { reason, .. } if reason == "not a status list token"),
+            "{error:?}"
+        );
+        assert!(error.source().unwrap().is::<JwsError>(), "{error:?}");
+        let error = status_error("https://example.com/statuslists/12", 0).await;
+        assert!(
+            matches!(
+                error
+                    .source()
+                    .and_then(|e| e.downcast_ref::<StatusListError>()),
+                Some(StatusListError::SubjectMismatch { .. })
+            ),
+            "{error:?}"
+        );
+        let error = status_error("not a url", 0).await;
+        assert!(
+            matches!(&error, StatusError::InvalidList { reason, .. } if reason == "the URI is not a URL"),
+            "{error:?}"
+        );
+        assert!(error.source().unwrap().is::<url::ParseError>(), "{error:?}");
         let error = status_error("https://example.com/statuslists/10", 0).await;
         assert!(
             matches!(&error, StatusError::UnresolvedKey { key, .. } if key == "did:web:status.example.com#key-1"),
