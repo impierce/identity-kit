@@ -389,7 +389,14 @@ async fn presentation_validates() {
     );
     assert_eq!(decoded.header.typ.as_deref(), Some("vp+jwt"));
     assert_eq!(decoded.holder(), Some(&Uri::from(holder.did.clone())));
-    assert_eq!(decoded.claims.aud.as_ref().map(|aud| aud.len()), Some(1));
+    assert_eq!(
+        decoded
+            .claims
+            .aud
+            .as_ref()
+            .map(identity_kit::did::OneOrMany::len),
+        Some(1)
+    );
     let [validated] = decoded.credentials.as_slice() else {
         panic!("one credential");
     };

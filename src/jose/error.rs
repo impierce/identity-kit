@@ -136,7 +136,7 @@ pub enum JwsError {
     },
     /// The protected header is not a JSON object with the expected members. The source is
     /// the JSON error, when there is one.
-    #[error("invalid JWS protected header: {reason}{}", cause(.source))]
+    #[error("invalid JWS protected header: {reason}{}", cause(.source.as_ref()))]
     InvalidHeader {
         /// What is wrong with it.
         reason: String,
@@ -157,7 +157,7 @@ pub enum JwsError {
     /// `additional` next to its field, say), or is not the JSON
     /// [`CompactJws::claims`](super::CompactJws::claims) was asked to read it as.
     /// The source is the JSON error, when there is one.
-    #[error("invalid JWS payload: {reason}{}", cause(.source))]
+    #[error("invalid JWS payload: {reason}{}", cause(.source.as_ref()))]
     InvalidPayload {
         /// What is wrong with it.
         reason: String,

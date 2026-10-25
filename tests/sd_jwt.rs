@@ -3,6 +3,18 @@
 //! Appendix A.1, the complex and credential examples of A.2 to A.4, all verified against the
 //! issuer key of Appendix A.5 and the holder key in `cnf`.
 #![cfg(feature = "sd-jwt")]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 mod common;
 

@@ -168,7 +168,7 @@ impl fmt::Debug for DocumentCache {
             .field("ttl", &self.ttl)
             .field("capacity", &self.capacity)
             .field("len", &self.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -185,7 +185,7 @@ mod tests {
             result: ResolutionResult::new(DidDocument::new(did)),
             expires_at: Some(now),
         };
-        assert!(entry.is_live(now - Duration::from_nanos(1)));
+        assert!(entry.is_live(now.checked_sub(Duration::from_nanos(1)).unwrap()));
         assert!(!entry.is_live(now));
     }
 }

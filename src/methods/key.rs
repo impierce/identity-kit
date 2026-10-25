@@ -221,7 +221,7 @@ impl DidKey {
     }
 
     /// The document for `did`, whose Multikey string is `multikey` and decodes to `jwk`.
-    fn build(&self, did: &Did, multikey: &str, jwk: Jwk) -> Result<DidDocument, DocumentError> {
+    fn build(self, did: &Did, multikey: &str, jwk: Jwk) -> Result<DidDocument, DocumentError> {
         let ed25519 = (self.key_agreement && jwk.crv() == Some("Ed25519"))
             .then(|| jwk.ed25519_verifying_key().ok())
             .flatten();
@@ -249,7 +249,7 @@ impl DidKey {
     }
 
     /// The verification method `did#multikey` carrying `jwk` in this method's format.
-    fn verification_method(&self, did: &Did, multikey: &str, jwk: Jwk) -> VerificationMethod {
+    fn verification_method(self, did: &Did, multikey: &str, jwk: Jwk) -> VerificationMethod {
         let material = match self.format {
             KeyFormat::Multikey => VerificationMaterial::multibase(multikey),
             KeyFormat::JsonWebKey => VerificationMaterial::PublicKeyJwk(Box::new(jwk)),

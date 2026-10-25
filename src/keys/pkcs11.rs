@@ -765,6 +765,10 @@ impl Inner {
     }
 
     /// [`KeyStore::generate`] on `session`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one template per key type, kept side by side to compare"
+    )]
     fn generate(&self, session: &Session, spec: &KeySpec) -> Result<KeyId, KeyStoreError> {
         spec.validate()?;
         if !self.algorithms.contains(&spec.alg) {
@@ -1065,6 +1069,10 @@ fn delete(session: &Session, key: &KeyId) -> Result<(), KeyStoreError> {
 
 /// A label for a key pair that is being generated without a label, unique within the process
 /// and unlikely to repeat across processes.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the low 64 bits of the time are plenty to keep labels apart"
+)]
 fn staging_label() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()

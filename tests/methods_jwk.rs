@@ -1,6 +1,10 @@
 //! Specification vectors for `did:jwk`: the P-256 and X25519 examples of the did:jwk method
 //! specification and its Create and Read operations.
 #![cfg(feature = "did-jwk")]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
 
 use std::error::Error as _;
 
@@ -346,7 +350,7 @@ fn base64url(json: &str) -> String {
 /// Canonical forms written out by hand per RFC 8785 for Ed25519 (RFC 8037 §A.2), P-256
 /// (RFC 7515 §A.3), secp256k1 (the generator of SEC 2 §2.4.1) and X25519 (the specification's
 /// example) keys, each bare and with `alg` (or `use`) and its RFC 7638 thumbprint as `kid`. These
-/// are also the DIDs that did-manager and UniCore derive.
+/// are also the DIDs that did-manager and `UniCore` derive.
 #[test]
 fn creation_is_canonical() {
     for (input, canonical) in [

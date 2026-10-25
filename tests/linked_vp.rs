@@ -3,6 +3,14 @@
 //! the JSON-LD and top-level-payload variants; then presentations built, published, fetched and
 //! validated over the RFC 8037 `did:key`, and every way one can fail.
 #![cfg(all(feature = "linked-vp", feature = "did-key"))]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 mod common;
 

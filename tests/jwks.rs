@@ -3,6 +3,14 @@
 //! key checks, caching, and the identity credential of SD-JWT VC §2.3 validated with its issuer
 //! key found through the metadata of its HTTPS `iss`.
 #![cfg(feature = "jwks")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 use std::collections::HashMap;
 use std::sync::Mutex;

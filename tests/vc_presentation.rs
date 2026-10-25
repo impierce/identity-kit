@@ -1,6 +1,10 @@
 //! Specification vectors for `Presentation`: VCDM 1.1 Example 33 (a presentation as JWT
 //! claims and as a JWT) and the presentation examples of §4.10.
 #![cfg(feature = "vc")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 use identity_kit::did::{Did, OneOrMany, Uri};
 use identity_kit::vc::validation::{decode_presentation, extract_holder, extract_issuer};

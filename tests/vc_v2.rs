@@ -2,6 +2,10 @@
 //! the examples of "Securing JSON-LD Verifiable Credentials/Presentations with JOSE", the
 //! enveloped credential and presentation objects of VCDM 2.0 §4.12, and the validity period.
 #![cfg(feature = "vc")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{OneOrMany, Uri};

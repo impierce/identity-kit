@@ -27,7 +27,7 @@ exclude_re = [
     'src/methods/web/mod\.rs:\d+:\d+: replace \| with \^ in percent_decode',
     'src/sd_jwt_vc/status\.rs:\d+:\d+: replace \| with \^ in StatusList::set',
     # Fallback for an all-zero length, which the long form never has.
-    'src/jose/pkcs1\.rs:108:\d+: replace - with [+/] in tlv',
+    'src/jose/pkcs1\.rs:112:\d+: replace - with [+/] in tlv',
     # An all-zero integer trimmed to nothing or to one zero octet is still zero.
     'src/jose/jwk\.rs:\d+:\d+: replace - with / in Jwk::rsa_public_key',
     # DID syntax already guarantees two hex digits after every `%`.

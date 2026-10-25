@@ -373,8 +373,11 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
   `cargo tree` in that configuration must not list `chrono`, `miniz_oxide` or `sd-jwt-payload`.
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, and clippy with
-  `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds
-  (`dbg_macro`, `todo`, `print_stdout`, `print_stderr`). `clippy::pedantic` is not enabled.
+  `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds:
+  `clippy::pedantic` without `must_use_candidate`, and `dbg_macro`, `todo`, `print_stdout`,
+  `print_stderr`. A deliberate exception is an `#[expect(clippy::…, reason = "…")]` on the item,
+  or on a test file for the lints its specification vectors trip, never a bare `allow`.
+  `clippy.toml` lists the names `doc_markdown` takes for code but are not (`EdDSA`, `SIOPv2`, …).
 - Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID
   methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata, linked presentations),
   seeded from the specification vectors (`fuzz/seeds/`, one named file per example; the

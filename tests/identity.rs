@@ -7,6 +7,10 @@
     feature = "did-key",
     feature = "did-jwk"
 ))]
+#![expect(
+    clippy::similar_names,
+    reason = "the names are the API's terms: `kid` and `kind`"
+)]
 
 use std::fs;
 use std::path::Path;

@@ -178,7 +178,7 @@ pub enum StatusError {
     /// The status list could not be fetched: the request failed, the server answered with an
     /// error status, or the check refused a redirect. The source is the client's error, when
     /// there is one.
-    #[error("status list {uri} unavailable: {reason}{}", cause(.source))]
+    #[error("status list {uri} unavailable: {reason}{}", cause(.source.as_ref()))]
     Unavailable {
         /// The status list URI the credential references.
         uri: String,
@@ -191,7 +191,7 @@ pub enum StatusError {
     /// not a URL, a body that is not a status list token, a `sub` other than the URI, a
     /// signature that does not verify, a key that is not the issuer's. The source is the
     /// underlying error, when there is one.
-    #[error("status list {uri} is invalid: {reason}{}", cause(.source))]
+    #[error("status list {uri} is invalid: {reason}{}", cause(.source.as_ref()))]
     InvalidList {
         /// The status list URI the credential references.
         uri: String,

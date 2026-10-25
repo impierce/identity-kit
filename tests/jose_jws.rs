@@ -1,5 +1,9 @@
 //! Specification vectors for JWS: RFC 7515 Appendix A, RFC 8037 Appendix A, RFC 8812 (ES256K,
 //! cross-checked with `k256`), and the compact serialization grammar.
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "DER lengths here are below 0x10000, and the test modulus bytes wrap on purpose"
+)]
 
 use std::error::Error as _;
 

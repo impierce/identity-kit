@@ -3,6 +3,10 @@
 //! SD-JWT key binding with the holder key from `cnf.kid`. Signatures are made with the RFC 8037
 //! Appendix A.1 and RFC 7515 Appendix A.3 keys, as in ADR 0004.
 #![cfg(all(feature = "sd-jwt", feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
 
 mod common;
 

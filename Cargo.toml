@@ -101,6 +101,9 @@ missing_debug_implementations = "warn"
 unreachable_pub = "warn"
 
 [lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# A style choice: `#[must_use]` on every pure function would be noise.
+must_use_candidate = "allow"
 dbg_macro = "warn"
 todo = "warn"
 print_stdout = "warn"

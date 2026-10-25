@@ -466,6 +466,7 @@ impl SdJwtVcBuilder {
     }
 
     /// A builder over a copy of these claims, nothing concealed.
+    #[must_use]
     pub fn clone_claims(&self) -> Self {
         Self::from_claims(self.claims.clone())
     }

@@ -332,7 +332,7 @@ pub(super) fn plain_claims(jws: &CompactJws) -> Result<JwtClaims, ValidationErro
 const SD_JWT_NAMES: [&str; 2] = ["_sd", "_sd_alg"];
 const ELLIPSIS: &str = "...";
 
-/// The SD-JWT name the member `name` with `value` is, or holds anywhere below it. serde_json
+/// The SD-JWT name the member `name` with `value` is, or holds anywhere below it. `serde_json`
 /// limits the nesting of a parsed payload, so the recursion is bounded.
 fn sd_jwt_member(name: &str, value: &Value) -> Option<&'static str> {
     SD_JWT_NAMES

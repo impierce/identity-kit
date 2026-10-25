@@ -3,6 +3,14 @@
 //! P-256 key of RFC 7515 Appendix A.3), who presents them. Every negative case the issue
 //! lists: expired, not yet valid, wrong audience, wrong holder, unresolvable `kid`, and more.
 #![cfg(all(feature = "vc", feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -284,7 +292,7 @@ async fn validity_period_and_leeway() {
     assert!(validator.validate(&jwt, &at(nbf)).await.is_ok());
     // Leeway covers clock skew in both directions.
     let leeway = |now: DateTime<Utc>| {
-        at(now).with_time(TimeOptions::at(now).with_leeway(Duration::from_secs(60)))
+        at(now).with_time(TimeOptions::at(now).with_leeway(Duration::from_mins(1)))
     };
     assert!(validator.validate(&jwt, &leeway(early)).await.is_ok());
     // A leeway past the range `chrono` represents saturates instead of overflowing.
@@ -298,7 +306,7 @@ async fn validity_period_and_leeway() {
     );
     assert!(matches!(
         validator
-            .validate(&jwt, &leeway(exp + Duration::from_secs(60)))
+            .validate(&jwt, &leeway(exp + Duration::from_mins(1)))
             .await,
         Err(ValidationError::Expired { .. })
     ));

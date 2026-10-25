@@ -276,7 +276,7 @@ pub mod vc_jose_cose {
         /// `typ` `bad+typ`, signed with [`SUITE_VM_ED25519`].
         SUITE_CREDENTIAL_SDJWT_BAD_MEDIA_TYPE = "vc_jose_cose/suite-credential-sdjwt-bad-media-type.txt";
         /// The `vp+jwt` of the specification's "verifiable presentation secured with JOSE with
-        /// the EnvelopedVerifiablePresentation type" example, as its `data:` URL holds it.
+        /// the `EnvelopedVerifiablePresentation` type" example, as its `data:` URL holds it.
         ENVELOPED_PRESENTATION_JWT = "vc_jose_cose/enveloped_presentation_jwt.txt";
         /// W3C VC-JOSE-COSE test suite input `presentation-jose-multiple.txt` (test 7), signed
         /// with [`SUITE_VM_P384`]: a `vc+jwt`, an SD-JWT and a COSE credential enveloped.
