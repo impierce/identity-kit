@@ -88,7 +88,7 @@ Write it in terse commit style: drop articles (_the_, _a_, _an_) and wrap code l
 Write `feat: add description to file`, not `feat: add a description to the file`.
 
 A change that breaks the public API needs `!` in the title (`feat!:`, `fix!:`): before 1.0 it bumps the minor version, and the changelog lists it as breaking.
-CI's `SemVer` job runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on the public API, with all features, against the pull request's base, and fails when it finds a breaking change the title doesn't declare.
+CI's `SemVer` job runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on the public API, with all features, against the pull request's base, unless the title already has the `!`, and fails when it finds a breaking change.
 After adding the `!`, re-run that job: it reads the current title, but editing the title doesn't start it.
 
 ## Releases
