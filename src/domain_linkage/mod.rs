@@ -512,6 +512,10 @@ impl DomainLinkageCredentialBuilder {
 
     /// The JWT claims: `iss` and `sub` the DID, `nbf` and `exp` the validity period, `vc` the
     /// whole credential.
+    ///
+    /// # Panics
+    ///
+    /// Never: the credential this builder makes always serializes to JSON.
     pub fn jwt_claims(&self) -> JwtClaims {
         let mut claims = JwtClaims::new()
             .with_nbf(self.issuance_date)
@@ -853,6 +857,10 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     ///
     /// [`DomainLinkageError::InvalidContext`], or [`DomainLinkageError::NoValidCredential`]
     /// with the error of every JWT entry.
+    ///
+    /// # Panics
+    ///
+    /// Never: a credential that validates has a DID as its issuer.
     pub async fn validate_configuration(
         &self,
         configuration: &DomainLinkageConfiguration,

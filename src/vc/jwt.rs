@@ -55,6 +55,10 @@ impl Jwt {
     ///
     /// [`JwsError::InvalidPayload`] when `additional` holds a registered claim, which would put
     /// the member in the payload twice; otherwise as [`encode_compact`].
+    ///
+    /// # Panics
+    ///
+    /// Never: a claims set always serializes to JSON.
     pub async fn sign(
         header: &JwsHeader,
         claims: &JwtClaims,

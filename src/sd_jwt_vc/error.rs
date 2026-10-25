@@ -95,6 +95,10 @@ pub enum SdJwtError {
     /// missing.
     #[error("{0}")]
     KeyBinding(String),
+    /// The operating system's random number generator could not provide a salt: unavailable
+    /// on some WebAssembly targets, and in sandboxes or early boot. The source is its error.
+    #[error("cannot generate a salt: {0}")]
+    Randomness(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl SdJwtError {
