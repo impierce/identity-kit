@@ -503,6 +503,17 @@ mod tests {
             "93.184.216.34",
             "2606:2800:220:1:248:1893:25c8:1946",
             "1.1.1.1",
+            // Near misses: each matches only one half of a reserved range's condition.
+            "8.64.0.1",
+            "100.128.0.1",
+            "8.0.0.8",
+            "8.8.0.8",
+            "192.0.1.1",
+            "8.18.0.1",
+            "2001:4860:4860::8888",
+            "2600:db8::1",
+            "64:1::1",
+            "2600:ff9b::1",
         ] {
             assert!(is_public(public.parse().unwrap()), "{public}");
         }

@@ -1006,6 +1006,7 @@ async fn cache_serves_repeated_resolutions_without_options() {
     assert!(resolver.resolve(&gone).await.is_ok());
     assert_eq!(example.calls(), 7);
     assert_eq!(cache.len(), 2);
+    assert!(!cache.is_empty());
 
     // Invalidation.
     assert_eq!(cache.remove(&did), Some(first));

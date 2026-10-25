@@ -114,6 +114,7 @@ fn disclosure_for_an_object_property() {
         assert_eq!(disclosure.value(), &json!("Möbius"));
         assert!(!disclosure.is_element());
         assert_eq!(disclosure.as_str(), variant);
+        assert_eq!(disclosure.to_string(), variant);
     }
     assert_eq!(
         Disclosure::parse(canonical)
@@ -158,18 +159,30 @@ fn disclosure_for_an_array_element() {
 
 #[test]
 fn malformed_disclosures_are_rejected() {
-    for bad in [
-        "not base64url!",
-        &common::encode(b"\"a string\""),
-        &common::encode(b"[\"salt\"]"),
-        &common::encode(b"[1, \"name\", 2]"),
-        &common::encode(b"[\"salt\", 1, 2]"),
-        &common::encode(b"[\"salt\", \"name\", 2, 3]"),
+    for (bad, why) in [
+        ("not base64url!", "not base64url"),
+        (&common::encode(b"\"a string\""), "not a JSON array"),
+        (
+            &common::encode(b"[\"salt\"]"),
+            "not an array of two or three elements",
+        ),
+        (
+            &common::encode(b"[1, \"name\", 2]"),
+            "the salt is not a string",
+        ),
+        (
+            &common::encode(b"[\"salt\", 1, 2]"),
+            "the claim name is not a string",
+        ),
+        (
+            &common::encode(b"[\"salt\", \"name\", 2, 3]"),
+            "not an array of two or three elements",
+        ),
     ] {
         assert!(
             matches!(
                 Disclosure::parse(bad),
-                Err(SdJwtError::InvalidDisclosure { .. })
+                Err(SdJwtError::InvalidDisclosure { ref reason, .. }) if reason == why
             ),
             "{bad}"
         );
@@ -894,6 +907,15 @@ fn disclosures_nested_beyond_the_limit_are_refused() {
     };
     assert!(wrapped(SdJwtBuilder::MAX_DEPTH - 8).is_ok());
     assert!(too_deep(wrapped(SdJwtBuilder::MAX_DEPTH - 7)));
+    // Plain arrays count towards the depth too.
+    let in_arrays = |wraps: usize| {
+        let (inner, disclosures) = disclosure_chain(&[Link::Property; 8]);
+        let payload = json!({ "a": (0..wraps).fold(inner, |inner, _| json!([inner])) });
+        let jwt = Jwt::new(unsigned_jwt(&json!({ "alg": "ES256" }), &payload)).unwrap();
+        SdJwt::new(jwt, disclosures).process()
+    };
+    assert!(in_arrays(SdJwtBuilder::MAX_DEPTH - 9).is_ok());
+    assert!(too_deep(in_arrays(SdJwtBuilder::MAX_DEPTH - 8)));
 }
 
 #[test]
@@ -903,7 +925,7 @@ fn builder_reproduces_the_simple_example() {
     for claim in ["iss", "iat", "exp", "cnf"] {
         claims.insert(claim.to_owned(), spec_payload[claim].clone());
     }
-    let encoded = SdJwtBuilder::new(claims.clone())
+    let builder = SdJwtBuilder::new(claims.clone())
         .conceal(["given_name"])
         .conceal(["family_name"])
         .conceal(["email"])
@@ -913,9 +935,11 @@ fn builder_reproduces_the_simple_example() {
         .conceal(["birthdate"])
         .conceal(["updated_at"])
         .conceal(claim_path!["nationalities", ()])
-        .with_salt_generator(spec_salts(vector!("simple", "disclosures.txt")))
-        .encode()
-        .unwrap();
+        .with_salt_generator(spec_salts(vector!("simple", "disclosures.txt")));
+    assert_eq!(builder.claims(), &claims);
+    assert_eq!(builder.concealed().len(), 9);
+    assert_eq!(builder.concealed()[0], claim_path!["given_name"]);
+    let encoded = builder.encode().unwrap();
 
     // The disclosures have the specification's contents, in its order; only the JSON
     // whitespace differs, so the digests do too.
@@ -1121,3 +1145,21 @@ trait AwaitBlocking: Future + Sized {
 }
 
 impl<F: Future> AwaitBlocking for F {}
+
+#[test]
+fn hash_algorithm_names() {
+    // RFC 9901 §4.1.1: `_sd_alg` names the algorithm by its IANA name.
+    for (algorithm, name) in [
+        (HashAlgorithm::Sha256, "sha-256"),
+        (HashAlgorithm::Sha384, "sha-384"),
+        (HashAlgorithm::Sha512, "sha-512"),
+    ] {
+        assert_eq!(algorithm.to_string(), name);
+        assert_eq!(serde_json::to_value(algorithm).unwrap(), json!(name));
+        assert_eq!(
+            serde_json::from_value::<HashAlgorithm>(json!(name)).unwrap(),
+            algorithm
+        );
+    }
+    assert!(serde_json::from_value::<HashAlgorithm>(json!("md5")).is_err());
+}

@@ -5,3 +5,46 @@
 additional_cargo_args = ["--all-features"]
 # Build without debug info: each mutant rebuilds the crate and every test binary.
 profile = "mutants"
+
+# Mutants left out of the run, each class with the reason no test should catch it.
+exclude_re = [
+    # Trivial impls no caller relies on; of `Debug`, only the empty output (which leaks nothing).
+    '<impl AsRef<str> for \w+>::as_ref',
+    '<impl PartialEq<&?str> for \w+>::eq',
+    '<impl Hash for \w+>::hash',
+    '<impl (core::)?(fmt::)?Debug for .+>::fmt -> (core::)?fmt::Result with Ok\(Default::default\(\)\)',
+    '<impl Visitor<.de> for \w+>::expecting',
+
+    # Equivalent mutants. A line-pinned pattern stops matching when the code moves.
+    # The skipped `:` (`?`) is accepted by the loop that follows.
+    'src/did/syntax\.rs:551:\d+: replace \+= with [-*]= in scan_did',
+    'src/did/syntax\.rs:614:\d+: replace \+= with [-*]= in scan_url_suffix',
+    # Starting at the `:` or the last scheme character: both are URI characters.
+    'src/did/uri\.rs:93:\d+: replace \+ with [-*] in validate_uri',
+    # OR of bits that never overlap.
+    'src/jose/multikey\.rs:\d+:\d+: replace \| with \^ in varint::encode',
+    'src/jose/pkcs1\.rs:\d+:\d+: replace \| with \^ in (tlv|read_tlv)',
+    'src/methods/web/mod\.rs:\d+:\d+: replace \| with \^ in percent_decode',
+    'src/sd_jwt_vc/status\.rs:\d+:\d+: replace \| with \^ in StatusList::set',
+    # Fallback for an all-zero length, which the long form never has.
+    'src/jose/pkcs1\.rs:108:\d+: replace - with [+/] in tlv',
+    # An all-zero integer trimmed to nothing or to one zero octet is still zero.
+    'src/jose/jwk\.rs:\d+:\d+: replace - with / in Jwk::rsa_public_key',
+    # DID syntax already guarantees two hex digits after every `%`.
+    'src/methods/web/mod\.rs:\d+:\d+: replace match guard hi\.is_ascii_hexdigit\(\) && lo\.is_ascii_hexdigit\(\) with true in percent_decode',
+    'src/methods/web/mod\.rs:\d+:\d+: replace && with \|\| in percent_decode',
+    # For n > 21 or n <= -6, `n - 1`, `n + 1` and `n / 1` share their sign and are never zero.
+    'src/methods/jcs\.rs:140:\d+: replace (- with [+/]|< with <=) in write_number',
+    # `store` runs after a miss; only two concurrent fetches of one issuer could tell `||` apart.
+    'src/resolver/jwks\.rs:164:\d+: replace && with \|\| in JwksResolver<C>::store',
+    # `ResolverBuilder::new` is `Default::default`.
+    'src/resolver/registry\.rs:\d+:\d+: replace Resolver::builder -> ResolverBuilder with Default::default\(\)',
+    # One byte past the end fails the lookup that follows just the same.
+    'src/sd_jwt_vc/status\.rs:\d+:\d+: replace < with <= in StatusList::position',
+    # For a bare file name, `""` and `"."` are the same directory.
+    'src/keys/software\.rs:\d+:\d+: replace match guard !dir\.as_os_str\(\)\.is_empty\(\) with true in write_atomically',
+
+    # PKCS#11 paths SoftHSM cannot reach (both RSA mechanisms; no panics or cancellation).
+    'src/keys/pkcs11\.rs:\d+:\d+: delete match arm JwsAlgorithm::PS256 in Pkcs11KeyStore::open_with',
+    'src/keys/pkcs11\.rs:\d+:\d+: replace match guard e\.is_panic\(\) with (true|false) in Pkcs11KeyStore::blocking',
+]

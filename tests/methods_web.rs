@@ -231,6 +231,11 @@ fn url_to_did() {
         did_from_url(&url("https://example.com/a%20b/c~d/e!f/g%zz")).unwrap(),
         did("did:web:example.com:a%20b:c%7Ed:e%21f:g%25zz")
     );
+    // Only `%` with two hex digits is an escape; any other `%` is encoded.
+    assert_eq!(
+        did_from_url(&url("https://example.com/x%20/~ab/abc%2x0")).unwrap(),
+        did("did:web:example.com:x%20:%7Eab:abc%252x0")
+    );
     // Only the file name at the end is dropped: `.well-known` elsewhere is a path segment.
     assert_eq!(
         did_from_url(&url("https://example.com/.well-known/x/did.json")).unwrap(),
@@ -376,6 +381,10 @@ fn did_to_url_rejections() {
             .to_string(),
         "`did:web:192.0.2.1` is not a valid did:web: the host is an IP address"
     );
+    // Three dots, written either way, are no dot segment but an ordinary name.
+    for three in ["did:web:example.com:...", "did:web:example.com:%2E%2E%2E"] {
+        assert!(document_url(&did(three)).is_ok(), "{three}");
+    }
 }
 
 #[tokio::test]
@@ -968,9 +977,11 @@ mod local_network {
         assert!(error.to_string().contains("exceeds 4 bytes"), "{error}");
     }
 
-    #[tokio::test]
-    async fn a_streamed_body_is_limited_too() {
-        // A body without `Content-Length`, sent in chunks, is counted as it arrives.
+    /// Fetches a body sent as `chunks` without `Content-Length`, reading at most `max_body` bytes.
+    async fn get_chunked(
+        chunks: &'static [&'static str],
+        max_body: usize,
+    ) -> Result<HttpResponse, HttpError> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = tokio::spawn(async move {
@@ -978,23 +989,57 @@ mod local_network {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 1024];
             let _ = stream.read(&mut request).await.unwrap();
-            stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
-                      5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n",
-                )
-                .await
-                .unwrap();
+            let mut response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+            for chunk in chunks {
+                response.extend_from_slice(format!("{:x}\r\n{chunk}\r\n", chunk.len()).as_bytes());
+            }
+            response.extend_from_slice(b"0\r\n\r\n");
+            stream.write_all(&response).await.unwrap();
         });
-        let error = loopback()
-            .with_max_body(6)
+        let response = loopback()
+            .with_max_body(max_body)
             .get(&url(&format!(
                 "https://127.0.0.1:{port}/.well-known/did.json"
             )))
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+            .await;
         server.await.unwrap();
+        response
+    }
+
+    #[tokio::test]
+    async fn a_streamed_body_is_limited_too() {
+        let error = get_chunked(&["hello", "world"], 6).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+        let error = get_chunked(&["helloworld"], 6).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+        let response = get_chunked(&["hello", "world"], 10).await.unwrap();
+        assert_eq!(response.body, b"helloworld");
+    }
+
+    #[tokio::test]
+    async fn a_body_of_exactly_the_limit_is_read() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("helloworld"))
+            .mount(&server)
+            .await;
+        let target = url(&format!("https://127.0.0.1:{}/x", server.address().port()));
+        let response = loopback().with_max_body(10).get(&target).await.unwrap();
+        assert_eq!(response.body, b"helloworld");
+        let error = loopback().with_max_body(9).get(&target).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds 9 bytes"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn only_web_urls_are_fetched_when_local_addresses_are_allowed() {
+        // Other schemes are refused before any host lookup.
+        for other in ["file:///etc/passwd", "ftp://127.0.0.1/did.json"] {
+            let error = loopback().get(&url(other)).await.unwrap_err();
+            assert!(
+                error.to_string().contains("is not an HTTPS URL"),
+                "{other}: {error}"
+            );
+        }
     }
 
     #[tokio::test]

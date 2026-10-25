@@ -4,7 +4,7 @@
 #![cfg(feature = "utoipa")]
 
 use boon::{Compiler, Draft, SchemaIndex, Schemas};
-use identity_kit::did::DidDocument;
+use identity_kit::did::{DidDocument, MethodRef, Service, VerificationMethod};
 use identity_kit::jose::Jwk;
 use serde_json::{Map, Value, json};
 use utoipa::ToSchema;
@@ -13,12 +13,14 @@ use utoipa::openapi::{RefOr, Schema};
 /// Where the OpenAPI document lives, for `$ref` resolution.
 const OPENAPI_URL: &str = "https://example.com/openapi.json";
 
+/// Adds `T` and the schemas it names in `ToSchema::schemas`.
+fn add<T: ToSchema>(schemas: &mut Vec<(String, RefOr<Schema>)>) {
+    schemas.push((T::name().into_owned(), T::schema()));
+    T::schemas(schemas);
+}
+
 /// An OpenAPI document whose components are every schema of the crate.
 fn openapi() -> Value {
-    fn add<T: ToSchema>(schemas: &mut Vec<(String, RefOr<Schema>)>) {
-        schemas.push((T::name().into_owned(), T::schema()));
-        T::schemas(schemas);
-    }
     let mut schemas = Vec::new();
     add::<DidDocument>(&mut schemas);
     add::<Jwk>(&mut schemas);
@@ -28,7 +30,13 @@ fn openapi() -> Value {
     add::<identity_kit::vc::ClaimPath>(&mut schemas);
     #[cfg(feature = "sd-jwt")]
     add::<identity_kit::sd_jwt_vc::TypeMetadata>(&mut schemas);
+    #[cfg(feature = "sd-jwt")]
+    add::<identity_kit::sd_jwt_vc::StatusType>(&mut schemas);
+    document(schemas)
+}
 
+/// An OpenAPI document whose components are `schemas`.
+fn document(schemas: Vec<(String, RefOr<Schema>)>) -> Value {
     // A name reached twice always names the same schema.
     let mut components = Map::new();
     for (name, schema) in schemas {
@@ -55,9 +63,14 @@ struct Validator {
 impl Validator {
     /// The component schema `name`, compiled with every `$ref` resolved.
     fn of(name: &str) -> Self {
+        Self::of_in(openapi(), name)
+    }
+
+    /// The component schema `name` of `document`, compiled with every `$ref` resolved.
+    fn of_in(document: Value, name: &str) -> Self {
         let mut compiler = Compiler::new();
         compiler.set_default_draft(Draft::V2020_12);
-        compiler.add_resource(OPENAPI_URL, openapi()).unwrap();
+        compiler.add_resource(OPENAPI_URL, document).unwrap();
         let mut schemas = Schemas::new();
         let index = compiler
             .compile(
@@ -268,6 +281,7 @@ fn every_schema_compiles_with_its_references_resolved() {
         "DisplayMetadata",
         "ClaimMetadata",
         "ClaimDisplay",
+        "StatusType",
     ] {
         assert!(components.contains_key(name), "{name}");
     }
@@ -298,6 +312,29 @@ fn every_schema_compiles_with_its_references_resolved() {
         properties["verificationMethod"]["items"]["$ref"],
         json!("#/components/schemas/VerificationMethod")
     );
+}
+
+/// Each type's `ToSchema::schemas` names every schema its `$ref`s point to.
+#[test]
+fn every_schema_names_the_schemas_it_refers_to() {
+    fn alone<T: ToSchema>() {
+        let mut schemas = Vec::new();
+        add::<T>(&mut schemas);
+        Validator::of_in(document(schemas), &T::name());
+    }
+    alone::<DidDocument>();
+    alone::<VerificationMethod>();
+    alone::<MethodRef>();
+    alone::<Service>();
+    alone::<Jwk>();
+    #[cfg(feature = "domain-linkage")]
+    alone::<identity_kit::domain_linkage::DomainLinkageConfiguration>();
+    #[cfg(feature = "vc")]
+    alone::<identity_kit::vc::ClaimPath>();
+    #[cfg(feature = "sd-jwt")]
+    alone::<identity_kit::sd_jwt_vc::TypeMetadata>();
+    #[cfg(feature = "sd-jwt")]
+    alone::<identity_kit::sd_jwt_vc::StatusType>();
 }
 
 #[test]
@@ -474,6 +511,35 @@ fn did_configuration_resource_validates() {
     }
 }
 
+/// The map branches of `@context` and `serviceEndpoint` are open objects with a description.
+#[test]
+fn map_branches_are_described_open_objects() {
+    use utoipa::PartialSchema;
+
+    for (schema, pointer, description) in [
+        (
+            DidDocument::schema(),
+            "/properties/@context/oneOf/2",
+            "A context object.",
+        ),
+        (
+            Service::schema(),
+            "/properties/serviceEndpoint/oneOf/2",
+            "An endpoint map.",
+        ),
+    ] {
+        let schema = serde_json::to_value(schema).unwrap();
+        assert_eq!(
+            schema.pointer(pointer),
+            Some(&json!({
+                "type": "object",
+                "description": description,
+                "additionalProperties": true,
+            })),
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Claim paths
 // ---------------------------------------------------------------------------------------------
@@ -573,5 +639,26 @@ fn type_metadata_examples_validate() {
     ] {
         validator.rejects(&invalid);
         assert!(TypeMetadata::parse(invalid.to_string().as_bytes()).is_err());
+    }
+}
+
+#[cfg(feature = "sd-jwt")]
+#[test]
+fn status_type_schema() {
+    use identity_kit::sd_jwt_vc::StatusType;
+
+    // The schema takes what `StatusType` serializes to: a name of its own, or a number.
+    let validator = Validator::of("StatusType");
+    for status in [0, 1, 2, 3, 0x0C, 255].map(StatusType) {
+        validator.accepts(&serde_json::to_string(&status).unwrap());
+    }
+    for rejected in [
+        json!("APPLICATION_SPECIFIC"),
+        json!("valid"),
+        json!(256),
+        json!(-1),
+        json!(1.5),
+    ] {
+        validator.rejects(&rejected);
     }
 }
