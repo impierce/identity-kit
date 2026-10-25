@@ -374,7 +374,7 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   `cargo tree` in that configuration must not list `chrono`, `miniz_oxide` or `sd-jwt-payload`.
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, and clippy with
   `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds:
-  `clippy::pedantic` without `must_use_candidate`, and `dbg_macro`, `todo`, `print_stdout`,
+  `clippy::pedantic` without `must_use_candidate` and `assert_is_empty`, and `dbg_macro`, `todo`, `print_stdout`,
   `print_stderr`. A deliberate exception is an `#[expect(clippy::…, reason = "…")]` on the item,
   or on a test file for the lints its specification vectors trip, never a bare `allow`.
   `clippy.toml` lists the names `doc_markdown` takes for code but are not (`EdDSA`, `SIOPv2`, …).
