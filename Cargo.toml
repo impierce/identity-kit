@@ -69,7 +69,7 @@ jsonwebtoken = { version = "11.1", default-features = false }
 k256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
 miniz_oxide = { version = "0.9", optional = true }
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "gzip"], optional = true }
 rsa = { version = "0.10.0-rc.19", default-features = false, features = ["encoding", "sha2", "std"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
@@ -83,6 +83,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 boon = "0.6"
+flate2 = "1.0"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 proptest = "1.0"
 tempfile = "3.0"
