@@ -5,6 +5,8 @@
 
 mod common;
 
+use std::error::Error as _;
+
 use chrono::{TimeZone as _, Utc};
 use identity_kit::claim_path;
 use identity_kit::jose::{DefaultVerifier, Jwk};
@@ -228,10 +230,9 @@ fn typ_and_registered_claims_are_enforced() {
     assert!(current.sd_jwt().disclosures().is_empty());
 
     // No `vct`.
-    assert!(matches!(
-        credential_of(Some(TYP), json!({"iss": "x"}), vec![]),
-        Err(SdJwtVcError::Claims(_))
-    ));
+    let error = credential_of(Some(TYP), json!({"iss": "x"}), vec![]).unwrap_err();
+    assert!(matches!(error, SdJwtVcError::Claims(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
     // `aka_vcts` rules.
     assert!(matches!(
         credential_of(Some(TYP), json!({"vct": "a", "aka_vcts": []}), vec![]),
@@ -573,10 +574,14 @@ fn status_list_encoding_of_section_4() {
         rebuilt.set(0, StatusType(4)),
         Err(StatusListError::InvalidStatusValue { value: 4, bits: 2 })
     ));
+    // Not ZLIB data has no source; not base64url has the decoding error.
     assert!(matches!(
         StatusList::from_lst(1, "not-zlib", StatusList::MAX_BYTES),
-        Err(StatusListError::Compression(_))
+        Err(StatusListError::Compression { source: None, .. })
     ));
+    let error = StatusList::from_lst(1, "not base64url!", StatusList::MAX_BYTES).unwrap_err();
+    assert!(matches!(error, StatusListError::Compression { .. }));
+    assert!(error.source().unwrap().is::<base64::DecodeError>());
     assert!(matches!(
         StatusList::from_lst(1, "eNrbuRgAAhcBXQ", 1),
         Err(StatusListError::TooLarge { limit: 1 })
@@ -720,6 +725,16 @@ fn status_list_token_of_section_5_and_8() {
     let mut without_iss = token.clone();
     without_iss.additional.clear();
     assert_eq!(StatusListToken::decode(&typed).unwrap().1, without_iss);
+    // A payload that is not a status list token claims set.
+    let no_list: Jwt = unsigned_jwt(
+        &json!({"alg": "ES256", "typ": "statuslist+jwt"}),
+        &json!({"sub": "https://example.com/statuslists/1"}),
+    )
+    .parse()
+    .unwrap();
+    let error = StatusListToken::decode(&no_list).unwrap_err();
+    assert!(matches!(error, StatusListError::Payload(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 
     // Built and serialized, the claims come out as the example's.
     let built = StatusListToken::new(
@@ -827,10 +842,9 @@ fn type_metadata_documents() {
             .check(),
         Err(TypeMetadataError::DuplicateSvgId(id)) if id == "same"
     ));
-    assert!(matches!(
-        TypeMetadata::parse(b"[]"),
-        Err(TypeMetadataError::Json(_))
-    ));
+    let error = TypeMetadata::parse(b"[]").unwrap_err();
+    assert!(matches!(error, TypeMetadataError::Json(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 }
 
 #[test]

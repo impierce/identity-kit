@@ -589,7 +589,11 @@ impl StatusCheck for FixedStatus {
         match self.0.get(reference.idx) {
             Some(status) if status.is_valid() => Ok(()),
             Some(status) => Err(StatusError::Invalid(status.to_string())),
-            None => Err(StatusError::Unavailable("index out of range".into())),
+            None => Err(StatusError::IndexOutOfRange {
+                uri: reference.uri.clone(),
+                idx: reference.idx,
+                len: self.0.len(),
+            }),
         }
     }
 }
@@ -714,10 +718,12 @@ async fn disclosures_nested_beyond_the_limit_are_refused_before_any_key_is_resol
 #[cfg(feature = "did-web")]
 mod status_list_check {
     use std::collections::HashMap;
+    use std::error::Error as _;
     use std::sync::Mutex;
 
+    use identity_kit::jose::VerificationError;
     use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
-    use identity_kit::resolver::{CompositeKeyResolver, JwkResolver};
+    use identity_kit::resolver::{CompositeKeyResolver, JwkResolver, KeyResolutionError};
     use identity_kit::sd_jwt_vc::validation::StatusListCheck;
     use identity_kit::vc::TypedObject;
     use url::Url;
@@ -750,11 +756,15 @@ mod status_list_check {
             .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
             .await
             .unwrap();
-        let expired = StatusListToken::new(LIST_URI, issued_at(), StatusList::new(1, 8).unwrap())
-            .with_expires_at(issued_at())
-            .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
-            .await
-            .unwrap();
+        let expired = StatusListToken::new(
+            "https://example.com/statuslists/3",
+            issued_at(),
+            StatusList::new(1, 8).unwrap(),
+        )
+        .with_expires_at(issued_at())
+        .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
+        .await
+        .unwrap();
         let versioned = StatusListToken::new(LIST_URI, issued_at(), StatusList::new(1, 8).unwrap())
             .with_expires_at(expires_at())
             .sign(&Ed25519Signer::rfc8037().with_kid(format!(
@@ -811,6 +821,16 @@ mod status_list_check {
             .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
             .await
             .unwrap();
+        // A DID URL of a method the resolver does not know.
+        let unresolvable = StatusListToken::new(
+            "https://example.com/statuslists/10",
+            issued_at(),
+            StatusList::new(1, 8).unwrap(),
+        )
+        .with_expires_at(expires_at())
+        .sign(&Ed25519Signer::rfc8037().with_kid("did:web:status.example.com#key-1"))
+        .await
+        .unwrap();
         let forged = {
             let mut parts: Vec<String> = token.as_str().split('.').map(str::to_owned).collect();
             parts[2] = common::encode(&[1u8; 64]);
@@ -839,6 +859,7 @@ mod status_list_check {
             (7, by_thumbprint),
             (8, anonymous),
             (9, other_iss.as_str().to_owned()),
+            (10, unresolvable.as_str().to_owned()),
         ] {
             served.insert(format!("https://example.com/statuslists/{n}"), (200, token));
         }
@@ -881,26 +902,78 @@ mod status_list_check {
                 Err(SdJwtValidationError::Validation(ValidationError::Status(StatusError::Invalid(status)))) if status == expected
             ));
         }
-        for (uri, idx) in [
-            (LIST_URI, 16),
-            ("https://example.com/statuslists/2", 0),
-            ("https://example.com/statuslists/3", 0),
-            ("https://example.com/statuslists/4", 0),
-            ("https://example.com/statuslists/5", 0),
-            ("https://example.com/nowhere", 0),
-        ] {
+        // Each failure is reported as what it is, with its cause as the source.
+        let status_error = async |uri: &str, idx: u64| {
             let bad = credential(uri, idx).sign(&issuer.signer).await.unwrap();
-            let result = validator.validate(bad.sd_jwt(), &options()).await;
-            assert!(
-                matches!(
-                    result,
-                    Err(SdJwtValidationError::Validation(ValidationError::Status(
-                        StatusError::Unavailable(_)
-                    )))
-                ),
-                "{uri}#{idx}: {result:?}"
-            );
-        }
+            match validator.validate(bad.sd_jwt(), &options()).await {
+                Err(SdJwtValidationError::Validation(ValidationError::Status(error))) => error,
+                other => panic!("{uri}#{idx}: {other:?}"),
+            }
+        };
+        let error = status_error(LIST_URI, 16).await;
+        assert!(
+            matches!(&error, StatusError::IndexOutOfRange { uri, idx: 16, len: 16 } if uri == LIST_URI),
+            "{error:?}"
+        );
+        let error = status_error("https://example.com/statuslists/2", 0).await;
+        assert!(
+            matches!(&error, StatusError::Unavailable { reason, source: None, .. } if reason == "HTTP 404"),
+            "{error:?}"
+        );
+        let error = status_error("https://example.com/nowhere", 0).await;
+        let StatusError::Unavailable {
+            source: Some(source),
+            ..
+        } = &error
+        else {
+            panic!("{error:?}");
+        };
+        assert!(source.downcast_ref::<HttpError>().is_some(), "{error:?}");
+        assert!(error.to_string().ends_with("connection refused"), "{error}");
+        let error = status_error("https://example.com/statuslists/3", 0).await;
+        assert!(
+            matches!(&error, StatusError::Expired { expired_at, .. } if *expired_at == issued_at()),
+            "{error:?}"
+        );
+        let error = status_error("https://example.com/statuslists/4", 0).await;
+        let StatusError::InvalidList { reason, .. } = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(reason, "the signature does not verify");
+        assert!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<VerificationError>()
+                .is_some(),
+            "{error:?}"
+        );
+        // A `kid` with DID parameters names no key this crate looks up.
+        let error = status_error("https://example.com/statuslists/5", 0).await;
+        assert!(
+            matches!(&error, StatusError::InvalidList { reason, .. } if reason == "no key to verify it with"),
+            "{error:?}"
+        );
+        assert!(
+            matches!(
+                error.source().unwrap().downcast_ref::<KeyReferenceError>(),
+                Some(KeyReferenceError::KidWithParameters(_))
+            ),
+            "{error:?}"
+        );
+        let error = status_error("https://example.com/statuslists/10", 0).await;
+        assert!(
+            matches!(&error, StatusError::UnresolvedKey { key, .. } if key == "did:web:status.example.com#key-1"),
+            "{error:?}"
+        );
+        assert!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<KeyResolutionError>()
+                .is_some(),
+            "{error:?}"
+        );
         // A key by value without an `iss`, and a key of a DID other than the `iss`, are not the
         // status issuer's.
         for uri in [
@@ -913,7 +986,7 @@ mod status_list_check {
                 matches!(
                     &result,
                     Err(SdJwtValidationError::Validation(ValidationError::Status(
-                        StatusError::Unavailable(reason)
+                        StatusError::InvalidList { reason, source: None, .. }
                     ))) if reason.contains("does not belong to the issuer")
                 ),
                 "{uri}: {result:?}"
@@ -946,7 +1019,7 @@ mod status_list_check {
         assert_eq!(CredentialStatus::SdJwt(&listed).mechanism(), "status_list");
         assert!(matches!(
             check.check(CredentialStatus::SdJwt(&listed), now).await,
-            Err(StatusError::Unavailable(_))
+            Err(StatusError::Unavailable { .. })
         ));
     }
 
@@ -1157,7 +1230,7 @@ mod status_list_check {
             ("loop", "redirect loop at https://example.com/loop", "loop2"),
             ("plain", "which is not HTTPS", "plain"),
             ("nowhere", "HTTP 302 without a `Location`", "nowhere"),
-            ("malformed", r#"redirect to "https://[::1""#, "malformed"),
+            ("malformed", r#"to "https://[::1""#, "malformed"),
             (
                 "gone",
                 "fetching https://example.com/unreachable: connection refused",
@@ -1168,7 +1241,7 @@ mod status_list_check {
         ] {
             let result = run(at(start)).await;
             assert!(
-                matches!(&result, Err(StatusError::Unavailable(r)) if r.contains(reason)),
+                matches!(&result, Err(error @ StatusError::Unavailable { .. }) if error.to_string().contains(reason)),
                 "{start}: {result:?}"
             );
             // Nothing past the refused hop was requested.

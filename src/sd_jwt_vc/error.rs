@@ -1,6 +1,7 @@
 //! Errors of SD-JWT parsing, processing and building.
 
 use super::ClaimPath;
+use crate::cause::cause;
 use crate::jose::JwsError;
 
 /// Why an SD-JWT could not be parsed, processed, selected from or built.
@@ -25,9 +26,14 @@ pub enum SdJwtError {
     #[error("disclosure {0:?} is given twice")]
     DuplicateDisclosure(String),
     /// The issuer-signed JWT payload is not a JSON object, or `_sd`, `...` or `_sd_alg` is
-    /// malformed.
-    #[error("invalid SD-JWT payload: {0}")]
-    Payload(String),
+    /// malformed. The source is the JSON error, when there is one.
+    #[error("invalid SD-JWT payload: {reason}{}", cause(.source))]
+    Payload {
+        /// What is wrong with it.
+        reason: String,
+        /// The JSON error.
+        source: Option<serde_json::Error>,
+    },
     /// The `_sd_alg` names a hash algorithm this crate does not implement.
     #[error("unsupported hash algorithm {0:?}")]
     UnsupportedHashAlgorithm(String),
@@ -89,4 +95,14 @@ pub enum SdJwtError {
     /// missing.
     #[error("{0}")]
     KeyBinding(String),
+}
+
+impl SdJwtError {
+    /// A [`SdJwtError::Payload`] for `reason`, with no source.
+    pub(crate) fn payload(reason: impl Into<String>) -> Self {
+        Self::Payload {
+            reason: reason.into(),
+            source: None,
+        }
+    }
 }

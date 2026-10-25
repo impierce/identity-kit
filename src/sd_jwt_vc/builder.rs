@@ -130,9 +130,7 @@ impl SdJwtBuilder {
     /// [`MAX_DEPTH`](Self::MAX_DEPTH).
     pub fn encode(mut self) -> Result<Encoded, SdJwtError> {
         if self.claims.contains_key(HashAlgorithm::CLAIM) {
-            return Err(SdJwtError::Payload(
-                "the claims already carry `_sd_alg`".into(),
-            ));
+            return Err(SdJwtError::payload("the claims already carry `_sd_alg`"));
         }
         if self
             .claims
@@ -219,7 +217,7 @@ impl SdJwtBuilder {
         disclosures: &mut Vec<Disclosure>,
     ) -> Result<Map<String, Value>, SdJwtError> {
         if object.contains_key(SD_KEY) {
-            return Err(SdJwtError::Payload(format!(
+            return Err(SdJwtError::payload(format!(
                 "the object at {path} already carries `_sd`"
             )));
         }

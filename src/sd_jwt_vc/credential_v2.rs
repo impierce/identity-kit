@@ -29,9 +29,9 @@ pub enum SdJwtCredentialV2Error {
     /// A claim that must not be selectively disclosed came from a disclosure.
     #[error("`{0}` must not be selectively disclosed")]
     DisclosedRegisteredClaim(String),
-    /// The processed payload is not a JWT claims set.
+    /// The processed payload is not a JWT claims set; the source is the JSON error.
     #[error("the payload is not a JWT claims set: {0}")]
-    Payload(String),
+    Payload(#[source] serde_json::Error),
     /// `cnf` or `status` is not what the claim must hold.
     #[error("claim `{claim}`: {reason}")]
     InvalidClaim {
@@ -194,7 +194,7 @@ impl SdJwtCredentialV2 {
             }
         }
         let claims: JwtClaims = serde_json::from_value(Value::Object(processed.payload.clone()))
-            .map_err(|e| SdJwtCredentialV2Error::Payload(e.to_string()))?;
+            .map_err(SdJwtCredentialV2Error::Payload)?;
         let mut rest = claims.clone();
         let cnf = take_claim(&mut rest, "cnf")?;
         let status = take_claim(&mut rest, "status")?;

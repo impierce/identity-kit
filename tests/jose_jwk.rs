@@ -1,5 +1,7 @@
 //! Specification vectors for `Jwk` (RFC 7517, RFC 7518, RFC 7638, RFC 8037, RFC 8410, RFC 5480).
 
+use std::error::Error as _;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use identity_kit::jose::{Jwk, JwkError, KeyType};
@@ -792,10 +794,12 @@ fn decoding_keys_are_built_for_supported_types() {
     let bad: Jwk =
         serde_json::from_value(json!({ "kty": "OKP", "crv": "Ed25519", "x": "not base64!" }))
             .unwrap();
-    assert!(matches!(
-        bad.to_decoding_key(),
-        Err(JwkError::DecodingKey(_))
-    ));
+    let error = bad.to_decoding_key().unwrap_err();
+    assert!(matches!(error, JwkError::DecodingKey(_)));
+    // The source is `jsonwebtoken`'s error, and the message still ends with it.
+    let source = error.source().unwrap();
+    assert!(source.is::<jsonwebtoken::errors::Error>());
+    assert!(error.to_string().ends_with(&source.to_string()));
 }
 
 // ---------------------------------------------------------------------------------------------

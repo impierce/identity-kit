@@ -9,6 +9,7 @@
 mod common;
 
 use std::collections::BTreeSet;
+use std::error::Error as _;
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
@@ -97,10 +98,9 @@ fn suite_basic_credential() {
 
     // So it is not a claims set this crate reads, and not an SD-JWT VC either: `vc+sd-jwt`
     // with `@context` and no `vct` is the VCDM 2.0 type.
-    assert!(matches!(
-        SdJwtCredentialV2::from_sd_jwt(sd_jwt.clone()),
-        Err(SdJwtCredentialV2Error::Payload(_))
-    ));
+    let error = SdJwtCredentialV2::from_sd_jwt(sd_jwt.clone()).unwrap_err();
+    assert!(matches!(error, SdJwtCredentialV2Error::Payload(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
     assert!(matches!(
         SdJwtVc::from_sd_jwt(sd_jwt.clone()),
         Err(SdJwtVcError::VcdmPayload)
@@ -521,7 +521,7 @@ async fn typ_routes_between_the_two_credential_types() {
     ));
     assert!(matches!(
         SdJwtVc::from_sd_jwt(wrong_typ.clone()),
-        Err(SdJwtVcError::Claims(reason)) if reason.contains("vct")
+        Err(SdJwtVcError::Claims(error)) if error.to_string().contains("vct")
     ));
     // Unless the caller accepts that `typ`.
     let accepted = BTreeSet::from(["dc+sd-jwt".to_owned()]);

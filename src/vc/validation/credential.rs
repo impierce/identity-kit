@@ -315,8 +315,8 @@ pub(super) fn decode_v2(
 /// The claims set of `jws`, refused when it is the issuer-signed JWT of an SD-JWT: see
 /// [`ValidationError::SdJwtPayload`].
 pub(super) fn plain_claims(jws: &CompactJws) -> Result<JwtClaims, ValidationError> {
-    let claims: JwtClaims = serde_json::from_slice(jws.payload())
-        .map_err(|e| ValidationError::Payload(e.to_string()))?;
+    let claims: JwtClaims =
+        serde_json::from_slice(jws.payload()).map_err(ValidationError::Payload)?;
     match claims
         .additional
         .iter()

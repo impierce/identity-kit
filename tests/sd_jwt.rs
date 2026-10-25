@@ -7,6 +7,7 @@
 mod common;
 
 use std::collections::BTreeSet;
+use std::error::Error as _;
 
 use chrono::{TimeZone as _, Utc};
 use identity_kit::claim_path;
@@ -689,11 +690,11 @@ fn processing_rejections() {
     // Malformed digest containers and `_sd_alg`.
     assert!(matches!(
         sd_jwt(json!({"_sd": "x"}), vec![]).process(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { source: None, .. })
     ));
     assert!(matches!(
         sd_jwt(json!({"_sd": [1]}), vec![]).process(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { source: None, .. })
     ));
     assert!(matches!(
         sd_jwt(json!({"_sd_alg": "md5"}), vec![]).process(),
@@ -701,12 +702,14 @@ fn processing_rejections() {
     ));
     assert!(matches!(
         sd_jwt(json!({"_sd_alg": 5}), vec![]).process(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { .. })
     ));
-    assert!(matches!(
-        SdJwt::new(Jwt::new(unsigned_jwt(&header, &json!([]))).unwrap(), vec![]).process(),
-        Err(SdJwtError::Payload(_))
-    ));
+    // A payload that is not a JSON object: the source is the JSON error.
+    let error = SdJwt::new(Jwt::new(unsigned_jwt(&header, &json!([]))).unwrap(), vec![])
+        .process()
+        .unwrap_err();
+    assert!(matches!(error, SdJwtError::Payload { .. }));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 
     // Other hash algorithms are honoured.
     let digest_512 = given_name.digest(HashAlgorithm::Sha512);
@@ -1097,13 +1100,13 @@ fn builder_rejects_bad_paths() {
     reserved.insert("_sd".to_owned(), json!([]));
     assert!(matches!(
         SdJwtBuilder::new(reserved).conceal(["sub"]).encode(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { .. })
     ));
     let mut alg = claims.clone();
     alg.insert("_sd_alg".to_owned(), json!("sha-256"));
     assert!(matches!(
         SdJwtBuilder::new(alg).encode(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { .. })
     ));
     let mut dots = claims;
     dots.insert("...".to_owned(), json!("x"));

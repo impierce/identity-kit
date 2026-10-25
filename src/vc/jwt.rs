@@ -61,9 +61,12 @@ impl Jwt {
         signer: &dyn Signer,
     ) -> Result<Self, JwsError> {
         if let Some(name) = registered_in_additional(claims) {
-            return Err(JwsError::InvalidPayload(format!(
-                "registered claim `{name}` is set under `additional`; set its field instead"
-            )));
+            return Err(JwsError::InvalidPayload {
+                reason: format!(
+                    "registered claim `{name}` is set under `additional`; set its field instead"
+                ),
+                source: None,
+            });
         }
         let payload = serde_json::to_vec(claims).expect("a claims set serializes");
         encode_compact(header, &payload, signer).await.map(Self)

@@ -180,8 +180,9 @@ pub trait StatusCheck: Send + Sync {
     /// # Errors
     ///
     /// A [`StatusError`]: [`Unsupported`](StatusError::Unsupported) for an entry or mechanism
-    /// the check does not know, [`Unavailable`](StatusError::Unavailable) when the status
-    /// could not be obtained, [`Invalid`](StatusError::Invalid) when the credential is revoked
+    /// the check does not know, [`Unavailable`](StatusError::Unavailable) and the other
+    /// variants when the status could not be obtained or trusted,
+    /// [`Invalid`](StatusError::Invalid) when the credential is revoked
     /// or suspended.
     async fn check(
         &self,
@@ -652,5 +653,5 @@ fn property_id(claims: &JwtClaims, container: &str, property: &str) -> Option<St
 /// The claims set of `jwt`, unverified.
 pub(super) fn decode_claims(jwt: &Jwt) -> Result<JwtClaims, ValidationError> {
     let jws = jwt.decode()?;
-    serde_json::from_slice(jws.payload()).map_err(|e| ValidationError::Payload(e.to_string()))
+    serde_json::from_slice(jws.payload()).map_err(ValidationError::Payload)
 }

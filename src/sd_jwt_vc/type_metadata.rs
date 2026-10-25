@@ -208,12 +208,12 @@ impl ClaimMetadata {
 }
 
 /// Why type metadata could not be used.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TypeMetadataError {
-    /// The document is not JSON of the expected shape.
+    /// The document is not JSON of the expected shape; the source is the JSON error.
     #[error("invalid type metadata: {0}")]
-    Json(String),
+    Json(#[source] serde_json::Error),
     /// A claim metadata object breaks a structural rule.
     #[error("claim metadata {path}: {reason}")]
     InvalidClaimMetadata {
@@ -353,8 +353,7 @@ impl TypeMetadata {
     ///
     /// [`TypeMetadataError::Json`], or the errors of [`check`](Self::check).
     pub fn parse(document: &[u8]) -> Result<Self, TypeMetadataError> {
-        let metadata: Self =
-            serde_json::from_slice(document).map_err(|e| TypeMetadataError::Json(e.to_string()))?;
+        let metadata: Self = serde_json::from_slice(document).map_err(TypeMetadataError::Json)?;
         metadata.check()?;
         Ok(metadata)
     }
