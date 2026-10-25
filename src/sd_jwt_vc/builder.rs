@@ -54,7 +54,7 @@ pub struct SdJwtBuilder {
     concealed: Vec<ClaimPath>,
     decoys: usize,
     alg: HashAlgorithm,
-    salts: Box<dyn FnMut() -> String + Send>,
+    salts: Box<dyn FnMut() -> Result<String, SdJwtError> + Send>,
 }
 
 impl SdJwtBuilder {
@@ -105,8 +105,11 @@ impl SdJwtBuilder {
     /// document order with the members of an object or array before the object or array
     /// itself.
     #[must_use]
-    pub fn with_salt_generator(mut self, salts: impl FnMut() -> String + Send + 'static) -> Self {
-        self.salts = Box::new(salts);
+    pub fn with_salt_generator(
+        mut self,
+        mut salts: impl FnMut() -> String + Send + 'static,
+    ) -> Self {
+        self.salts = Box::new(move || Ok(salts()));
         self
     }
 
@@ -127,7 +130,8 @@ impl SdJwtBuilder {
     /// [`SdJwtError::NoSuchClaim`] when a path selects nothing, [`SdJwtError::NotConcealable`]
     /// for `_sd` or `...`, [`SdJwtError::Payload`] when the claims already use `_sd` or
     /// `_sd_alg`, [`SdJwtError::TooDeep`] when they nest deeper than
-    /// [`MAX_DEPTH`](Self::MAX_DEPTH).
+    /// [`MAX_DEPTH`](Self::MAX_DEPTH), [`SdJwtError::Randomness`] when the operating system
+    /// provides no randomness for a salt.
     pub fn encode(mut self) -> Result<Encoded, SdJwtError> {
         if self.claims.contains_key(HashAlgorithm::CLAIM) {
             return Err(SdJwtError::Payload(
@@ -171,6 +175,10 @@ impl SdJwtBuilder {
     /// # Errors
     ///
     /// As [`encode`](Self::encode), or [`SdJwtError::Jws`] when signing fails.
+    ///
+    /// # Panics
+    ///
+    /// Never: the payload is a JSON object, and the JWS one this function has just encoded.
     pub async fn sign(self, header: &JwsHeader, signer: &dyn Signer) -> Result<SdJwt, SdJwtError> {
         let encoded = self.encode()?;
         let payload = serde_json::to_vec(&encoded.payload).expect("a JSON object serializes");
@@ -238,13 +246,13 @@ impl SdJwtBuilder {
                     reason: format!("`{name}` is reserved"),
                 });
             }
-            let disclosure = Disclosure::property((self.salts)(), name, value);
+            let disclosure = Disclosure::property((self.salts)()?, name, value);
             digests.push(disclosure.digest(self.alg));
             disclosures.push(disclosure);
         }
         if !digests.is_empty() {
             for _ in 0..self.decoys {
-                digests.push(self.alg.digest((self.salts)().as_bytes()));
+                digests.push(self.alg.digest((self.salts)()?.as_bytes()));
             }
             digests.sort_unstable();
             out.insert(
@@ -270,7 +278,7 @@ impl SdJwtBuilder {
                 out.push(element);
                 continue;
             }
-            let disclosure = Disclosure::element((self.salts)(), element);
+            let disclosure = Disclosure::element((self.salts)()?, element);
             let mut placeholder = Map::new();
             placeholder.insert(
                 ELLIPSIS_KEY.to_owned(),
@@ -295,10 +303,10 @@ impl fmt::Debug for SdJwtBuilder {
 }
 
 /// 128 bits of operating system randomness, base64url-encoded.
-pub(super) fn random_salt() -> String {
+fn random_salt() -> Result<String, SdJwtError> {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).expect("the operating system provides randomness");
-    base64url::encode(&bytes)
+    getrandom::fill(&mut bytes).map_err(|e| SdJwtError::Randomness(Box::new(e)))?;
+    Ok(base64url::encode(&bytes))
 }
 
 /// The output of [`SdJwtBuilder::encode`].
@@ -327,5 +335,64 @@ fn nests_deeper_than(value: &Value, limit: usize) -> bool {
                     .any(|member| nests_deeper_than(member, limit - 1))
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use serde_json::json;
+
+    use super::*;
+
+    /// A builder whose salts come from a random number generator that fails.
+    fn without_randomness(claims: Value) -> SdJwtBuilder {
+        let mut builder = SdJwtBuilder::new(claims.as_object().unwrap().clone());
+        builder.salts = Box::new(|| {
+            Err(SdJwtError::Randomness(Box::new(std::io::Error::other(
+                "no entropy",
+            ))))
+        });
+        builder
+    }
+
+    #[test]
+    fn a_failing_random_number_generator_is_an_error() {
+        let claims = json!({"given_name": "Erika", "nationalities": ["DE"]});
+        for builder in [
+            without_randomness(claims.clone()).conceal(["given_name"]),
+            without_randomness(claims.clone()).conceal(crate::claim_path!["nationalities", 0]),
+        ] {
+            let error = builder.encode().unwrap_err();
+            assert!(matches!(error, SdJwtError::Randomness(_)), "{error:?}");
+            assert_eq!(error.to_string(), "cannot generate a salt: no entropy");
+            assert!(error.source().unwrap().is::<std::io::Error>());
+        }
+        // Without a disclosure there is no salt to draw, nor a decoy.
+        let encoded = without_randomness(claims.clone())
+            .with_decoys(2)
+            .encode()
+            .unwrap();
+        assert_eq!(Value::Object(encoded.payload), claims);
+    }
+
+    #[test]
+    fn decoys_draw_salts_too() {
+        let mut calls = 0;
+        let mut builder = SdJwtBuilder::new(json!({"a": 1}).as_object().unwrap().clone())
+            .conceal(["a"])
+            .with_decoys(1);
+        builder.salts = Box::new(move || {
+            calls += 1;
+            if calls == 1 {
+                Ok("salt".to_owned())
+            } else {
+                Err(SdJwtError::Randomness(Box::new(std::io::Error::other(
+                    "no entropy",
+                ))))
+            }
+        });
+        assert!(matches!(builder.encode(), Err(SdJwtError::Randomness(_))));
     }
 }

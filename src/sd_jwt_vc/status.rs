@@ -651,6 +651,11 @@ impl StatusListToken {
     /// # Errors
     ///
     /// [`StatusListError::Jws`] when signing fails.
+    ///
+    /// # Panics
+    ///
+    /// Never: the token always serializes to JSON, and the JWS is one this function has just
+    /// encoded.
     pub async fn sign(&self, signer: &dyn Signer) -> Result<Jwt, StatusListError> {
         let mut header = JwsHeader::new(signer.alg()).with_typ(Self::TYP);
         header.kid = signer.kid().map(str::to_owned);

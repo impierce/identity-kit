@@ -563,6 +563,10 @@ impl SdJwtCredentialV2Builder {
     ///
     /// [`SdJwtError::NotConcealable`], the errors of [`SdJwtBuilder::sign`], and those of
     /// [`SdJwtCredentialV2::from_sd_jwt`] should the credential not read back.
+    ///
+    /// # Panics
+    ///
+    /// Never: the claims always serialize to a JSON object.
     pub async fn sign(
         self,
         signer: &dyn Signer,

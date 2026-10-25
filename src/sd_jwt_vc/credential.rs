@@ -363,6 +363,10 @@ impl SdJwtVcClaims {
     }
 
     /// The claims as a JSON object.
+    ///
+    /// # Panics
+    ///
+    /// Never: the claims always serialize to a JSON object.
     pub fn to_map(&self) -> Map<String, Value> {
         match serde_json::to_value(self).expect("claims serialize") {
             Value::Object(map) => map,

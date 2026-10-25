@@ -112,6 +112,10 @@ impl DidJwk {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
+    /// # Panics
+    ///
+    /// Never: a [`Jwk`] always serializes to JSON.
+    ///
     /// [RFC 8785]: https://www.rfc-editor.org/rfc/rfc8785
     pub fn did(jwk: &Jwk) -> Result<Did, DidError> {
         let value = serde_json::to_value(jwk.public()).expect("a JWK serializes");
