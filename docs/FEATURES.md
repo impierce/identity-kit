@@ -69,6 +69,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | DID URL dereferencing and `resolve_public_key`                                      |   ✅   |               | [DID Resolution §4][did-resolution] | [#9](https://github.com/impierce/identity-kit/issues/9) |
 | `KeyReference`, `KeyRole`, generic `KeyResolver` and `CompositeKeyResolver`; `kid`, relative `kid` + `iss`, `jwk` header, `cnf` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7515 §4.1][rfc7515], [RFC 7800][rfc7800] | [#53](https://github.com/impierce/identity-kit/issues/53) |
 | `JwksResolver`: HTTPS `iss` + `kid` over JWT VC issuer metadata (`jwks`, `jwks_uri`)             |   ✅   | `jwks`        | [SD-JWT VC §3.5][sd-jwt-vc]      | [#53](https://github.com/impierce/identity-kit/issues/53) |
+| `JwtValidator` for plain JWTs (access tokens): `alg` allow-list, `typ`, signature, key bound to `iss`, `iss`, `aud`, `exp`/`nbf`/`iat` with leeway, required claims | ✅ | | [RFC 7519 §7.2][rfc7519], [RFC 8725][rfc8725], [RFC 9068][rfc9068] | [#121](https://github.com/impierce/identity-kit/issues/121) |
 | `x5c` certificate chains and `jku`: in `KeyReference`, resolvers to follow                       |   📋   |               | [RFC 7515 §4.1][rfc7515]         | [#53](https://github.com/impierce/identity-kit/issues/53) |
 
 ### `methods`: DID methods
@@ -170,6 +171,8 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 7518: JWA][rfc7518]                     | IETF        | `jose`                                    |
 | [RFC 7638: JWK thumbprint][rfc7638]          | IETF        | `jose`                                    |
 | [RFC 8037: EdDSA in JOSE][rfc8037]           | IETF        | `jose`                                    |
+| [RFC 8725: JWT Best Current Practices][rfc8725] | IETF     | `resolver` (`JwtValidator`)               |
+| [RFC 9068: JWT access tokens][rfc9068]       | IETF        | `resolver` (`JwtValidator`)               |
 | [RFC 8785: JSON Canonicalization Scheme][rfc8785] | IETF   | `methods::jwk`                            |
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
@@ -203,6 +206,8 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [status-list]: https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/
 [rfc7519]: https://www.rfc-editor.org/rfc/rfc7519
 [rfc7800]: https://www.rfc-editor.org/rfc/rfc7800
+[rfc8725]: https://www.rfc-editor.org/rfc/rfc8725
+[rfc9068]: https://www.rfc-editor.org/rfc/rfc9068
 [siopv2]: https://openid.net/specs/openid-connect-self-issued-v2-1_0.html
 [oid4vp]: https://openid.net/specs/openid-4-verifiable-presentations-1_0.html
 [pkcs11]: https://docs.oasis-open.org/pkcs11/pkcs11-spec/v3.1/pkcs11-spec-v3.1.html
