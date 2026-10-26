@@ -21,7 +21,9 @@
 //!
 //! - `utoipa`: OpenAPI schemas ([`utoipa::ToSchema`]) for [`DidDocument`](did::DidDocument),
 //!   [`VerificationMethod`](did::VerificationMethod), [`Service`](did::Service),
-//!   [`Jwk`](jose::Jwk), `DomainLinkageConfiguration` and `TypeMetadata`.
+//!   [`Jwk`](jose::Jwk), [`JwsAlgorithm`](jose::JwsAlgorithm), the credentials and
+//!   presentations of `vc` (VCDM 1.1 and 2.0, enveloped forms included),
+//!   `DomainLinkageConfiguration`, `ClaimPath`, `TypeMetadata` and `StatusType`.
 //! - `test-vectors`: [`keys::testsuite`], the behavioural suite every key store must pass, and
 //!   [`vectors`], the specification vectors the tests of this crate run against.
 #![cfg_attr(docsrs, feature(doc_cfg))]

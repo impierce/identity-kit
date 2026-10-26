@@ -55,7 +55,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
 | `jwks`           |         | `resolver::JwksResolver`: the keys of an HTTPS issuer from its JWT VC issuer metadata; implies `did-web` |
-| `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
+| `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `JwsAlgorithm`, `Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp`, `DomainLinkageConfiguration`, `ClaimPath`, `TypeMetadata` and `StatusType` |
 | `test-vectors`   |         | `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the specification vectors |
 
 `identity_kit::prelude` gathers the common types of the lower layer and `identity_kit::prelude::credentials` those of the upper layer, for glob import.
