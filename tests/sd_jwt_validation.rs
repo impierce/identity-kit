@@ -3,6 +3,18 @@
 //! Appendix A.3), the holder presents with key binding, and every check of RFC 9901 §7 and
 //! SD-JWT VC §2.4 is exercised, the Token Status List included.
 #![cfg(all(feature = "sd-jwt", feature = "did-key"))]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
 
 mod common;
 
@@ -174,7 +186,7 @@ async fn presentation_with_key_binding_validates() {
     assert_eq!(kb.additional["nonce"], NONCE);
     assert_eq!(
         kb.additional["sd_hash"],
-        presentation.sd_jwt().sd_hash(Default::default())
+        presentation.sd_jwt().sd_hash(HashAlgorithm::default())
     );
     assert_eq!(validated.credential.payload()["given_name"], "John");
     assert_eq!(
@@ -198,7 +210,7 @@ async fn presentation_with_key_binding_validates() {
     let bounded = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
             .with_time(TimeOptions::at(now() + chrono::TimeDelta::minutes(5)))
-            .with_max_age(Duration::from_secs(600)),
+            .with_max_age(Duration::from_mins(10)),
     );
     assert!(
         validator()
@@ -279,7 +291,7 @@ async fn key_binding_errors() {
     let stale = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
             .with_time(TimeOptions::at(now() + chrono::TimeDelta::hours(1)))
-            .with_max_age(Duration::from_secs(60)),
+            .with_max_age(Duration::from_mins(1)),
     );
     assert!(matches!(
         validator.validate(presentation.sd_jwt(), &stale).await,
@@ -288,7 +300,7 @@ async fn key_binding_errors() {
     let oldest = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
             .with_time(TimeOptions::at(now() + chrono::TimeDelta::seconds(60)))
-            .with_max_age(Duration::from_secs(60)),
+            .with_max_age(Duration::from_mins(1)),
     );
     assert!(
         validator
@@ -324,7 +336,7 @@ async fn key_binding_errors() {
     // Signed by the wrong key, or with the wrong `typ`.
     let header = JwsHeader::new(JwsAlgorithm::EdDSA).with_typ("kb+jwt");
     let claims = KeyBinding::new(AUDIENCE, NONCE, now())
-        .claims(presentation.sd_jwt().sd_hash(Default::default()));
+        .claims(presentation.sd_jwt().sd_hash(HashAlgorithm::default()));
     let forged = Jwt::sign(&header, &claims, &issuer.signer).await.unwrap();
     let forged = presentation.sd_jwt().clone().with_key_binding(forged);
     assert!(matches!(

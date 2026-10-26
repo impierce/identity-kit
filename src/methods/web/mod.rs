@@ -15,6 +15,7 @@
 //! [did:web method]: https://w3c-ccg.github.io/did-method-web/
 
 use core::fmt;
+use core::fmt::Write as _;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -268,7 +269,7 @@ pub fn did_from_url(url: &Url) -> Result<Did, WebError> {
     }
     let mut id = domain.to_owned();
     if let Some(port) = url.port() {
-        id.push_str(&format!("%3A{port}"));
+        let _ = write!(id, "%3A{port}");
     }
     let mut segments: Vec<&str> = url
         .path_segments()
@@ -325,7 +326,7 @@ fn encode_segment(segment: &str) -> String {
             i += 3;
             continue;
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
         i += 1;
     }
@@ -428,6 +429,7 @@ fn is_dot_segment(segment: &str) -> bool {
 
 /// Decodes the percent-encoded octets of a DID segment, which the DID syntax has checked to be
 /// complete; non-UTF-8 octets become replacement characters and fail the host check.
+#[expect(clippy::cast_possible_truncation, reason = "a hex digit is below 16")]
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

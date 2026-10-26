@@ -123,6 +123,10 @@ impl SoftwareKeyStore {
     /// # Errors
     ///
     /// As [`SoftwareKeyStore::open`].
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "options are taken by value, as builders take them, so that they can grow"
+    )]
     pub fn open_with(
         path: impl Into<PathBuf>,
         options: SoftwareKeyStoreOptions,
@@ -212,11 +216,9 @@ impl SoftwareKeyStore {
     /// type, [`KeyStoreError::AlreadyExists`] when its id is taken and [`KeyStoreError::Io`] when
     /// the file cannot be written.
     pub fn import(&self, jwk: Jwk) -> Result<KeyId, KeyStoreError> {
+        let key = KeyId::new(jwk.kid().unwrap_or_default());
         let (id, entry) =
-            Entry::from_jwk(jwk.clone()).map_err(|reason| KeyStoreError::InvalidKey {
-                key: KeyId::new(jwk.kid().unwrap_or_default()),
-                reason,
-            })?;
+            Entry::from_jwk(jwk).map_err(|reason| KeyStoreError::InvalidKey { key, reason })?;
         self.insert(id, entry)
     }
 
@@ -258,7 +260,7 @@ impl fmt::Debug for SoftwareKeyStore {
         f.debug_struct("SoftwareKeyStore")
             .field("path", &self.path)
             .field("keys", &self.key_ids())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

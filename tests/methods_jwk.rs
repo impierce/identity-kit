@@ -1,6 +1,10 @@
 //! Specification vectors for `did:jwk`: the P-256 and X25519 examples of the did:jwk method
 //! specification and its Create and Read operations.
 #![cfg(feature = "did-jwk")]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
 
 use std::error::Error as _;
 

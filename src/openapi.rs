@@ -446,7 +446,9 @@ impl ToSchema for crate::domain_linkage::DomainLinkageConfiguration {
 
 #[cfg(feature = "vc")]
 mod claim_path {
-    use super::*;
+    use super::{
+        Cow, ObjectBuilder, PartialSchema, RefOr, Schema, ToSchema, Type, array, one_of, string,
+    };
     use crate::vc::ClaimPath;
 
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
@@ -490,7 +492,10 @@ mod claim_path {
 
 #[cfg(feature = "sd-jwt")]
 mod type_metadata {
-    use super::*;
+    use super::{
+        AdditionalProperties, Cow, ObjectBuilder, PartialSchema, RefBuilder, RefOr, Schema,
+        Schemas, ToSchema, Type, any_object, array, collect, schema_ref, string, uri,
+    };
     use crate::sd_jwt_vc::{ClaimDisplay, ClaimMetadata, DisplayMetadata, TypeMetadata};
     use crate::vc::ClaimPath;
 
@@ -661,7 +666,7 @@ mod type_metadata {
 
 #[cfg(feature = "sd-jwt")]
 mod status {
-    use super::*;
+    use super::{Cow, ObjectBuilder, PartialSchema, RefOr, Schema, ToSchema, Type, one_of, string};
     use crate::sd_jwt_vc::StatusType;
 
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]

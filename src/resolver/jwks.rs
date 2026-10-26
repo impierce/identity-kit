@@ -104,7 +104,7 @@ struct KeySet {
 
 impl<C> JwksResolver<C> {
     /// How long [`new`](Self::new) keeps an issuer's key set: five minutes.
-    pub const DEFAULT_TTL: Duration = Duration::from_secs(300);
+    pub const DEFAULT_TTL: Duration = Duration::from_mins(5);
 
     /// How many issuers [`new`](Self::new) keeps key sets of.
     pub const DEFAULT_CAPACITY: usize = 256;
@@ -408,7 +408,7 @@ mod tests {
             keys: Arc::from([]),
             expires_at: Some(now),
         };
-        assert!(entry.is_live(now - Duration::from_nanos(1)));
+        assert!(entry.is_live(now.checked_sub(Duration::from_nanos(1)).unwrap()));
         assert!(!entry.is_live(now));
     }
 }

@@ -1,5 +1,9 @@
 //! Specification vectors for `JwtClaims`: the RFC 7519 §3.1 claims set as RFC 7515 Appendix A.3
 //! signs it, `aud` (RFC 7519 §4.1.3) and `NumericDate` (RFC 7519 §2).
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 use std::error::Error as _;
 

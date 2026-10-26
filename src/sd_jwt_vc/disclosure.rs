@@ -92,9 +92,8 @@ impl Disclosure {
         let array: Vec<Value> =
             serde_json::from_slice(&bytes).map_err(|_| invalid("not a JSON array"))?;
         let mut array = array.into_iter();
-        let salt = match array.next() {
-            Some(Value::String(salt)) => salt,
-            _ => return Err(invalid("the salt is not a string")),
+        let Some(Value::String(salt)) = array.next() else {
+            return Err(invalid("the salt is not a string"));
         };
         let (name, value) = match (array.next(), array.next(), array.next()) {
             (Some(value), None, None) => (None, value),
@@ -153,7 +152,7 @@ impl fmt::Debug for Disclosure {
             .field("salt", &self.salt)
             .field("name", &self.name)
             .field("value", &self.value)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

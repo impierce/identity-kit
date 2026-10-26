@@ -2,6 +2,14 @@
 //! DID URL Dereferencing algorithms; DID Core 1.0 example documents), exercised through a
 //! `did:example` resolver that lives entirely in this file: registering a method needs nothing
 //! from the module.
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -877,7 +885,9 @@ async fn builder_registers_by_method_and_later_registrations_win() {
     assert!(resolver.supports("example") && resolver.supports("other"));
     assert!(!resolver.supports("web") && !resolver.supports("did:example"));
     assert_eq!(
-        resolver.resolver("example").map(|r| r.method()),
+        resolver
+            .resolver("example")
+            .map(identity_kit::prelude::DidResolver::method),
         Some("example")
     );
     assert!(resolver.resolver("web").is_none());
@@ -960,11 +970,11 @@ async fn cache_serves_repeated_resolutions_without_options() {
     ));
     let resolver = Resolver::builder()
         .with(Arc::clone(&example))
-        .cache(Duration::from_secs(60))
+        .cache(Duration::from_mins(1))
         .build();
     let did = did("did:example:123");
     let cache = resolver.cache().unwrap();
-    assert_eq!(cache.ttl(), Duration::from_secs(60));
+    assert_eq!(cache.ttl(), Duration::from_mins(1));
     assert_eq!(cache.capacity(), DocumentCache::DEFAULT_CAPACITY);
 
     let first = resolver.resolve(&did).await.unwrap();
@@ -1020,7 +1030,7 @@ async fn cache_serves_repeated_resolutions_without_options() {
 
     assert_eq!(
         format!("{resolver:?}"),
-        r#"Resolver { methods: ["example"], cache: Some(DocumentCache { ttl: 60s, capacity: 1024, len: 1 }) }"#
+        r#"Resolver { methods: ["example"], cache: Some(DocumentCache { ttl: 60s, capacity: 1024, len: 1, .. }) }"#
     );
 }
 
@@ -1036,7 +1046,7 @@ async fn cache_entries_expire() {
     assert!(resolver.resolve(&did).await.is_ok());
     assert!(resolver.resolve(&did).await.is_ok());
     assert_eq!(example.calls(), 1);
-    std::thread::sleep(Duration::from_millis(1000));
+    std::thread::sleep(Duration::from_secs(1));
     assert!(resolver.cache().unwrap().is_empty());
     assert!(resolver.resolve(&did).await.is_ok());
     assert_eq!(example.calls(), 2);
@@ -1075,7 +1085,7 @@ fn cache_is_bounded() {
     assert_eq!(cache.purge_expired(), 0);
 
     // Expired entries make room first, and are gone from every accessor.
-    std::thread::sleep(Duration::from_millis(1000));
+    std::thread::sleep(Duration::from_secs(1));
     assert_eq!(cache.get(&c), None);
     assert_eq!(cache.len(), 0);
     assert!(cache.is_empty());
@@ -1086,7 +1096,7 @@ fn cache_is_bounded() {
     assert_eq!(cache.purge_expired(), 1);
     assert_eq!(
         format!("{cache:?}"),
-        "DocumentCache { ttl: 500ms, capacity: 2, len: 1 }"
+        "DocumentCache { ttl: 500ms, capacity: 2, len: 1, .. }"
     );
 
     // An entry that can never expire.
@@ -1101,7 +1111,7 @@ async fn concurrent_resolutions_share_one_resolver() {
     let resolver = Arc::new(
         Resolver::builder()
             .with(Arc::clone(&example))
-            .cache(Duration::from_secs(60))
+            .cache(Duration::from_mins(1))
             .build(),
     );
     const TASKS: usize = 64;

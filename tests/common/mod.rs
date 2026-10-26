@@ -84,6 +84,10 @@ impl Es256Signer {
         self
     }
 
+    #[expect(
+        clippy::unused_self,
+        reason = "the same shape as the other signers' `public_jwk`"
+    )]
     pub(crate) fn public_jwk(&self) -> Jwk {
         serde_json::from_value(json!({
             "kty": "EC", "crv": "P-256", "x": RFC7515_A3_X, "y": RFC7515_A3_Y

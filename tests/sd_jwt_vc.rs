@@ -2,6 +2,18 @@
 //! without key binding) and the PID credential of Appendix A.1; the Token Status List
 //! examples of §4, §5, §6 and Appendix C; the type metadata of §5.1, §5.6 and Appendix A.2.
 #![cfg(feature = "sd-jwt")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 mod common;
 
@@ -267,7 +279,8 @@ fn typ_and_registered_claims_are_enforced() {
             json!("https://example.com/issuer"),
         );
         let mut payload = json!({"vct": "a"});
-        payload["_sd"] = json!([disclosure.digest(Default::default())]);
+        payload["_sd"] =
+            json!([disclosure.digest(identity_kit::sd_jwt_vc::HashAlgorithm::default())]);
         if claim == "vct" {
             payload.as_object_mut().unwrap().remove("vct");
         }
@@ -279,14 +292,15 @@ fn typ_and_registered_claims_are_enforced() {
     }
     // A sub-claim of one either.
     let disclosure = identity_kit::sd_jwt_vc::Disclosure::property("salt", "jwk", json!({}));
-    let payload = json!({"vct": "a", "cnf": {"_sd": [disclosure.digest(Default::default())]}});
+    let payload = json!({"vct": "a", "cnf": {"_sd": [disclosure.digest(identity_kit::sd_jwt_vc::HashAlgorithm::default())]}});
     assert!(matches!(
         credential_of(Some(TYP), payload, vec![disclosure.as_str()]),
         Err(SdJwtVcError::DisclosedRegisteredClaim(name)) if name == "cnf"
     ));
     // `sub` and `iat` may be disclosed.
     let sub = identity_kit::sd_jwt_vc::Disclosure::property("salt", "sub", json!("user_42"));
-    let payload = json!({"vct": "a", "_sd": [sub.digest(Default::default())]});
+    let payload =
+        json!({"vct": "a", "_sd": [sub.digest(identity_kit::sd_jwt_vc::HashAlgorithm::default())]});
     let credential = credential_of(Some(TYP), payload, vec![sub.as_str()]).unwrap();
     assert_eq!(credential.claims().sub.as_deref(), Some("user_42"));
 

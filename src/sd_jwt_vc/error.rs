@@ -27,7 +27,7 @@ pub enum SdJwtError {
     DuplicateDisclosure(String),
     /// The issuer-signed JWT payload is not a JSON object, or `_sd`, `...` or `_sd_alg` is
     /// malformed. The source is the JSON error, when there is one.
-    #[error("invalid SD-JWT payload: {reason}{}", cause(.source))]
+    #[error("invalid SD-JWT payload: {reason}{}", cause(.source.as_ref()))]
     Payload {
         /// What is wrong with it.
         reason: String,

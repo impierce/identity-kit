@@ -1,0 +1,3 @@
+# Names that `clippy::doc_markdown` would otherwise want in backticks: specifications, algorithms
+# and projects, not code. `..` keeps clippy's defaults.
+doc-valid-idents = ["EdDSA", "OpenAPI", "RustCrypto", "SIOPv2", "SoftHSM2", "UniCore", ".."]

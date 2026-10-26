@@ -432,6 +432,7 @@ impl SdJwtCredentialV2Builder {
     }
 
     /// A builder over a copy of this credential, nothing else set.
+    #[must_use]
     pub fn clone_credential(&self) -> Self {
         Self::new(self.credential.clone())
     }
@@ -572,9 +573,9 @@ impl SdJwtCredentialV2Builder {
         signer: &dyn Signer,
     ) -> Result<SdJwtCredentialV2, SdJwtCredentialV2Error> {
         self.check_concealed()?;
-        let claims = match serde_json::to_value(self.claims()).expect("claims serialize") {
-            Value::Object(map) => map,
-            _ => unreachable!("a struct serializes to an object"),
+        let Value::Object(claims) = serde_json::to_value(self.claims()).expect("claims serialize")
+        else {
+            unreachable!("a struct serializes to an object")
         };
         let mut header = JwsHeader::new(signer.alg()).with_typ(SdJwtCredentialV2::TYP);
         header.kid = self.kid.or_else(|| signer.kid().map(str::to_owned));

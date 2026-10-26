@@ -1,4 +1,8 @@
 //! Specification vectors for `Jwk` (RFC 7517, RFC 7518, RFC 7638, RFC 8037, RFC 8410, RFC 5480).
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "DER lengths here are below 0x10000, and the test modulus bytes wrap on purpose"
+)]
 
 use std::error::Error as _;
 

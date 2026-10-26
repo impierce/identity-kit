@@ -2,6 +2,14 @@
 //! specification, its Read operation over an in-file `HttpClient`, and the hardened default
 //! client's refusals.
 #![cfg(feature = "did-web")]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
 
 use std::collections::HashMap;
 use std::error::Error as _;

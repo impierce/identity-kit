@@ -199,6 +199,10 @@ impl KeyStoreIdentity {
     }
 
     /// The binding of `key` to `(kind, alg)`, with its identifier and `kid`.
+    #[expect(
+        clippy::similar_names,
+        reason = "`kind` and `kid` are the terms of the API"
+    )]
     async fn derive(
         &self,
         kind: IdentityKind,

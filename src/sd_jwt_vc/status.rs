@@ -283,7 +283,7 @@ pub enum StatusListError {
     },
     /// `lst` is not base64url, or not a ZLIB-compressed byte array. The source is the base64url
     /// error, when that is the cause.
-    #[error("invalid status list: {reason}{}", cause(.source))]
+    #[error("invalid status list: {reason}{}", cause(.source.as_ref()))]
     Compression {
         /// What is wrong with `lst`.
         reason: String,

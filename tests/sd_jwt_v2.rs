@@ -5,6 +5,14 @@
 //! 7515 Appendix A.3), who presents with key binding and envelopes the credential in a
 //! `vp+jwt` presentation.
 #![cfg(all(feature = "sd-jwt", feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    clippy::similar_names,
+    reason = "the names are the API's terms: `issued` and `issuer`, `signed` and `signer`"
+)]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
 
 mod common;
 

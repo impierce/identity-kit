@@ -3,6 +3,14 @@
 //! with its key in a `jwk` header, the binding rule table, `Resolver`, `JwkResolver` and
 //! `CompositeKeyResolver`.
 #![cfg(all(feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 mod common;
 

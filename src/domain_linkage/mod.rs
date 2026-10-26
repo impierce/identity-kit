@@ -1129,6 +1129,10 @@ fn issuer_of(jwt: &Jwt) -> Option<Did> {
 
 /// The checks of the JSON Web Token proof format and of DID Configuration Resource
 /// Verification that need no key.
+#[expect(
+    clippy::similar_names,
+    reason = "the subject's `id` and the DID it names"
+)]
 fn check_format(
     decoded: &DecodedCredential,
     expected_origin: &str,

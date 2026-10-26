@@ -61,7 +61,7 @@ impl SdJwtBuilder {
     /// The deepest nesting of objects and arrays [`encode`](Self::encode) accepts, counting the
     /// claims set itself: a claim value may sit inside 63 more containers.
     ///
-    /// The parsers of this crate read at most 128 nested containers (serde_json's default),
+    /// The parsers of this crate read at most 128 nested containers (`serde_json`'s default),
     /// and concealment, disclosures and the payload add a few around a claim value, so a
     /// claims set within this limit always processes back; one beyond it might not.
     /// [`SdJwt::process`](super::SdJwt::process) enforces the same limit on the claims it
@@ -345,7 +345,7 @@ mod tests {
     use super::*;
 
     /// A builder whose salts come from a random number generator that fails.
-    fn without_randomness(claims: Value) -> SdJwtBuilder {
+    fn without_randomness(claims: &Value) -> SdJwtBuilder {
         let mut builder = SdJwtBuilder::new(claims.as_object().unwrap().clone());
         builder.salts = Box::new(|| {
             Err(SdJwtError::Randomness(Box::new(std::io::Error::other(
@@ -359,8 +359,8 @@ mod tests {
     fn a_failing_random_number_generator_is_an_error() {
         let claims = json!({"given_name": "Erika", "nationalities": ["DE"]});
         for builder in [
-            without_randomness(claims.clone()).conceal(["given_name"]),
-            without_randomness(claims.clone()).conceal(crate::claim_path!["nationalities", 0]),
+            without_randomness(&claims).conceal(["given_name"]),
+            without_randomness(&claims).conceal(crate::claim_path!["nationalities", 0]),
         ] {
             let error = builder.encode().unwrap_err();
             assert!(matches!(error, SdJwtError::Randomness(_)), "{error:?}");
@@ -368,10 +368,7 @@ mod tests {
             assert!(error.source().unwrap().is::<std::io::Error>());
         }
         // Without a disclosure there is no salt to draw, nor a decoy.
-        let encoded = without_randomness(claims.clone())
-            .with_decoys(2)
-            .encode()
-            .unwrap();
+        let encoded = without_randomness(&claims).with_decoys(2).encode().unwrap();
         assert_eq!(Value::Object(encoded.payload), claims);
     }
 

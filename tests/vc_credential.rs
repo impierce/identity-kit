@@ -1,6 +1,10 @@
 //! Specification vectors for `Credential`: the examples of the Verifiable Credentials Data
 //! Model 1.1 and its JWT profile (§6.3.1).
 #![cfg(feature = "vc")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{OneOrMany, Uri};
@@ -522,7 +526,7 @@ fn multiple_subjects_have_no_jwt_form() {
         decoded
             .subject()
             .and_then(|subject| subject.id.as_ref())
-            .map(|id| id.as_str()),
+            .map(identity_kit::did::Uri::as_str),
         Some("did:example:ebfeb1f712ebc6f1c276e12ec21")
     );
 
