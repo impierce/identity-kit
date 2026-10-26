@@ -40,10 +40,10 @@
 //!    time, within the leeway.
 //! 6. `credentialStatus` passes the [`StatusCheck`], per the [`StatusPolicy`], and so does a
 //!    `status` claim, which the Token Status List defines for any JWT (§6.1), as
-//!    `CredentialStatus::SdJwt` after the `credentialStatus` entries. With the `sd-jwt`
-//!    feature a `status` claim that does not parse, or names no status mechanism, is
-//!    refused; without it the claim cannot be checked, so it fails under
-//!    [`StatusPolicy::Strict`] and is ignored otherwise.
+//!    `CredentialStatus::StatusClaim` after the `credentialStatus` entries. With the
+//!    `status-list` feature (which `sd-jwt` implies) a `status` claim that does not parse, or
+//!    names no status mechanism, is refused; without it the claim cannot be checked, so it
+//!    fails under [`StatusPolicy::Strict`] and is ignored otherwise.
 //!
 //! For a presentation ([`JwtPresentationValidator`]): the same for the presentation JWT, with
 //! the key resolved for [`KeyRole::Subject`] (`authentication`) and bound to the holder, plus the expected
@@ -111,11 +111,11 @@ pub use presentation::{
 pub enum CredentialStatus<'a> {
     /// A `credentialStatus` entry of a VCDM credential.
     Vcdm(&'a TypedObject),
-    /// The `status` claim of an SD-JWT VC, of a VCDM 2.0 credential secured with SD-JWT, or of
-    /// a JWT credential of either profile (IETF Token Status List §6.1 and other mechanisms).
-    #[cfg(feature = "sd-jwt")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
-    SdJwt(&'a crate::sd_jwt_vc::Status),
+    /// The `status` claim of a JWT credential of either profile, of an SD-JWT VC or of a VCDM
+    /// 2.0 credential secured with SD-JWT (IETF Token Status List §6.1 and other mechanisms).
+    #[cfg(feature = "status-list")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "status-list")))]
+    StatusClaim(&'a crate::status_list::Status),
 }
 
 impl CredentialStatus<'_> {
@@ -125,12 +125,12 @@ impl CredentialStatus<'_> {
     pub fn mechanism(&self) -> String {
         match self {
             Self::Vcdm(entry) => entry.object_type().to_owned(),
-            #[cfg(feature = "sd-jwt")]
-            Self::SdJwt(status) => status
+            #[cfg(feature = "status-list")]
+            Self::StatusClaim(status) => status
                 .mechanisms()
                 .map(|mechanism| match mechanism {
-                    crate::sd_jwt_vc::StatusMechanism::StatusList(_) => "status_list",
-                    crate::sd_jwt_vc::StatusMechanism::Other { name, .. } => name,
+                    crate::status_list::StatusMechanism::StatusList(_) => "status_list",
+                    crate::status_list::StatusMechanism::Other { name, .. } => name,
                 })
                 .collect::<Vec<_>>()
                 .join(", "),
@@ -142,12 +142,12 @@ impl CredentialStatus<'_> {
 /// points to and reports whether the credential is still good.
 ///
 /// One check serves both credential formats: the validators hand it every `credentialStatus`
-/// entry of a VCDM credential as [`CredentialStatus::Vcdm`] and the `status` claim of an
-/// SD-JWT credential, or of a JWT credential, as `CredentialStatus::SdJwt` (feature
-/// `sd-jwt`), so an application implements status checking once. A check that does not
-/// understand an entry reports [`StatusError::Unsupported`], which the [`StatusPolicy`]
-/// decides about. `StatusListCheck` of `sd_jwt_vc::validation` (features `sd-jwt` and
-/// `did-web`) checks the Token Status List and reports every VCDM entry as unsupported.
+/// entry of a VCDM credential as [`CredentialStatus::Vcdm`] and the `status` claim of a JWT
+/// or SD-JWT credential as `CredentialStatus::StatusClaim` (feature `status-list`), so an
+/// application implements status checking once. A check that does not understand an entry
+/// reports [`StatusError::Unsupported`], which the [`StatusPolicy`] decides about.
+/// `StatusListCheck` of `status_list` (features `status-list` and `did-web`) checks the Token
+/// Status List and reports every VCDM entry as unsupported.
 ///
 /// # Examples
 ///
@@ -163,8 +163,8 @@ impl CredentialStatus<'_> {
 /// impl StatusCheck for Revoked {
 ///     async fn check(&self, status: CredentialStatus<'_>, _: DateTime<Utc>) -> Result<(), StatusError> {
 ///         match status {
-///             #[cfg(feature = "sd-jwt")]
-///             CredentialStatus::SdJwt(status) if status.status_list.is_some() => {
+///             #[cfg(feature = "status-list")]
+///             CredentialStatus::StatusClaim(status) if status.status_list.is_some() => {
 ///                 Err(StatusError::Invalid("revoked".to_owned()))
 ///             }
 ///             other => Err(StatusError::Unsupported(other.mechanism())),
@@ -238,19 +238,19 @@ pub(crate) async fn check_statuses<'a>(
 }
 
 /// The `status` claim of a JWT credential, which the Token Status List defines for any JWT
-/// (§6.1): a `sd_jwt_vc::Status` with the `sd-jwt` feature, uninhabited without it.
-#[cfg(feature = "sd-jwt")]
-pub(super) type StatusClaim = crate::sd_jwt_vc::Status;
+/// (§6.1): a `status_list::Status` with the `status-list` feature, uninhabited without it.
+#[cfg(feature = "status-list")]
+pub(super) type StatusClaim = crate::status_list::Status;
 
 /// The `status` claim of a JWT credential, which the Token Status List defines for any JWT
-/// (§6.1): a `sd_jwt_vc::Status` with the `sd-jwt` feature, uninhabited without it.
-#[cfg(not(feature = "sd-jwt"))]
+/// (§6.1): a `status_list::Status` with the `status-list` feature, uninhabited without it.
+#[cfg(not(feature = "status-list"))]
 pub(super) enum StatusClaim {}
 
 /// The `status` claim of `claims`, for the [`StatusCheck`] beside the `credentialStatus`
 /// entries.
 ///
-/// With the `sd-jwt` feature the claim is parsed, and one that does not parse, or names no
+/// With the `status-list` feature the claim is parsed, and one that does not parse, or names no
 /// status mechanism, is an [`InvalidClaim`](crate::vc::CredentialError::InvalidClaim)
 /// whatever the `policy`. Without it the claim cannot be handed to a check, so it fails under
 /// [`StatusPolicy::Strict`] as an unchecked entry and is ignored otherwise.
@@ -261,7 +261,7 @@ pub(super) fn status_claim(
     let Some(status) = claims.additional.get("status") else {
         return Ok(None);
     };
-    #[cfg(feature = "sd-jwt")]
+    #[cfg(feature = "status-list")]
     {
         let _ = policy;
         let invalid = |reason: String| crate::vc::CredentialError::InvalidClaim {
@@ -276,7 +276,7 @@ pub(super) fn status_claim(
         }
         Ok(Some(status))
     }
-    #[cfg(not(feature = "sd-jwt"))]
+    #[cfg(not(feature = "status-list"))]
     {
         let _ = status;
         match policy {
@@ -288,11 +288,11 @@ pub(super) fn status_claim(
 
 /// `status` as the entry a [`StatusCheck`] is handed.
 pub(super) fn status_claim_entry(status: &StatusClaim) -> CredentialStatus<'_> {
-    #[cfg(feature = "sd-jwt")]
+    #[cfg(feature = "status-list")]
     {
-        CredentialStatus::SdJwt(status)
+        CredentialStatus::StatusClaim(status)
     }
-    #[cfg(not(feature = "sd-jwt"))]
+    #[cfg(not(feature = "status-list"))]
     {
         match *status {}
     }

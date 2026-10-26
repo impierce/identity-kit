@@ -29,8 +29,9 @@ use identity_kit::sd_jwt_vc::{
     Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, SdJwt, SdJwtBuilder,
     SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error, SdJwtCredentialValidator,
     SdJwtError, SdJwtValidationError, SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder,
-    SdJwtVcError, Status, StatusListRef,
+    SdJwtVcError,
 };
+use identity_kit::status_list::{Status, StatusListRef};
 use identity_kit::vc::validation::{
     CredentialStatus, CredentialValidationOptions, FailFast, JwtPresentationValidator,
     KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
@@ -886,7 +887,7 @@ impl StatusCheck for Verdicts {
                 assert_eq!(entry.object_type(), "BitstringStatusListEntry");
                 self.vcdm
             }
-            CredentialStatus::SdJwt(status) => {
+            CredentialStatus::StatusClaim(status) => {
                 assert_eq!(status.status_list.as_ref().unwrap().idx, 7);
                 self.sd_jwt
             }

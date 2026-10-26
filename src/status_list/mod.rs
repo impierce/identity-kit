@@ -1,5 +1,23 @@
-//! The Token Status List: the `status` claim of a referenced token, the status list and the
-//! status list token.
+//! The IETF Token Status List (draft-ietf-oauth-status-list): the `status` claim of a
+//! referenced token, the status list and the status list token.
+//!
+//! The draft defines the `status` claim for any JWT (§6.1), so the module serves every
+//! credential format of the crate: SD-JWT VCs and VCDM 2.0 credentials secured with SD-JWT
+//! ([`sd_jwt_vc`](crate::sd_jwt_vc), feature `sd-jwt`) as much as JWT credentials of either
+//! profile ([`vc`](crate::vc)). The validators of both hand the claim to a
+//! [`StatusCheck`](crate::vc::validation::StatusCheck) as
+//! [`CredentialStatus::StatusClaim`](crate::vc::validation::CredentialStatus::StatusClaim).
+//!
+//! - [`Status`] is the claim, [`StatusListRef`] its `status_list` mechanism and
+//!   [`StatusMechanism`] one mechanism of it.
+//! - [`StatusList`] is the list (§4): one [`StatusType`] of 1, 2, 4 or 8 bits per referenced
+//!   token, ZLIB-compressed in its `lst` member.
+//! - [`StatusListToken`] is the signed list (§5.1), issued with
+//!   [`sign`](StatusListToken::sign) and read with [`status_of`](StatusListToken::status_of).
+//! - `StatusListCheck` (feature `did-web` as well) is the [`StatusCheck`] that fetches the
+//!   token a reference names over an `HttpClient` and verifies it (§8).
+//!
+//! [`StatusCheck`]: crate::vc::validation::StatusCheck
 
 use core::fmt;
 use core::str::FromStr;
@@ -13,13 +31,20 @@ use crate::cause::cause;
 use crate::jose::{JwsError, JwsHeader, Signer, base64url};
 use crate::vc::{Jwt, JwtClaims};
 
+#[cfg(feature = "did-web")]
+mod check;
+
+#[cfg(feature = "did-web")]
+#[cfg_attr(docsrs, doc(cfg(feature = "did-web")))]
+pub use check::StatusListCheck;
+
 /// The `status` claim of a referenced token: at least one status mechanism, `status_list`
 /// being the one this crate implements.
 ///
 /// # Examples
 ///
 /// ```
-/// use identity_kit::sd_jwt_vc::{Status, StatusListRef};
+/// use identity_kit::status_list::{Status, StatusListRef};
 /// use serde_json::json;
 ///
 /// // Token Status List §6.2.
@@ -131,7 +156,7 @@ impl StatusListRef {
 /// # Examples
 ///
 /// ```
-/// use identity_kit::sd_jwt_vc::StatusType;
+/// use identity_kit::status_list::StatusType;
 /// use serde_json::json;
 ///
 /// assert_eq!(serde_json::to_value(StatusType::SUSPENDED)?, json!("SUSPENDED"));
@@ -335,7 +360,7 @@ pub enum StatusListError {
 /// # Examples
 ///
 /// ```
-/// use identity_kit::sd_jwt_vc::{StatusList, StatusType};
+/// use identity_kit::status_list::{StatusList, StatusType};
 /// use serde_json::json;
 ///
 /// // Token Status List §4.1: 16 statuses of 1 bit.
@@ -554,7 +579,7 @@ impl<'de> Deserialize<'de> for StatusList {
 ///
 /// ```
 /// use chrono::{TimeZone as _, Utc};
-/// use identity_kit::sd_jwt_vc::{StatusListRef, StatusListToken, StatusType};
+/// use identity_kit::status_list::{StatusListRef, StatusListToken, StatusType};
 /// use identity_kit::vc::Jwt;
 ///
 /// // Token Status List §8.2.

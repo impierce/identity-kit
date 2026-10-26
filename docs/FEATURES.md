@@ -92,8 +92,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `JwtCredentialValidator`, `JwtPresentationValidator`: issuer and holder binding, clock-skew leeway, `FailFast`, `StatusCheck` hook |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VCDM 2.0][vcdm20]         | [#11](https://github.com/impierce/identity-kit/issues/11) |
 | `JwtPresentationValidator::validate_v2`, `decode_presentation_v2`: VCDM 2.0 `vp+jwt` presentations of enveloped `vc+jwt` credentials |   ✅   | `vc`          | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose] | [#36](https://github.com/impierce/identity-kit/issues/36) |
 | Additional accepted header `typ` values per validation (`additional_typ`)                                   |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose] | [#34](https://github.com/impierce/identity-kit/issues/34) |
-| One format-agnostic `StatusCheck` over `CredentialStatus::{Vcdm, SdJwt}`, replacing `SdJwtStatusCheck`      |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [Token Status List][status-list] | [#55](https://github.com/impierce/identity-kit/issues/55) |
-| `status` claim of JWT credentials (Token Status List §6.1) checked beside `credentialStatus`, as `CredentialStatus::SdJwt` |   ✅   | `vc`, `sd-jwt` | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose], [Token Status List][status-list] | [#93](https://github.com/impierce/identity-kit/issues/93) |
+| One format-agnostic `StatusCheck` over `CredentialStatus::{Vcdm, StatusClaim}`, replacing `SdJwtStatusCheck` |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [Token Status List][status-list] | [#55](https://github.com/impierce/identity-kit/issues/55) |
+| `status` claim of JWT credentials (Token Status List §6.1) checked beside `credentialStatus`, as `CredentialStatus::StatusClaim` |   ✅   | `vc`, `status-list` | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose], [Token Status List][status-list] | [#93](https://github.com/impierce/identity-kit/issues/93) |
 | `ClaimPath` moved out of the `sd-jwt` feature, `utoipa` schema                                               |   ✅   | `vc`, `utoipa` | [SD-JWT VC §5.6.1][sd-jwt-vc], [OID4VP §7][oid4vp] | [#56](https://github.com/impierce/identity-kit/issues/56) |
 
 ### `sd_jwt_vc`: SD-JWT verifiable credentials
@@ -101,15 +101,21 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Feature                                                              | Status | Cargo feature | Specification                                  | Issue                                                     |
 | -------------------------------------------------------------------- | :----: | ------------- | ---------------------------------------------- | --------------------------------------------------------- |
 | Builder with first-class `jti`, parser, `SdJwtCredentialValidator`   |   ✅   | `sd-jwt`      | [RFC 9901][rfc9901], [SD-JWT VC][sd-jwt-vc]    | [#12](https://github.com/impierce/identity-kit/issues/12) |
-| `Status`, `StatusListRef`, `StatusMechanism`                         |   ✅   | `sd-jwt`      | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
-| `StatusType` serializes as its registered name or its number, `FromStr`, `utoipa` schema | ✅ | `sd-jwt`, `utoipa` | [Token Status List][status-list] | [#101](https://github.com/impierce/identity-kit/issues/101) |
 | Type metadata                                                        |   ✅   | `sd-jwt`      | [SD-JWT VC §6][sd-jwt-vc]                      | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | `SdJwtCredentialV2`: a VCDM 2.0 credential secured with SD-JWT (`vc+sd-jwt`, `application/vc+sd-jwt`), told apart from an SD-JWT VC by `typ` and payload | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `SdJwtCredentialV2Builder`: conceal credential properties, decoys, `cnf`, `status`, `iat`/`exp` beside `validFrom`/`validUntil` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `SdJwtCredentialValidator::validate_v2`: issuer binding, validity period, key binding, `credentialStatus` and `status` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901 §7][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `JwtPresentationValidator::validate_v2` and `decode_presentation_v2` unwrap `application/vc+sd-jwt` envelopes (`EnvelopedVc::to_sd_jwt`, `PresentedCredentialV2`), key binding required per `PresentationValidationOptions::key_binding` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.2][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | Key binding with the holder key from `cnf.kid` (resolved through `KeyReference`)      |   ✅   | `sd-jwt`      | [RFC 7800 §3.4][rfc7800]                       | [#53](https://github.com/impierce/identity-kit/issues/53) |
-| `StatusListCheck` asks for `application/statuslist+jwt`, reads gzip-encoded tokens and follows up to three redirects, each through the `HttpClient` (`HttpClient::get_accepting`, `HttpResponse::location`) | ✅ | `sd-jwt`, `reqwest` | [Token Status List][status-list] | [#102](https://github.com/impierce/identity-kit/issues/102) |
+
+### `status_list`: Token Status List
+
+| Feature                                                              | Status | Cargo feature | Specification                                  | Issue                                                     |
+| -------------------------------------------------------------------- | :----: | ------------- | ---------------------------------------------- | --------------------------------------------------------- |
+| `Status`, `StatusListRef`, `StatusMechanism`                         |   ✅   | `status-list` | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `StatusType` serializes as its registered name or its number, `FromStr`, `utoipa` schema | ✅ | `status-list`, `utoipa` | [Token Status List][status-list] | [#101](https://github.com/impierce/identity-kit/issues/101) |
+| `StatusListCheck` asks for `application/statuslist+jwt`, reads gzip-encoded tokens and follows up to three redirects, each through the `HttpClient` (`HttpClient::get_accepting`, `HttpResponse::location`) | ✅ | `status-list`, `reqwest` | [Token Status List][status-list] | [#102](https://github.com/impierce/identity-kit/issues/102) |
+| The Token Status List in its own module and feature, out of `sd_jwt_vc`: a `vc` build without `sd-jwt` checks the `status` claim of JWT credentials; deprecated aliases in `sd_jwt_vc` for one release | ✅ | `status-list` | [Token Status List][status-list] | [#132](https://github.com/impierce/identity-kit/issues/132) |
 
 ### `domain_linkage`: DID configuration
 
@@ -138,6 +144,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | Feature                                                                        | Status | Cargo feature | Specification                                | Issue                                                     |
 | ------------------------------------------------------------------------------ | :----: | ------------- | -------------------------------------------- | --------------------------------------------------------- |
 | OpenAPI schemas for the public types                                           |   ✅   | `utoipa`      | [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0) | [#14](https://github.com/impierce/identity-kit/issues/14) |
+| OpenAPI schemas for `JwsAlgorithm` and the credentials and presentations of `vc`: `Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp` |   ✅   | `utoipa`, `vc` | [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0), [VCDM 1.1][vcdm11], [VCDM 2.0][vcdm20] | [#122](https://github.com/impierce/identity-kit/issues/122) |
 | Re-exported conformance vectors (`vectors`)                                    |   ✅   | `test-vectors` |                                             | [#14](https://github.com/impierce/identity-kit/issues/14) |
 | CI proof of the layer boundary (`--no-default-features --features did-key,software` builds) |   ✅   |               |                                              | [#14](https://github.com/impierce/identity-kit/issues/14) |
 | `cargo hack --each-feature` and `cargo publish --dry-run` in CI; `cargo-semver-checks` through release-plz | ✅ | |                                        | [#14](https://github.com/impierce/identity-kit/issues/14) |
@@ -178,7 +185,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
-| [Token Status List][status-list]             | IETF draft  | `sd_jwt_vc`                               |
+| [Token Status List][status-list]             | IETF draft  | `status_list`                             |
 | [PKCS #11 v3.1][pkcs11]                      | OASIS       | `keys::pkcs11`                            |
 | [multicodec][multicodec], [multibase][multibase] | Multiformats | `methods::key`                        |
 

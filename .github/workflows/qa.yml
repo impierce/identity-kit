@@ -154,6 +154,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo install cargo-hack --locked
       - run: cargo hack clippy --each-feature --locked -- -D warnings
+      # The Token Status List without SD-JWT: the `status` claim of a JWT credential reaches the
+      # `StatusCheck` with `vc` and `status-list` alone.
+      - run: cargo test --no-default-features --features vc,status-list,did-key,did-jwk --locked --test vc_validation
 
   # The crate packages and builds from the package, with no git or path dependencies.
   publish:
