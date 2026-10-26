@@ -638,10 +638,12 @@ async fn produce_the_document_to_publish() {
         method.produce(&[], url("https://example.com")).await,
         Err(ProduceError::NoKeys)
     ));
-    assert!(matches!(
-        method.produce(&keys, url("http://example.com")).await,
-        Err(ProduceError::InvalidParams(_))
-    ));
+    let error = method
+        .produce(&keys, url("http://example.com"))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ProduceError::InvalidParams { .. }));
+    assert!(error.source().unwrap().is::<WebError>(), "{error}");
     assert!(matches!(
         method
             .produce(
@@ -652,10 +654,15 @@ async fn produce_the_document_to_publish() {
         Err(ProduceError::Document(_))
     ));
     let bad_kid = private.clone().with_kid("a b");
+    let error = method
+        .produce(&[bad_kid], url("https://example.com"))
+        .await
+        .unwrap_err();
     assert!(matches!(
-        method.produce(&[bad_kid], url("https://example.com")).await,
-        Err(ProduceError::UnsupportedKey { index: 0, .. })
+        error,
+        ProduceError::UnsupportedKey { index: 0, .. }
     ));
+    assert!(error.source().unwrap().is::<identity_kit::did::DidError>());
 }
 
 #[test]

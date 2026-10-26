@@ -398,7 +398,7 @@ async fn unusable_objects_are_invalid_keys() {
     assert!(store.exists(&odd).await.unwrap());
     let error = store.public_jwk(&odd).await.unwrap_err();
     assert!(
-        matches!(&error, KeyStoreError::InvalidKey { key, reason } if *key == odd && reason == "the curve is not P-256 or secp256k1"),
+        matches!(&error, KeyStoreError::InvalidKey { key, reason, source: None } if *key == odd && reason == "the curve is not P-256 or secp256k1"),
         "{error:?}"
     );
     assert!(matches!(

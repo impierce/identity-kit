@@ -94,12 +94,14 @@
 
 use core::fmt;
 use std::collections::BTreeMap;
+use std::error::Error;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use url::Url;
 
+use crate::cause::cause;
 use crate::did::{Did, DidDocument, DidUrl, ResolutionError, Service, ServiceEndpoint, Uri};
 use crate::jose::{DefaultVerifier, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError};
@@ -143,8 +145,13 @@ const ORIGINS: &str = "origins";
 /// ```
 pub fn configuration_url(origin: &Url) -> Result<Url, DomainLinkageError> {
     let origin = normalize_origin(origin.as_str())?;
-    Url::parse(&format!("{origin}{WELL_KNOWN_PATH}"))
-        .map_err(|e| DomainLinkageError::InvalidOrigin(format!("{origin}: {e}")))
+    Url::parse(&format!("{origin}{WELL_KNOWN_PATH}")).map_err(|e| {
+        invalid_origin(
+            &origin,
+            "its well-known URL does not parse",
+            Some(Box::new(e)),
+        )
+    })
 }
 
 /// `origin` as `scheme://host[:port]`, lowercased, with `https` assumed when no scheme is
@@ -161,23 +168,32 @@ pub fn normalize_origin(origin: &str) -> Result<String, DomainLinkageError> {
         format!("https://{origin}")
     };
     let url = Url::parse(&with_scheme)
-        .map_err(|e| DomainLinkageError::InvalidOrigin(format!("{origin:?}: {e}")))?;
+        .map_err(|e| invalid_origin(origin, "not a URL", Some(Box::new(e))))?;
     if url.host_str().is_none() {
-        return Err(DomainLinkageError::InvalidOrigin(format!(
-            "{origin:?} has no host"
-        )));
+        return Err(invalid_origin(origin, "no host", None));
     }
     let normalized = url.origin();
     if !normalized.is_tuple() {
-        return Err(DomainLinkageError::InvalidOrigin(format!(
-            "{origin:?} is not a domain origin"
-        )));
+        return Err(invalid_origin(origin, "not a domain origin", None));
     }
     let normalized = normalized.ascii_serialization();
     // The WHATWG URL parser accepts host characters RFC 3986 does not, such as `` ` ``.
     Uri::parse(&normalized)
-        .map_err(|e| DomainLinkageError::InvalidOrigin(format!("{origin:?}: {e}")))?;
+        .map_err(|e| invalid_origin(origin, "not an RFC 3986 URI", Some(Box::new(e))))?;
     Ok(normalized)
+}
+
+/// A [`DomainLinkageError::InvalidOrigin`] for `origin`.
+fn invalid_origin(
+    origin: &str,
+    reason: &str,
+    source: Option<Box<dyn Error + Send + Sync>>,
+) -> DomainLinkageError {
+    DomainLinkageError::InvalidOrigin {
+        origin: origin.to_owned(),
+        reason: reason.to_owned(),
+        source,
+    }
 }
 
 /// Whether `s` starts with a URI scheme (RFC 3986 §3.1) rather than a `host:port`.
@@ -220,18 +236,25 @@ pub fn service(
     id: DidUrl,
     origins: impl IntoIterator<Item = Url>,
 ) -> Result<Service, DomainLinkageError> {
-    let invalid = |reason: String| DomainLinkageError::InvalidService {
-        id: id.clone(),
-        reason,
+    let invalid = |reason: String, source: Option<Box<dyn Error + Send + Sync>>| {
+        DomainLinkageError::InvalidService {
+            id: id.clone(),
+            reason,
+            source,
+        }
     };
     let origins = origins
         .into_iter()
-        .map(|origin| normalize_origin(origin.as_str()).map_err(|e| invalid(e.to_string())))
+        .map(|origin| {
+            normalize_origin(origin.as_str())
+                .map_err(|e| invalid(format!("origin `{origin}` is invalid"), Some(Box::new(e))))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let endpoint = match origins.as_slice() {
-        [] => return Err(invalid("no origin".to_owned())),
+        [] => return Err(invalid("no origin".to_owned(), None)),
         [origin] => ServiceEndpoint::Uri(
-            Uri::parse(origin).map_err(|e| invalid(format!("`{origin}` is not a URI: {e}")))?,
+            Uri::parse(origin)
+                .map_err(|e| invalid(format!("`{origin}` is not a URI"), Some(Box::new(e))))?,
         ),
         _ => ServiceEndpoint::Map([(ORIGINS.to_owned(), Value::from(origins))].into()),
     };
@@ -306,36 +329,42 @@ pub fn services(
 fn linked_domains_service(
     service: &Service,
 ) -> Result<LinkedDomainsService<'_>, DomainLinkageError> {
-    let invalid = |reason: String| DomainLinkageError::InvalidService {
-        id: service.id.clone(),
-        reason,
+    let invalid = |reason: String, source: Option<Box<dyn Error + Send + Sync>>| {
+        DomainLinkageError::InvalidService {
+            id: service.id.clone(),
+            reason,
+            source,
+        }
     };
     let origins: Vec<&str> = match &service.service_endpoint {
         ServiceEndpoint::Map(map) => {
             let Some(Value::Array(origins)) = map.get(ORIGINS) else {
-                return Err(invalid(format!(
-                    "`serviceEndpoint` is a map without an `{ORIGINS}` array"
-                )));
+                return Err(invalid(
+                    format!("`serviceEndpoint` is a map without an `{ORIGINS}` array"),
+                    None,
+                ));
             };
             origins
                 .iter()
                 .map(|origin| {
                     origin
                         .as_str()
-                        .ok_or_else(|| invalid(format!("origin {origin} is not a string")))
+                        .ok_or_else(|| invalid(format!("origin {origin} is not a string"), None))
                 })
                 .collect::<Result<_, _>>()?
         }
         endpoint => endpoint.uris().map(Uri::as_str).collect(),
     };
     if origins.is_empty() {
-        return Err(invalid("no origin".to_owned()));
+        return Err(invalid("no origin".to_owned(), None));
     }
     let origins = origins
         .into_iter()
         .map(|origin| {
-            let normalized = normalize_origin(origin).map_err(|e| invalid(e.to_string()))?;
-            Url::parse(&normalized).map_err(|e| invalid(format!("{origin:?}: {e}")))
+            let normalized = normalize_origin(origin)
+                .map_err(|e| invalid(format!("origin {origin:?} is invalid"), Some(Box::new(e))))?;
+            Url::parse(&normalized)
+                .map_err(|e| invalid(format!("origin {origin:?} is not a URL"), Some(Box::new(e))))
         })
         .collect::<Result<_, _>>()?;
     Ok(LinkedDomainsService { service, origins })
@@ -663,9 +692,17 @@ impl DomainLinkageCredentialBuilder {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DomainLinkageError {
-    /// An origin is not `scheme://host[:port]`.
-    #[error("invalid origin: {0}")]
-    InvalidOrigin(String),
+    /// An origin is not `scheme://host[:port]`. The source is the URL or URI error, when
+    /// there is one.
+    #[error("invalid origin {origin:?}: {reason}{}", cause(.source.as_ref()))]
+    InvalidOrigin {
+        /// The origin, as given.
+        origin: String,
+        /// What is wrong with it.
+        reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
+    },
     /// The configuration's `@context` is not [`CONTEXT`].
     #[error("`@context` is {0:?}, not `{CONTEXT}`")]
     InvalidContext(String),
@@ -727,13 +764,17 @@ pub enum DomainLinkageError {
     /// position.
     #[error("no domain linkage credential validated: {}", format_errors(.0))]
     NoValidCredential(BTreeMap<usize, DomainLinkageError>),
-    /// A `LinkedDomains` service does not list one or more origins.
-    #[error("service `{id}`: {reason}")]
+    /// A `LinkedDomains` service does not list one or more origins. The source is the
+    /// [`InvalidOrigin`](Self::InvalidOrigin) error of an origin, or the URI or URL error, when
+    /// there is one.
+    #[error("service `{id}`: {reason}{}", cause(.source.as_ref()))]
     InvalidService {
         /// The id of the service.
         id: DidUrl,
         /// What is wrong with it.
         reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
     },
     /// The origin is not `https`, the only scheme the resource is fetched over.
     #[error("`{0}` is not an HTTPS origin")]

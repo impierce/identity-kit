@@ -369,7 +369,8 @@ impl DidProducer for DidKey {
         let jwk = super::single_key(keys)?;
         let did = Self::did(jwk).map_err(|error| ProduceError::UnsupportedKey {
             index: 0,
-            reason: error.to_string(),
+            reason: "it has no `did:key`".to_owned(),
+            source: Some(Box::new(error)),
         })?;
         let multikey = multikey_of(&did).expect("a produced did:key carries its Multikey");
         Ok(self.build(&did, multikey, jwk.public())?)
