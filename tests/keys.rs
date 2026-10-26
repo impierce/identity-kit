@@ -203,7 +203,7 @@ async fn rfc7517_a2_key_set_is_checked_key_by_key() {
     write_key_set(&path, RFC7517_A2);
     let err = SoftwareKeyStore::open(&path).unwrap_err();
     assert!(
-        matches!(&err, KeyStoreError::InvalidKeySet { path: p, reason } if p == &path && reason == "`use` is not `sig`"),
+        matches!(&err, KeyStoreError::InvalidKeySet { path: p, reason, source: None } if p == &path && reason == "`use` is not `sig`"),
         "{err}"
     );
 
@@ -442,7 +442,8 @@ fn opening_handles_missing_and_broken_files() {
         write_key_set(&path, content);
         let err = SoftwareKeyStore::open(&path).unwrap_err();
         assert!(
-            matches!(&err, KeyStoreError::InvalidKeySet { path: p, reason: r } if p == &path && r.contains(reason)),
+            matches!(&err, KeyStoreError::InvalidKeySet { path: p, .. } if p == &path)
+                && err.to_string().contains(reason),
             "{content}: {err}"
         );
     }
@@ -1334,4 +1335,51 @@ fn key_id_spec_and_capabilities_basics() {
     let err = KeyStoreError::backend(std::io::Error::other("hsm offline"));
     assert_eq!(err.to_string(), "key store backend error: hsm offline");
     assert!(std::error::Error::source(&err).is_some());
+}
+
+#[tokio::test]
+async fn unusable_keys_keep_their_cause() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SoftwareKeyStore::create(dir.path().join("keys.json")).unwrap();
+
+    // A P-256 scalar of zero is out of range: the ECDSA key error is the source.
+    let mut zero: Value = serde_json::from_str(RFC7515_A3_KEY).unwrap();
+    zero["d"] = json!(b64(&[0; 32]));
+    let zero: Jwk = serde_json::from_value(zero).unwrap();
+    let error = store.import(zero.with_kid("zero")).unwrap_err();
+    assert!(matches!(
+        &error,
+        KeyStoreError::InvalidKey { key, reason, source: Some(_) }
+            if key.as_str() == "zero" && reason == "invalid `d`"
+    ));
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<p256::ecdsa::Error>(),
+        "{error}"
+    );
+
+    // A key that only describes what is wrong has none.
+    let error = store
+        .import(jwk(RFC7515_A3_KEY).with_kid("enc").with_key_use("enc"))
+        .unwrap_err();
+    assert!(std::error::Error::source(&error).is_none(), "{error}");
+    assert_eq!(
+        KeyStoreError::invalid_key(KeyId::new("k"), "no `d`").to_string(),
+        "key `k` is unusable: no `d`"
+    );
+
+    // A key set file that is not JSON: the JSON error.
+    let path = dir.path().join("broken.json");
+    write_key_set(&path, "not json");
+    let error = SoftwareKeyStore::open(&path).unwrap_err();
+    assert!(matches!(
+        &error,
+        KeyStoreError::InvalidKeySet { reason, .. } if reason == "not a JWK set"
+    ));
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<serde_json::Error>()
+    );
 }

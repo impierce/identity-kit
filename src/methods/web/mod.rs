@@ -603,16 +603,19 @@ impl<C: HttpClient> DidProducer for DidWeb<C> {
         if keys.is_empty() {
             return Err(ProduceError::NoKeys);
         }
-        let did =
-            did_from_url(&url).map_err(|error| ProduceError::InvalidParams(error.to_string()))?;
+        let did = did_from_url(&url).map_err(|error| ProduceError::InvalidParams {
+            reason: "the URL is not a `did:web` location".to_owned(),
+            source: Some(Box::new(error)),
+        })?;
         let mut builder = DidDocument::builder(did.clone()).context(Context::uris(CONTEXT));
         for (index, key) in keys.iter().enumerate() {
             let id = match key.kid() {
                 Some(kid) => {
                     did.join(&format!("#{kid}"))
-                        .map_err(|_| ProduceError::UnsupportedKey {
+                        .map_err(|error| ProduceError::UnsupportedKey {
                             index,
                             reason: format!("`kid` {kid:?} is not a valid DID URL fragment"),
+                            source: Some(Box::new(error)),
                         })?
                 }
                 None => did.to_url().with_fragment(&format!("key-{index}")),

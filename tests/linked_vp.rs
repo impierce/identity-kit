@@ -904,10 +904,15 @@ fn service_entries() {
     // WHATWG leaves `|` unescaped in a path, which RFC 3986 does not allow in a URI.
     let piped = url("https://holder.example/a|b");
     assert_eq!(piped.as_str(), "https://holder.example/a|b");
-    assert!(matches!(
-        service(id.clone(), [piped]),
-        Err(LinkedVpError::InvalidService { reason, .. }) if reason.contains("is not a URI")
-    ));
+    let error = service(id.clone(), [piped]).unwrap_err();
+    assert!(
+        matches!(&error, LinkedVpError::InvalidService { reason, .. } if reason.contains("is not a URI"))
+    );
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<identity_kit::did::DidError>()
+    );
 
     let mut document = DidDocument::new(Did::parse(EXAMPLE_DID).unwrap());
     document.insert_service(two).unwrap();
@@ -1015,10 +1020,18 @@ async fn fetch_failures() {
     );
     for path in ["binary", "text", "empty"] {
         let target = url(&format!("https://holder.example/{path}"));
+        let error = client.fetch(&target).await.unwrap_err();
         assert!(
-            matches!(client.fetch(&target).await, Err(LinkedVpError::InvalidBody { url, .. }) if url == target),
+            matches!(&error, LinkedVpError::InvalidBody { url, .. } if *url == target),
             "{path}"
         );
+        // The UTF-8 error of a binary body, the `JwsError` of a text that is not a JWS.
+        let source = std::error::Error::source(&error).unwrap();
+        if path == "binary" {
+            assert!(source.is::<core::str::Utf8Error>(), "{error}");
+        } else {
+            assert!(source.is::<identity_kit::jose::JwsError>(), "{error}");
+        }
     }
     // Plain HTTP and other schemes are refused without a request.
     for refused in ["http://holder.example/vp.jwt", IPFS_URL] {

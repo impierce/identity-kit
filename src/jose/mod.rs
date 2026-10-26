@@ -46,7 +46,7 @@ mod verifier;
 
 pub use algorithm::{JwsAlgorithm, UnknownAlgorithm};
 pub use claims::JwtClaims;
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 pub(crate) use claims::numeric_date;
 pub use compact::{CompactJws, JwsHeader, Signer, encode_compact};
 pub use ecdsa::{ecdsa_signature_from_der, normalize_ecdsa_signature};
