@@ -40,12 +40,16 @@ use crate::jose::{
 /// # Examples
 ///
 /// An authorization server signs an access token with the Ed25519 key of RFC 8037 Appendix
-/// A.1, which a resource server trusts by value.
+/// A.1, naming it by a DID URL while its `iss` is its HTTPS URL. The resource server pins that
+/// one key: its resolver knows no other, so the key need not belong to `iss`. A resolver that
+/// returns any key a token carries, such as [`JwkResolver`](super::JwkResolver), must never be
+/// combined with [`IssuerBinding::Any`]: anyone could sign with their own key.
 ///
 /// ```
 /// use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwtClaims, SignError, Signer, encode_compact};
 /// use identity_kit::resolver::{
-///     IssuerBinding, JwkResolver, JwtValidationError, JwtValidationOptions, JwtValidator,
+///     IssuerBinding, JwtValidationError, JwtValidationOptions, JwtValidator, KeyReference,
+///     KeyResolutionError, KeyResolver, KeyRole,
 /// };
 ///
 /// struct Server(ed25519_dalek::SigningKey);
@@ -60,6 +64,19 @@ use crate::jose::{
 ///     }
 /// }
 ///
+/// /// The authorization server's one key, under the one DID URL it signs with.
+/// struct Pinned(Jwk);
+///
+/// #[async_trait::async_trait]
+/// impl KeyResolver for Pinned {
+///     async fn resolve_key(&self, key: &KeyReference, _: KeyRole) -> Result<Jwk, KeyResolutionError> {
+///         match key {
+///             KeyReference::DidUrl(url) if url.as_str() == "did:example:as#key-1" => Ok(self.0.clone()),
+///             other => Err(KeyResolutionError::unsupported(other)),
+///         }
+///     }
+/// }
+///
 /// # tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
 /// let secret = [
 ///     0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
@@ -68,8 +85,9 @@ use crate::jose::{
 /// let server = Server(ed25519_dalek::SigningKey::from_bytes(&secret));
 /// let key = Jwk::from_ed25519_public(server.0.verifying_key().as_bytes())?;
 ///
-/// let mut header = JwsHeader::new(JwsAlgorithm::EdDSA).with_typ("at+jwt");
-/// header.jwk = Some(key.clone());
+/// let header = JwsHeader::new(JwsAlgorithm::EdDSA)
+///     .with_typ("at+jwt")
+///     .with_kid("did:example:as#key-1");
 /// let mut claims = JwtClaims::new()
 ///     .with_iss("https://as.example.com")
 ///     .with_sub("5ba552d67")
@@ -81,8 +99,8 @@ use crate::jose::{
 /// claims.exp = Some(1_700_003_600);
 /// let token = encode_compact(&header, &serde_json::to_vec(&claims)?, &server).await?;
 ///
-/// // The resource server trusts this one key, so the key need not belong to `iss`.
-/// let validator = JwtValidator::new(JwkResolver, DefaultVerifier);
+/// // The key is the pinned one, not the DID of `iss`, so the binding is waived.
+/// let validator = JwtValidator::new(Pinned(key.clone()), DefaultVerifier);
 /// let options = JwtValidationOptions::new()
 ///     .with_typ("at+jwt")
 ///     .with_algorithm(JwsAlgorithm::EdDSA)
@@ -94,6 +112,16 @@ use crate::jose::{
 /// let validated = validator.validate(&token, &options).await?;
 /// assert_eq!(validated.claims.sub.as_deref(), Some("5ba552d67"));
 /// assert_eq!(validated.key, key);
+///
+/// // A token naming any other key is refused.
+/// let forged = encode_compact(
+///     &JwsHeader::new(JwsAlgorithm::EdDSA).with_typ("at+jwt").with_kid("did:example:attacker#key-1"),
+///     &serde_json::to_vec(&claims)?,
+///     &server,
+/// )
+/// .await?;
+/// let error = validator.validate(&forged, &options).await.unwrap_err();
+/// assert!(matches!(error, JwtValidationError::KeyResolution { .. }));
 ///
 /// // An hour and a minute later it has expired.
 /// let error = validator.validate(&token, &options.at(1_700_003_660)).await.unwrap_err();
@@ -282,6 +310,11 @@ pub enum IssuerBinding {
     /// Any key the [`KeyResolver`] resolves is accepted, whatever `iss` says: for a resolver
     /// that only resolves keys the application trusts, such as an authorization server's
     /// signing keys behind a `kid` that is a DID URL of a DID other than its `iss` URL.
+    ///
+    /// Never with a resolver that returns a key the token itself carries, such as
+    /// [`JwkResolver`](super::JwkResolver) for a `jwk` header, or one that resolves any DID:
+    /// the issuer binding is then the only thing tying the key to `iss`, and without it anyone
+    /// can sign a token with their own key.
     Any,
 }
 
