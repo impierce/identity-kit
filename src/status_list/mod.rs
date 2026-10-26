@@ -1,5 +1,11 @@
-//! The IETF Token Status List (draft-ietf-oauth-status-list): the `status` claim of a
+//! The IETF Token Status List ([draft-ietf-oauth-status-list-21]): the `status` claim of a
 //! referenced token, the status list and the status list token.
+//!
+//! Section numbers below are those of draft 21. The module implements its JSON and JWT
+//! formats. It does not implement the CBOR and CWT formats (§4.3, §5.2, §6.3), historical
+//! resolution (§8.4), following an `aggregation_uri` (§9, though [`StatusList`] carries
+//! one), caching by `ttl` (§13.7, though [`StatusListToken`] carries it) or the X.509
+//! extended key usage (§10).
 //!
 //! The draft defines the `status` claim for any JWT (§6.1), so the module serves every
 //! credential format of the crate: SD-JWT VCs and VCDM 2.0 credentials secured with SD-JWT
@@ -18,6 +24,7 @@
 //!   token a reference names over an `HttpClient` and verifies it (§8).
 //!
 //! [`StatusCheck`]: crate::vc::validation::StatusCheck
+//! [draft-ietf-oauth-status-list-21]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-21
 
 use core::fmt;
 use core::str::FromStr;
