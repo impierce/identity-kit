@@ -1,11 +1,12 @@
 //! The OpenAPI schemas of the `utoipa` feature accept the specifications' own examples (DID
-//! Core documents, RFC 7517 keys, the DIF DID configuration resource, SD-JWT VC type
-//! metadata) and the documents this crate produces, and reject what the types reject.
+//! Core documents, RFC 7517 keys, the DIF DID configuration resource, VCDM 1.1 and 2.0
+//! credentials and presentations, SD-JWT VC type metadata) and the documents this crate
+//! produces, and reject what the types reject.
 #![cfg(feature = "utoipa")]
 
 use boon::{Compiler, Draft, SchemaIndex, Schemas};
 use identity_kit::did::{DidDocument, MethodRef, Service, VerificationMethod};
-use identity_kit::jose::Jwk;
+use identity_kit::jose::{Jwk, JwsAlgorithm};
 use serde_json::{Map, Value, json};
 use utoipa::ToSchema;
 use utoipa::openapi::{RefOr, Schema};
@@ -24,10 +25,23 @@ fn openapi() -> Value {
     let mut schemas = Vec::new();
     add::<DidDocument>(&mut schemas);
     add::<Jwk>(&mut schemas);
+    add::<JwsAlgorithm>(&mut schemas);
     #[cfg(feature = "domain-linkage")]
     add::<identity_kit::domain_linkage::DomainLinkageConfiguration>(&mut schemas);
     #[cfg(feature = "vc")]
     add::<identity_kit::vc::ClaimPath>(&mut schemas);
+    #[cfg(feature = "vc")]
+    {
+        use identity_kit::vc::{
+            Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation, PresentationV2,
+        };
+        add::<Credential>(&mut schemas);
+        add::<Presentation>(&mut schemas);
+        add::<CredentialV2>(&mut schemas);
+        add::<PresentationV2>(&mut schemas);
+        add::<EnvelopedVc>(&mut schemas);
+        add::<EnvelopedVp>(&mut schemas);
+    }
     #[cfg(feature = "sd-jwt")]
     add::<identity_kit::sd_jwt_vc::TypeMetadata>(&mut schemas);
     #[cfg(feature = "sd-jwt")]
@@ -268,13 +282,24 @@ fn every_schema_compiles_with_its_references_resolved() {
         "MethodRef",
         "Service",
         "Jwk",
+        "JwsAlgorithm",
     ] {
         assert!(components.contains_key(name), "{name}");
     }
     #[cfg(feature = "domain-linkage")]
     assert!(components.contains_key("DomainLinkageConfiguration"));
     #[cfg(feature = "vc")]
-    assert!(components.contains_key("ClaimPath"));
+    for name in [
+        "ClaimPath",
+        "Credential",
+        "Presentation",
+        "CredentialV2",
+        "PresentationV2",
+        "EnvelopedVc",
+        "EnvelopedVp",
+    ] {
+        assert!(components.contains_key(name), "{name}");
+    }
     #[cfg(feature = "sd-jwt")]
     for name in [
         "TypeMetadata",
@@ -327,10 +352,23 @@ fn every_schema_names_the_schemas_it_refers_to() {
     alone::<MethodRef>();
     alone::<Service>();
     alone::<Jwk>();
+    alone::<JwsAlgorithm>();
     #[cfg(feature = "domain-linkage")]
     alone::<identity_kit::domain_linkage::DomainLinkageConfiguration>();
     #[cfg(feature = "vc")]
     alone::<identity_kit::vc::ClaimPath>();
+    #[cfg(feature = "vc")]
+    {
+        use identity_kit::vc::{
+            Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation, PresentationV2,
+        };
+        alone::<Credential>();
+        alone::<Presentation>();
+        alone::<CredentialV2>();
+        alone::<PresentationV2>();
+        alone::<EnvelopedVc>();
+        alone::<EnvelopedVp>();
+    }
     #[cfg(feature = "sd-jwt")]
     alone::<identity_kit::sd_jwt_vc::TypeMetadata>();
     #[cfg(feature = "sd-jwt")]
@@ -661,4 +699,257 @@ fn status_type_schema() {
     ] {
         validator.rejects(&rejected);
     }
+}
+
+#[test]
+fn jws_algorithm_schema() {
+    let validator = Validator::of("JwsAlgorithm");
+    for alg in JwsAlgorithm::ALL {
+        validator.accepts(&serde_json::to_string(alg).unwrap());
+    }
+    // The symmetric and unsecured algorithms the type refuses.
+    for invalid in ["HS256", "none", "es256", ""] {
+        validator.rejects(&json!(invalid));
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Verifiable credentials and presentations
+// ---------------------------------------------------------------------------------------------
+
+/// VCDM 1.1 Example 1, with the `proof` as the example shows it.
+#[cfg(feature = "vc")]
+const VCDM_11_EXAMPLE_1: &str = r#"{
+  "@context": [
+    "https://www.w3.org/2018/credentials/v1",
+    "https://www.w3.org/2018/credentials/examples/v1"
+  ],
+  "id": "http://example.edu/credentials/1872",
+  "type": ["VerifiableCredential", "AlumniCredential"],
+  "issuer": "https://example.edu/issuers/565049",
+  "issuanceDate": "2010-01-01T19:23:24Z",
+  "credentialSubject": {
+    "id": "did:example:ebfeb1f712ebc6f1c276e12ec21",
+    "alumniOf": {
+      "id": "did:example:c276e12ec21ebfeb1f712ebc6f1",
+      "name": [{
+        "value": "Example University",
+        "lang": "en"
+      }, {
+        "value": "Exemple d'Université",
+        "lang": "fr"
+      }]
+    }
+  },
+  "proof": {
+    "type": "RsaSignature2018",
+    "created": "2017-06-18T21:19:10Z",
+    "proofPurpose": "assertionMethod",
+    "verificationMethod": "https://example.edu/issuers/565049#key-1",
+    "jws": "eyJhbGciOiJSUzI1NiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..TCYt5XsITJX1CxPCT8yAV-TVkIEq_PbChOMqsLfRoPsnsgw5WEuts01mq-pQy7UJiN5mgRxD-WUcX16dUEMGlv50aqzpqh4Qktb3rk-BuQy72IFLOqV0G_zS245-kronKb78cPN25DGlcTwLtjPAYuNzVBAh4vGHSrQyHUdBBPM"
+  }
+}"#;
+
+/// VCDM 1.1 Example 31 as a JWT (the credential inside Example 33).
+#[cfg(feature = "vc")]
+const EXAMPLE_31: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImRpZDpleGFtcGxlOmFiZmUxM2Y3MTIxMjA0MzFjMjc2ZTEyZWNhYiNr\
+    ZXlzLTEifQ.eyJzdWIiOiJkaWQ6ZXhhbXBsZTplYmZlYjFmNzEyZWJjNmYxYzI3NmUxMmVjMjEiLCJqdGkiOiJodHRwOi8vZXhhb\
+    XBsZS5lZHUvY3JlZGVudGlhbHMvMzczMiIsImlzcyI6Imh0dHBzOi8vZXhhbXBsZS5jb20va2V5cy9mb28uandrIiwibmJmIjoxN\
+    TQxNDkzNzI0LCJpYXQiOjE1NDE0OTM3MjQsImV4cCI6MTU3MzAyOTcyMywibm9uY2UiOiI2NjAhNjM0NUZTZXIiLCJ2YyI6eyJAY\
+    29udGV4dCI6WyJodHRwczovL3d3dy53My5vcmcvMjAxOC9jcmVkZW50aWFscy92MSIsImh0dHBzOi8vd3d3LnczLm9yZy8yMDE4L\
+    2NyZWRlbnRpYWxzL2V4YW1wbGVzL3YxIl0sInR5cGUiOlsiVmVyaWZpYWJsZUNyZWRlbnRpYWwiLCJVbml2ZXJzaXR5RGVncmVlQ\
+    3JlZGVudGlhbCJdLCJjcmVkZW50aWFsU3ViamVjdCI6eyJkZWdyZWUiOnsidHlwZSI6IkJhY2hlbG9yRGVncmVlIiwibmFtZSI6I\
+    jxzcGFuIGxhbmc9J2ZyLUNBJz5CYWNjYWxhdXLDqWF0IGVuIG11c2lxdWVzIG51bcOpcmlxdWVzPC9zcGFuPiJ9fX19.KLJo5GAy\
+    BND3LDTn9H7FQokEsUEi8jKwXhGvoN3JtRa51xrNDgXDb0cq1UTYB-rK4Ft9YVmR1NI_ZOF8oGc_7wAp8PHbF2HaWodQIoOBxxT-\
+    4WNqAxft7ET6lkH-4S6Ux3rSGAmczMohEEf8eCeN-jC8WekdPl6zKZQj0YPB1rx6X0-xlFBs7cl6Wt8rfBP_tZ9YgVWrQmUWypSi\
+    oc0MUyiphmyEbLZagTyPlUyflGlEdqrZAv6eSe6RtxJy6M1-lD7a5HTzanYTWBPAUHDZGyGKXdJw-W_x0IWChBzI8t3kpG253fg6\
+    V3tPgHeKXE94fz_QpYfg--7kLsyBAfQGbg";
+
+/// VC-JOSE-COSE "Securing JSON-LD Verifiable Credentials with JOSE": the credential.
+#[cfg(feature = "vc")]
+const VC_JOSE_COSE_CREDENTIAL: &str = r#"{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://www.w3.org/ns/credentials/examples/v2"
+  ],
+  "id": "http://university.example/credentials/3732",
+  "type": ["VerifiableCredential", "ExampleDegreeCredential", "ExamplePersonCredential"],
+  "issuer": "https://university.example/issuers/14",
+  "validFrom": "2010-01-01T19:23:24Z",
+  "credentialSubject": {
+    "id": "did:example:ebfeb1f712ebc6f1c276e12ec21",
+    "degree": {
+      "type": "ExampleBachelorDegree",
+      "name": "Bachelor of Science and Arts"
+    },
+    "alumniOf": {
+      "name": "Example University"
+    }
+  },
+  "credentialSchema": [{
+    "id": "https://example.org/examples/degree.json",
+    "type": "JsonSchema"
+  },
+  {
+    "id": "https://example.org/examples/alumni.json",
+    "type": "JsonSchema"
+  }]
+}"#;
+
+/// VC-JOSE-COSE "Securing JSON-LD Verifiable Presentations with JOSE": the presentation JWT,
+/// whose payload holds an enveloped credential.
+#[cfg(feature = "vc")]
+const VC_JOSE_COSE_PRESENTATION_JWT: &str =
+    include_str!("vectors/vc_jose_cose/enveloped_presentation_jwt.txt");
+
+#[cfg(feature = "vc")]
+#[test]
+fn vcdm_11_examples_validate() {
+    use identity_kit::jose::CompactJws;
+    use identity_kit::vc::{Credential, JwtClaims, Presentation};
+
+    let credentials = Validator::of("Credential");
+    credentials.accepts(VCDM_11_EXAMPLE_1);
+    let credential: Credential = serde_json::from_str(VCDM_11_EXAMPLE_1).unwrap();
+    credentials.accepts(&serde_json::to_string(&credential).unwrap());
+
+    // Example 31: the credential its JWT claims map back to.
+    let claims: JwtClaims = CompactJws::decode(EXAMPLE_31).unwrap().claims().unwrap();
+    let credential = Credential::from_jwt_claims(&claims).unwrap();
+    credentials.accepts(&serde_json::to_string(&credential).unwrap());
+
+    // Example 33: the `vp` claim, with Example 31 for its `"..."`, and the presentation the
+    // crate maps it to.
+    let presentations = Validator::of("Presentation");
+    let vp = json!({
+        "@context": [
+            "https://www.w3.org/2018/credentials/v1",
+            "https://www.w3.org/2018/credentials/examples/v1"
+        ],
+        "type": ["VerifiablePresentation", "CredentialManagerPresentation"],
+        "verifiableCredential": [EXAMPLE_31]
+    });
+    presentations.accepts(&vp.to_string());
+    let claims: JwtClaims = serde_json::from_value(json!({
+        "iss": "did:example:ebfeb1f712ebc6f1c276e12ec21",
+        "jti": "urn:uuid:3978344f-8596-4c3a-a978-8fcaba3903c5",
+        "vp": vp
+    }))
+    .unwrap();
+    let presentation = Presentation::from_jwt_claims(&claims).unwrap();
+    presentations.accepts(&serde_json::to_string(&presentation).unwrap());
+}
+
+#[cfg(feature = "vc")]
+#[test]
+fn vcdm_20_examples_validate() {
+    use identity_kit::jose::CompactJws;
+    use identity_kit::vc::{CredentialV2, EnvelopedVp, Jwt, PresentationV2};
+
+    let credentials = Validator::of("CredentialV2");
+    credentials.accepts(VC_JOSE_COSE_CREDENTIAL);
+    let credential: CredentialV2 = serde_json::from_str(VC_JOSE_COSE_CREDENTIAL).unwrap();
+    credentials.accepts(&serde_json::to_string(&credential).unwrap());
+
+    // The presentation payload, its enveloped credential, and the credential inside it.
+    let jws = CompactJws::decode(VC_JOSE_COSE_PRESENTATION_JWT.trim()).unwrap();
+    let payload: Value = jws.claims().unwrap();
+    Validator::of("PresentationV2").accepts(&payload.to_string());
+    let presentation: PresentationV2 = serde_json::from_value(payload.clone()).unwrap();
+    Validator::of("PresentationV2").accepts(&serde_json::to_string(&presentation).unwrap());
+
+    // The envelope as published, whose `data:` URL repeats the credential JWT after a `;`
+    // (`tests/vc_v2.rs` reads the first copy).
+    let envelopes = Validator::of("EnvelopedVc");
+    for envelope in payload["verifiableCredential"].as_array().unwrap() {
+        envelopes.accepts(&envelope.to_string());
+    }
+
+    // The presentation JWT, enveloped in turn.
+    let presentation_envelope =
+        EnvelopedVp::from_jwt(&Jwt::new(VC_JOSE_COSE_PRESENTATION_JWT.trim()).unwrap());
+    Validator::of("EnvelopedVp").accepts(&serde_json::to_string(&presentation_envelope).unwrap());
+}
+
+#[cfg(feature = "vc")]
+#[test]
+fn credentials_the_types_reject_are_rejected() {
+    let example: Value = serde_json::from_str(VCDM_11_EXAMPLE_1).unwrap();
+    let without = |member: &str| {
+        let mut value = example.clone();
+        value.as_object_mut().unwrap().remove(member);
+        value
+    };
+    let with = |member: &str, replacement: Value| {
+        let mut value = example.clone();
+        value[member] = replacement;
+        value
+    };
+    let credentials = Validator::of("Credential");
+    for invalid in [
+        without("@context"),
+        without("type"),
+        without("issuer"),
+        without("issuanceDate"),
+        without("credentialSubject"),
+        // A context that does not begin with the VCDM 1.1 one.
+        with("@context", json!("https://www.w3.org/ns/credentials/v2")),
+        with(
+            "@context",
+            json!([
+                "https://www.w3.org/2018/credentials/examples/v1",
+                "https://www.w3.org/2018/credentials/v1"
+            ]),
+        ),
+        with("@context", json!([])),
+        // An issuer object without `id`, or not a string or object.
+        with("issuer", json!({ "name": "Example University" })),
+        with("issuer", json!(42)),
+        // No subject.
+        with("credentialSubject", json!([])),
+        // A status entry without `type`.
+        with(
+            "credentialStatus",
+            json!({ "id": "https://example.edu/status/24" }),
+        ),
+    ] {
+        credentials.rejects(&invalid);
+    }
+
+    // VCDM 2.0: the 1.1 context, no subject, no issuer.
+    let example: Value = serde_json::from_str(VC_JOSE_COSE_CREDENTIAL).unwrap();
+    let credentials = Validator::of("CredentialV2");
+    let mut v1 = example.clone();
+    v1["@context"] = json!(["https://www.w3.org/2018/credentials/v1"]);
+    credentials.rejects(&v1);
+    for member in ["credentialSubject", "issuer", "type"] {
+        let mut value = example.clone();
+        value.as_object_mut().unwrap().remove(member);
+        credentials.rejects(&value);
+    }
+
+    // A VCDM 1.1 presentation carries credentials as JWTs.
+    let presentations = Validator::of("Presentation");
+    presentations.rejects(&json!({
+        "@context": "https://www.w3.org/2018/credentials/v1",
+        "type": "VerifiablePresentation",
+        "verifiableCredential": [example]
+    }));
+    presentations.rejects(&json!({
+        "@context": "https://www.w3.org/2018/credentials/v1",
+        "type": "VerifiablePresentation",
+        "verifiableCredential": ["not a JWT"]
+    }));
+
+    // An envelope's `id` is a `data:` URL, and it has every member.
+    let envelopes = Validator::of("EnvelopedVc");
+    envelopes.rejects(&json!({
+        "@context": "https://www.w3.org/ns/credentials/v2",
+        "id": "https://example.com/credential",
+        "type": "EnvelopedVerifiableCredential"
+    }));
+    envelopes.rejects(&json!({
+        "@context": "https://www.w3.org/ns/credentials/v2",
+        "type": "EnvelopedVerifiableCredential"
+    }));
 }

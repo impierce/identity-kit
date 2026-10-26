@@ -1,7 +1,9 @@
 //! OpenAPI schemas for the JSON types (feature `utoipa`): [`utoipa::ToSchema`] for
 //! [`DidDocument`], [`VerificationMethod`], [`MethodRef`], [`Service`], [`Jwk`],
-//! `DomainLinkageConfiguration`, `ClaimPath`, `TypeMetadata` with its display and claim
-//! metadata, and `StatusType`.
+//! [`JwsAlgorithm`], `DomainLinkageConfiguration`, the credentials and presentations of `vc`
+//! (`Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`,
+//! `EnvelopedVp`), `ClaimPath`, `TypeMetadata` with its display and claim metadata, and
+//! `StatusType`.
 //!
 //! The schemas are written by hand rather than derived: every type carries open extension
 //! properties and custom serialization that a derive cannot express. Each schema describes the
@@ -18,7 +20,7 @@ use utoipa::openapi::schema::{
 use utoipa::{PartialSchema, ToSchema};
 
 use crate::did::{DidDocument, MethodRef, Service, VerificationMethod};
-use crate::jose::Jwk;
+use crate::jose::{Jwk, JwsAlgorithm};
 
 /// DID Core §3.1 as a regular expression: `did:`, a method name of lowercase letters and
 /// digits, then a method-specific id of `idchar`s and `:` that does not end in `:`.
@@ -387,6 +389,25 @@ impl ToSchema for Jwk {
     }
 }
 
+#[cfg_attr(docsrs, doc(cfg(feature = "utoipa")))]
+impl PartialSchema for JwsAlgorithm {
+    fn schema() -> RefOr<Schema> {
+        string(
+            "A JWS algorithm (RFC 7518 §3.1, RFC 8037, RFC 8812): its registered name, among \
+             the asymmetric algorithms this crate speaks.",
+        )
+        .enum_values(Some(JwsAlgorithm::ALL.iter().map(|alg| alg.as_str())))
+        .into()
+    }
+}
+
+#[cfg_attr(docsrs, doc(cfg(feature = "utoipa")))]
+impl ToSchema for JwsAlgorithm {
+    fn name() -> Cow<'static, str> {
+        Cow::Borrowed("JwsAlgorithm")
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // DIF Well Known DID Configuration
 // ---------------------------------------------------------------------------------------------
@@ -437,6 +458,365 @@ impl PartialSchema for crate::domain_linkage::DomainLinkageConfiguration {
 impl ToSchema for crate::domain_linkage::DomainLinkageConfiguration {
     fn name() -> Cow<'static, str> {
         Cow::Borrowed("DomainLinkageConfiguration")
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Verifiable credentials and presentations
+// ---------------------------------------------------------------------------------------------
+
+#[cfg(feature = "vc")]
+mod credentials {
+    use super::{
+        AdditionalProperties, ArrayBuilder, Cow, ObjectBuilder, OneOfBuilder, PartialSchema, RefOr,
+        Schema, SchemaFormat, SchemaType, Schemas, ToSchema, array, collect, one_of, schema_ref,
+        string, string_or_strings, uri,
+    };
+    use crate::vc::{
+        CONTEXT_V1, CONTEXT_V2, Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation,
+        PresentationV2,
+    };
+
+    /// A compact JWS: three base64url parts joined by dots.
+    const JWS_PATTERN: &str = r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*$";
+
+    /// `@context` beginning with `base`: the URI alone, or an array of URIs and objects whose
+    /// first element is it.
+    fn context(base: &'static str, section: &str) -> OneOfBuilder {
+        one_of(
+            [
+                string("The base context alone.")
+                    .enum_values(Some([base]))
+                    .into(),
+                ArrayBuilder::new()
+                    .prefix_items([Schema::from(
+                        string("The base context.").enum_values(Some([base])),
+                    )])
+                    .items(ObjectBuilder::new().schema_type(SchemaType::AnyValue))
+                    .min_items(Some(1))
+                    .description(Some("The base context first, then further contexts."))
+                    .into(),
+            ],
+            &format!("The JSON-LD context, carried as data ({section}); it begins with `{base}`."),
+        )
+    }
+
+    /// The `type` of an object that must include `required`.
+    fn types(required: &str, section: &str) -> OneOfBuilder {
+        string_or_strings(
+            "A type.",
+            &format!("The types ({section}), including `{required}`."),
+        )
+    }
+
+    fn date_time(description: &str) -> ObjectBuilder {
+        string(description).format(Some(SchemaFormat::KnownFormat(
+            utoipa::openapi::KnownFormat::DateTime,
+        )))
+    }
+
+    /// An issuer or holder: its URI, or an object with its URI as `id`.
+    fn party(description: &str) -> OneOfBuilder {
+        one_of(
+            [
+                uri("The identifier.").into(),
+                ObjectBuilder::new()
+                    .property("id", uri("The identifier."))
+                    .required("id")
+                    .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+                    .description(Some("The identifier with further properties."))
+                    .into(),
+            ],
+            description,
+        )
+    }
+
+    fn subject() -> ObjectBuilder {
+        ObjectBuilder::new()
+            .property("id", uri("The identifier of the subject."))
+            .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+            .description(Some("A subject and the claims about it."))
+    }
+
+    /// One subject, or a non-empty array of them.
+    fn subjects(section: &str) -> OneOfBuilder {
+        one_of(
+            [
+                subject().into(),
+                array(subject(), "")
+                    .min_items(Some(1))
+                    .description(None::<String>)
+                    .into(),
+            ],
+            &format!("The subjects and the claims about them ({section})."),
+        )
+    }
+
+    /// An object with a `type`, such as a `credentialStatus` entry.
+    fn typed(description: &str) -> ObjectBuilder {
+        ObjectBuilder::new()
+            .property("id", uri("The identifier."))
+            .property("type", string_or_strings("A type.", "The types."))
+            .required("type")
+            .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+            .description(Some(description))
+    }
+
+    /// One typed object, or an array of them.
+    fn typed_one_or_many(item: &str, description: &str) -> OneOfBuilder {
+        one_of(
+            [
+                typed(item).into(),
+                array(typed(item), "").description(None::<String>).into(),
+            ],
+            description,
+        )
+    }
+
+    /// A string, a language value object, or an array of language value objects (VCDM 2.0
+    /// §11.1).
+    fn language_value(description: &str) -> ObjectBuilder {
+        ObjectBuilder::new()
+            .schema_type(SchemaType::AnyValue)
+            .description(Some(description))
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for Credential {
+        fn schema() -> RefOr<Schema> {
+            ObjectBuilder::new()
+                .description(Some(
+                    "A verifiable credential of the VC Data Model 1.1 (§4), as the `vc` claim \
+                     of a JWT carries it once `iss`, `jti`, `nbf`, `exp` and `sub` are mapped \
+                     back.",
+                ))
+                .property("@context", context(CONTEXT_V1, "VCDM 1.1 §4.1"))
+                .required("@context")
+                .property("id", uri("The identifier of the credential (VCDM 1.1 §4.2)."))
+                .property("type", types(Credential::TYPE, "VCDM 1.1 §4.3"))
+                .required("type")
+                .property("issuer", party("The issuer (VCDM 1.1 §4.5)."))
+                .required("issuer")
+                .property(
+                    "issuanceDate",
+                    date_time("When the credential becomes valid (VCDM 1.1 §4.6)."),
+                )
+                .required("issuanceDate")
+                .property(
+                    "expirationDate",
+                    date_time("When the credential ceases to be valid (VCDM 1.1 §4.8)."),
+                )
+                .property("credentialSubject", subjects("VCDM 1.1 §4.4"))
+                .required("credentialSubject")
+                .property(
+                    "credentialStatus",
+                    typed("Where to learn whether the credential is revoked or suspended (VCDM 1.1 §4.9)."),
+                )
+                .property(
+                    "credentialSchema",
+                    typed_one_or_many("A data schema.", "Data schemas (VCDM 1.1 §5.4)."),
+                )
+                .property(
+                    "refreshService",
+                    typed_one_or_many("A refresh service.", "Refresh services (VCDM 1.1 §5.6)."),
+                )
+                .property(
+                    "termsOfUse",
+                    typed_one_or_many("Terms of use.", "Terms of use (VCDM 1.1 §5.7)."),
+                )
+                .property(
+                    "evidence",
+                    typed_one_or_many("Evidence.", "Evidence (VCDM 1.1 §5.8)."),
+                )
+                .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+                .into()
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for Credential {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("Credential")
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for Presentation {
+        fn schema() -> RefOr<Schema> {
+            ObjectBuilder::new()
+                .description(Some(
+                    "A verifiable presentation of the VC Data Model 1.1 (§4.10), as the `vp` \
+                     claim of a JWT carries it once `iss` and `jti` are mapped back.",
+                ))
+                .property("@context", context(CONTEXT_V1, "VCDM 1.1 §4.1"))
+                .required("@context")
+                .property(
+                    "id",
+                    uri("The identifier of the presentation (VCDM 1.1 §4.2)."),
+                )
+                .property("type", types(Presentation::TYPE, "VCDM 1.1 §4.3"))
+                .required("type")
+                .property(
+                    "verifiableCredential",
+                    array(
+                        string("A credential JWT: a compact JWS.").pattern(Some(JWS_PATTERN)),
+                        "The presented credentials, as JWTs (VCDM 1.1 §6.3.1).",
+                    ),
+                )
+                .property("holder", party("The holder presenting the credentials."))
+                .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+                .into()
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for Presentation {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("Presentation")
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for CredentialV2 {
+        fn schema() -> RefOr<Schema> {
+            ObjectBuilder::new()
+                .description(Some(
+                    "A verifiable credential of the VC Data Model 2.0 (§4), the payload of a \
+                     `vc+jwt` (VC-JOSE-COSE §3.1.1).",
+                ))
+                .property("@context", context(CONTEXT_V2, "VCDM 2.0 §4.3"))
+                .required("@context")
+                .property("id", uri("The identifier of the credential (VCDM 2.0 §4.4)."))
+                .property("type", types(CredentialV2::TYPE, "VCDM 2.0 §4.5"))
+                .required("type")
+                .property(
+                    "name",
+                    language_value("A name for the credential (VCDM 2.0 §4.6)."),
+                )
+                .property(
+                    "description",
+                    language_value("A description of the credential (VCDM 2.0 §4.6)."),
+                )
+                .property("issuer", party("The issuer (VCDM 2.0 §4.7)."))
+                .required("issuer")
+                .property(
+                    "validFrom",
+                    date_time("When the credential becomes valid (VCDM 2.0 §4.9)."),
+                )
+                .property(
+                    "validUntil",
+                    date_time("When the credential ceases to be valid (VCDM 2.0 §4.9)."),
+                )
+                .property(
+                    "credentialStatus",
+                    typed_one_or_many(
+                        "A status entry.",
+                        "Where to learn whether the credential is revoked or suspended (VCDM 2.0 §4.10).",
+                    ),
+                )
+                .property("credentialSubject", subjects("VCDM 2.0 §4.8"))
+                .required("credentialSubject")
+                .property(
+                    "credentialSchema",
+                    typed_one_or_many("A data schema.", "Data schemas (VCDM 2.0 §4.11)."),
+                )
+                .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+                .into()
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for CredentialV2 {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("CredentialV2")
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for PresentationV2 {
+        fn schema() -> RefOr<Schema> {
+            ObjectBuilder::new()
+                .description(Some(
+                    "A verifiable presentation of the VC Data Model 2.0 (§4.13), the payload of \
+                     a `vp+jwt` (VC-JOSE-COSE §3.1.2), carrying enveloped credentials.",
+                ))
+                .property("@context", context(CONTEXT_V2, "VCDM 2.0 §4.3"))
+                .required("@context")
+                .property(
+                    "id",
+                    uri("The identifier of the presentation (VCDM 2.0 §4.4)."),
+                )
+                .property("type", types(PresentationV2::TYPE, "VCDM 2.0 §4.5"))
+                .required("type")
+                .property("holder", party("The holder presenting the credentials."))
+                .property(
+                    "verifiableCredential",
+                    array(
+                        schema_ref::<EnvelopedVc>(),
+                        "The presented credentials, enveloped (VCDM 2.0 §4.13).",
+                    ),
+                )
+                .additional_properties(Some(AdditionalProperties::FreeForm(true)))
+                .into()
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for PresentationV2 {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("PresentationV2")
+        }
+
+        fn schemas(schemas: &mut Schemas) {
+            collect::<EnvelopedVc>(schemas);
+        }
+    }
+
+    /// An enveloped credential or presentation of `object_type`, secured as `media_type`.
+    fn enveloped(object_type: &str, media_type: &str, section: &str) -> RefOr<Schema> {
+        ObjectBuilder::new()
+            .description(Some(format!(
+                "An `{object_type}` (VCDM 2.0 {section}): a secured object carried in a `data:` \
+                 URL, `{media_type}` for a JWT."
+            )))
+            .property("@context", context(CONTEXT_V2, "VCDM 2.0 §4.3"))
+            .required("@context")
+            .property(
+                "id",
+                uri("The `data:` URL holding the secured form (RFC 2397).").pattern(Some("^data:")),
+            )
+            .required("id")
+            .property("type", types(object_type, "VCDM 2.0 §4.5"))
+            .required("type")
+            .into()
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for EnvelopedVc {
+        fn schema() -> RefOr<Schema> {
+            enveloped(EnvelopedVc::TYPE, EnvelopedVc::JWT_MEDIA_TYPE, "§4.12.1")
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for EnvelopedVc {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("EnvelopedVc")
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for EnvelopedVp {
+        fn schema() -> RefOr<Schema> {
+            enveloped(EnvelopedVp::TYPE, EnvelopedVp::JWT_MEDIA_TYPE, "§4.13.1")
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for EnvelopedVp {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("EnvelopedVp")
+        }
     }
 }
 
