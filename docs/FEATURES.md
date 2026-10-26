@@ -185,7 +185,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
-| [Token Status List][status-list]             | IETF draft  | `status_list`                             |
+| [Token Status List][status-list] (draft 21)  | IETF draft  | `status_list`                             |
 | [PKCS #11 v3.1][pkcs11]                      | OASIS       | `keys::pkcs11`                            |
 | [multicodec][multicodec], [multibase][multibase] | Multiformats | `methods::key`                        |
 
@@ -211,7 +211,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [rfc8812]: https://www.rfc-editor.org/rfc/rfc8812
 [rfc9901]: https://www.rfc-editor.org/rfc/rfc9901
 [sd-jwt-vc]: https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/
-[status-list]: https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/
+[status-list]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-21
 [rfc7519]: https://www.rfc-editor.org/rfc/rfc7519
 [rfc7800]: https://www.rfc-editor.org/rfc/rfc7800
 [rfc8725]: https://www.rfc-editor.org/rfc/rfc8725
