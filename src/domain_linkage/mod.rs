@@ -22,6 +22,16 @@
 //! in one call, for an origin, for one DID at an origin, or for every origin a DID document
 //! lists in its `LinkedDomains` services ([`services`]), reporting per origin.
 //!
+//! # Maintaining a configuration
+//!
+//! The controller of an origin reads back the credentials it published with
+//! [`DomainLinkageConfiguration::entries`]: the DID, origin and validity period of each JWT
+//! entry ([`UnverifiedLinkage`]), read **without verifying it**, since it signed them itself.
+//! [`earliest_expiry`](DomainLinkageConfiguration::earliest_expiry) says when to renew,
+//! [`remove_origin`](DomainLinkageConfiguration::remove_origin) unlinks an origin, and
+//! [`linked_dids`](DomainLinkageConfiguration::linked_dids) is a public `Vec` for anything
+//! else, `retain` included.
+//!
 //! # Examples
 //!
 //! Verifying a domain: the specification's example resource, served for
@@ -407,6 +417,48 @@ impl DomainLinkageConfiguration {
             })
     }
 
+    /// The credentials in the JSON Web Token proof format, with their positions, each read
+    /// **without verifying it** ([`UnverifiedLinkage::from_jwt`]), or why it does not read.
+    /// Linked Data Proof entries are not among them.
+    ///
+    /// For the controller of the origin, maintaining the configuration it publishes; a
+    /// verifier validates with [`DomainLinkageValidator`].
+    pub fn entries(
+        &self,
+    ) -> impl Iterator<Item = (usize, Result<UnverifiedLinkage, DomainLinkageError>)> + '_ {
+        self.jwts()
+            .map(|(index, jwt)| (index, UnverifiedLinkage::from_jwt(jwt)))
+    }
+
+    /// The earliest expiry among the JWT credentials that read ([`entries`](Self::entries)),
+    /// or `None` when none reads or none expires: when the configuration needs renewing at
+    /// the latest.
+    pub fn earliest_expiry(&self) -> Option<DateTime<Utc>> {
+        self.entries()
+            .filter_map(|(_, entry)| entry.ok()?.expires)
+            .min()
+    }
+
+    /// Removes the JWT credentials linking `origin`, compared normalized
+    /// ([`normalize_origin`]), and returns how many it removed. Credentials that do not
+    /// read ([`entries`](Self::entries)) and Linked Data Proof entries are kept; remove them
+    /// from [`linked_dids`](Self::linked_dids) directly.
+    ///
+    /// # Errors
+    ///
+    /// [`DomainLinkageError::InvalidOrigin`] when `origin` has no host.
+    pub fn remove_origin(&mut self, origin: &Url) -> Result<usize, DomainLinkageError> {
+        let origin = normalize_origin(origin.as_str())?;
+        let before = self.linked_dids.len();
+        self.linked_dids.retain(|entry| match entry {
+            LinkedDid::Jwt(jwt) => {
+                UnverifiedLinkage::from_jwt(jwt).map_or(true, |linkage| linkage.origin != origin)
+            }
+            LinkedDid::LinkedDataProof(_) => true,
+        });
+        Ok(before - self.linked_dids.len())
+    }
+
     /// Checks that `@context` is [`CONTEXT`].
     ///
     /// # Errors
@@ -436,6 +488,69 @@ impl<'de> Deserialize<'de> for DomainLinkageConfiguration {
         };
         configuration.check().map_err(serde::de::Error::custom)?;
         Ok(configuration)
+    }
+}
+
+/// A domain linkage credential in the JSON Web Token proof format as its JWT says, read
+/// **without verifying it**: neither the signature nor the format rules
+/// [`DomainLinkageValidator`] enforces are checked, only what these fields need.
+///
+/// For the controller of an origin reading back credentials it signed itself, to renew them
+/// before they expire or to drop an origin's; never for deciding whether a DID and an origin
+/// are linked.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::domain_linkage::UnverifiedLinkage;
+/// use identity_kit::vc::Jwt;
+///
+/// // The example JWT of the specification, whose `origin` has no scheme.
+/// # let jwt: Jwt = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/did_configuration/jwt.txt")).trim().parse()?;
+/// let linkage = UnverifiedLinkage::from_jwt(&jwt)?;
+/// assert_eq!(linkage.did.as_str(), "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM");
+/// assert_eq!(linkage.origin, "https://identity.foundation");
+/// assert_eq!(linkage.expires, Some(Utc.with_ymd_and_hms(2025, 12, 4, 20, 12, 19).unwrap()));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UnverifiedLinkage {
+    /// The DID the credential links: its `credentialSubject.id`.
+    pub did: Did,
+    /// The origin it links: its `credentialSubject.origin`, normalized
+    /// ([`normalize_origin`]).
+    pub origin: String,
+    /// The issuer it names, which the format requires to be [`did`](Self::did).
+    pub issuer: Uri,
+    /// When it becomes valid: `nbf`, or `issuanceDate` without one.
+    pub not_before: DateTime<Utc>,
+    /// When it expires: `exp`, or `expirationDate` without one, when either is present.
+    pub expires: Option<DateTime<Utc>>,
+}
+
+impl UnverifiedLinkage {
+    /// Reads `jwt` without verifying it.
+    ///
+    /// # Errors
+    ///
+    /// [`DomainLinkageError::Validation`] when `jwt` does not decode as a credential JWT,
+    /// [`DomainLinkageError::SubjectNotDid`] when its one subject is not a DID, and
+    /// [`DomainLinkageError::InvalidOriginProperty`] or [`DomainLinkageError::InvalidOrigin`]
+    /// when its `origin` is not one origin.
+    pub fn from_jwt(jwt: &Jwt) -> Result<Self, DomainLinkageError> {
+        let credential = decode_credential(jwt)?.credential;
+        let subject = credential
+            .subject()
+            .ok_or(DomainLinkageError::SubjectNotDid(None))?;
+        Ok(Self {
+            did: subject_did(subject)?,
+            origin: subject_origin(subject)?,
+            issuer: credential.issuer.id().clone(),
+            not_before: credential.issuance_date,
+            expires: credential.expiration_date,
+        })
     }
 }
 
@@ -1129,10 +1244,6 @@ fn issuer_of(jwt: &Jwt) -> Option<Did> {
 
 /// The checks of the JSON Web Token proof format and of DID Configuration Resource
 /// Verification that need no key.
-#[expect(
-    clippy::similar_names,
-    reason = "the subject's `id` and the DID it names"
-)]
 fn check_format(
     decoded: &DecodedCredential,
     expected_origin: &str,
@@ -1205,10 +1316,7 @@ fn check_format(
     let subject = credential
         .subject()
         .ok_or(DomainLinkageError::SubjectNotDid(None))?;
-    let subject_id = subject.id.as_ref().map(Uri::as_str);
-    let subject_did = subject_id
-        .and_then(|id| Did::parse(id).ok())
-        .ok_or_else(|| DomainLinkageError::SubjectNotDid(subject_id.map(str::to_owned)))?;
+    let subject_did = subject_did(subject)?;
     for (role, found) in [
         ("issuer", credential.issuer.id().as_str()),
         ("iss", iss),
@@ -1222,11 +1330,7 @@ fn check_format(
             });
         }
     }
-    let origin = subject.properties.get("origin");
-    let Some(Value::String(origin)) = origin else {
-        return Err(DomainLinkageError::InvalidOriginProperty(origin.cloned()));
-    };
-    let found = normalize_origin(origin)?;
+    let found = subject_origin(subject)?;
     if found != expected_origin {
         return Err(DomainLinkageError::OriginMismatch {
             expected: expected_origin.to_owned(),
@@ -1234,6 +1338,22 @@ fn check_format(
         });
     }
     Ok(())
+}
+
+/// The DID `credentialSubject.id` names.
+fn subject_did(subject: &Subject) -> Result<Did, DomainLinkageError> {
+    let id = subject.id.as_ref().map(Uri::as_str);
+    id.and_then(|id| Did::parse(id).ok())
+        .ok_or_else(|| DomainLinkageError::SubjectNotDid(id.map(str::to_owned)))
+}
+
+/// `credentialSubject.origin`, normalized.
+fn subject_origin(subject: &Subject) -> Result<String, DomainLinkageError> {
+    let origin = subject.properties.get("origin");
+    let Some(Value::String(origin)) = origin else {
+        return Err(DomainLinkageError::InvalidOriginProperty(origin.cloned()));
+    };
+    normalize_origin(origin)
 }
 
 impl fmt::Display for DomainLinkageConfiguration {

@@ -344,7 +344,10 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   credentialSubject.id`, one `origin` matching the requested one after normalization, `exp`
   present, no `id`, no extra header parameters or claims, signature under `assertionMethod`);
   validation of a configuration is at-least-one, reporting the rest as errors, and validates at
-  most `max_credentials` (32 by default) entries of one configuration.
+  most `max_credentials` (32 by default) entries of one configuration. For the controller of
+  the origin, `entries` reads each JWT entry back without verifying it (`UnverifiedLinkage`:
+  DID, origin, issuer, `nbf`, `exp`), `earliest_expiry` says when to renew, and
+  `remove_origin` unlinks an origin.
   `fetch_configuration` gets the resource over the injected `methods::web::HttpClient` (HTTPS
   only; `404`/`410` is `NotPublished`, a state rather than a failure), `service`/`services`
   build and read `LinkedDomains` entries, and `DomainLinkageClient` fetches and validates per
