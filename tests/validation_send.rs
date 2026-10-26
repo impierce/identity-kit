@@ -6,7 +6,7 @@
 use std::future::Future;
 
 use identity_kit::jose::DefaultVerifier;
-use identity_kit::resolver::Resolver;
+use identity_kit::resolver::{JwtValidationOptions, JwtValidator, Resolver};
 use identity_kit::sd_jwt_vc::{SdJwt, SdJwtCredentialValidator, SdJwtValidationOptions};
 use identity_kit::vc::Jwt;
 use identity_kit::vc::validation::{
@@ -22,6 +22,7 @@ fn validation_futures_are_send(
     credentials: JwtCredentialValidator<Resolver, DefaultVerifier>,
     presentations: JwtPresentationValidator<Resolver, DefaultVerifier>,
     sd_jwts: SdJwtCredentialValidator<Resolver, DefaultVerifier>,
+    jwts: JwtValidator<Resolver, DefaultVerifier>,
     jwt: Jwt,
     sd_jwt: SdJwt,
 ) {
@@ -37,5 +38,8 @@ fn validation_futures_are_send(
         let options = SdJwtValidationOptions::default();
         let _ = sd_jwts.validate(&sd_jwt, &options).await;
         let _ = sd_jwts.validate_v2(&sd_jwt, &options).await;
+
+        let options = JwtValidationOptions::new();
+        let _ = jwts.validate(jwt.as_str(), &options).await;
     });
 }
