@@ -24,9 +24,12 @@ use identity_kit::claim_path;
 use identity_kit::jose::{DefaultVerifier, Jwk};
 use identity_kit::sd_jwt_vc::{
     ClaimMetadata, ClaimPath, Integrity, IntegrityAlgorithm, IntegrityError, LEGACY_TYP,
-    NON_DISCLOSABLE_CLAIMS, SdJwt, SdJwtError, SdJwtVc, SdJwtVcClaims, SdJwtVcError, SdPolicy,
+    NON_DISCLOSABLE_CLAIMS, SdJwt, SdJwtError, SdJwtVc, SdJwtVcClaims, SdJwtVcError, SdPolicy, TYP,
+    TypeMetadata, TypeMetadataError,
+};
+use identity_kit::status_list::{
     Status, StatusList, StatusListError, StatusListRef, StatusListToken, StatusMechanism,
-    StatusType, TYP, TypeMetadata, TypeMetadataError,
+    StatusType,
 };
 use identity_kit::vc::{Jwt, JwtClaims};
 use serde_json::{Map, Value, json};
@@ -422,6 +425,50 @@ fn status_claim_of_a_referenced_token() {
         "https://example.com/statuslists/1"
     );
     assert_eq!(processed.payload["address"]["locality"], "Schulpforta");
+}
+
+/// The Token Status List moved to `status_list`; its old paths in `sd_jwt_vc` stay for one
+/// release, deprecated, and name the same types.
+#[test]
+#[expect(deprecated, reason = "the old paths are what this test exercises")]
+fn deprecated_sd_jwt_vc_paths_still_work() {
+    use identity_kit::{sd_jwt_vc, status_list};
+
+    let reference = sd_jwt_vc::StatusListRef::new("https://example.com/statuslists/1", 1);
+    let status: status_list::Status = sd_jwt_vc::Status::status_list(reference.clone());
+    assert!(matches!(
+        status.mechanisms().next(),
+        Some(sd_jwt_vc::StatusMechanism::StatusList(r)) if *r == reference
+    ));
+
+    let mut list: status_list::StatusList = sd_jwt_vc::StatusList::new(1, 8).unwrap();
+    list.set(1, sd_jwt_vc::StatusType::INVALID).unwrap();
+    let error: sd_jwt_vc::StatusListError = list.set(8, StatusType::VALID).unwrap_err();
+    assert!(matches!(
+        error,
+        StatusListError::IndexOutOfRange { idx: 8, len: 8 }
+    ));
+    let token: sd_jwt_vc::StatusListToken = StatusListToken::new(
+        reference.uri.clone(),
+        Utc.timestamp_opt(0, 0).unwrap(),
+        list,
+    );
+    assert_eq!(
+        token
+            .status_of(&reference, Utc.timestamp_opt(1, 0).unwrap())
+            .unwrap(),
+        StatusType::INVALID
+    );
+
+    #[cfg(feature = "did-web")]
+    {
+        fn same<C, R>(
+            check: sd_jwt_vc::validation::StatusListCheck<C, R>,
+        ) -> status_list::StatusListCheck<C, R> {
+            check
+        }
+        let _ = same::<(), ()>;
+    }
 }
 
 #[test]

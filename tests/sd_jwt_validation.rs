@@ -30,8 +30,9 @@ use identity_kit::sd_jwt_vc::validation::{KeyBindingOptions, SdJwtValidationOpti
 use identity_kit::sd_jwt_vc::{
     Disclosure, HashAlgorithm, KeyBinding, LEGACY_TYP, SdJwt, SdJwtBuilder, SdJwtCredentialV2Error,
     SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtVc, SdJwtVcBuilder,
-    SdJwtVcError, Status, StatusList, StatusListRef, StatusListToken, StatusType,
+    SdJwtVcError,
 };
+use identity_kit::status_list::{Status, StatusList, StatusListRef, StatusListToken, StatusType};
 use identity_kit::vc::validation::{
     CredentialStatus, StatusCheck, StatusError, StatusPolicy, TimeOptions, ValidationError,
 };
@@ -591,7 +592,7 @@ impl StatusCheck for FixedStatus {
         status: CredentialStatus<'_>,
         _: DateTime<Utc>,
     ) -> Result<(), StatusError> {
-        let CredentialStatus::SdJwt(Status {
+        let CredentialStatus::StatusClaim(Status {
             status_list: Some(reference),
             ..
         }) = status
@@ -736,8 +737,8 @@ mod status_list_check {
     use identity_kit::jose::{JwsError, VerificationError};
     use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
     use identity_kit::resolver::{CompositeKeyResolver, JwkResolver, KeyResolutionError};
-    use identity_kit::sd_jwt_vc::StatusListError;
-    use identity_kit::sd_jwt_vc::validation::StatusListCheck;
+    use identity_kit::status_list::StatusListCheck;
+    use identity_kit::status_list::StatusListError;
     use identity_kit::vc::TypedObject;
     use url::Url;
 
@@ -1051,14 +1052,19 @@ mod status_list_check {
         // So is a `status` claim without a status list reference.
         let other = Status::new().with_mechanism("other", json!({}));
         assert!(matches!(
-            check.check(CredentialStatus::SdJwt(&other), now).await,
+            check.check(CredentialStatus::StatusClaim(&other), now).await,
             Err(StatusError::Unsupported(kind)) if kind == "other"
         ));
         // A reference is fetched: here, from nowhere.
         let listed = Status::status_list(StatusListRef::new(LIST_URI, 0));
-        assert_eq!(CredentialStatus::SdJwt(&listed).mechanism(), "status_list");
+        assert_eq!(
+            CredentialStatus::StatusClaim(&listed).mechanism(),
+            "status_list"
+        );
         assert!(matches!(
-            check.check(CredentialStatus::SdJwt(&listed), now).await,
+            check
+                .check(CredentialStatus::StatusClaim(&listed), now)
+                .await,
             Err(StatusError::Unavailable { .. })
         ));
     }
@@ -1199,7 +1205,7 @@ mod status_list_check {
             let status =
                 Status::status_list(StatusListRef::new(format!("{base}/statuslists/{n}"), 0));
             let result = check
-                .check(CredentialStatus::SdJwt(&status), issued_at())
+                .check(CredentialStatus::StatusClaim(&status), issued_at())
                 .await;
             assert!(result.is_ok(), "{n}: {result:?}");
         }
@@ -1250,7 +1256,7 @@ mod status_list_check {
             async move {
                 let status = Status::status_list(StatusListRef::new(uri, 0));
                 check
-                    .check(CredentialStatus::SdJwt(&status), issued_at())
+                    .check(CredentialStatus::StatusClaim(&status), issued_at())
                     .await
             }
         };

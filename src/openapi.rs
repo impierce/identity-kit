@@ -664,12 +664,12 @@ mod type_metadata {
 // Token Status List
 // ---------------------------------------------------------------------------------------------
 
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 mod status {
     use super::{Cow, ObjectBuilder, PartialSchema, RefOr, Schema, ToSchema, Type, one_of, string};
-    use crate::sd_jwt_vc::StatusType;
+    use crate::status_list::StatusType;
 
-    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "status-list"))))]
     impl PartialSchema for StatusType {
         fn schema() -> RefOr<Schema> {
             one_of(
@@ -690,7 +690,7 @@ mod status {
         }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "status-list"))))]
     impl ToSchema for StatusType {
         fn name() -> Cow<'static, str> {
             Cow::Borrowed("StatusType")
