@@ -332,8 +332,11 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             None => (None, None),
         };
 
-        self.check_status(claims.status.iter().map(CredentialStatus::SdJwt), options)
-            .await?;
+        self.check_status(
+            claims.status.iter().map(CredentialStatus::SdJwt).collect(),
+            options,
+        )
+        .await?;
 
         Ok(ValidatedSdJwtVc {
             credential,
@@ -378,7 +381,8 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
                 .credential()
                 .statuses()
                 .map(CredentialStatus::Vcdm)
-                .chain(credential.status().map(CredentialStatus::SdJwt)),
+                .chain(credential.status().map(CredentialStatus::SdJwt))
+                .collect(),
             options,
         )
         .await?;
@@ -546,9 +550,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
 
     /// Checks every status entry with this validator's check, per the policy, at the
     /// validation time.
-    async fn check_status<'a>(
+    async fn check_status(
         &self,
-        statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
+        statuses: Vec<CredentialStatus<'_>>,
         options: &SdJwtValidationOptions,
     ) -> Result<(), SdJwtValidationError> {
         Ok(check_statuses(
