@@ -46,8 +46,9 @@ pub use crate::methods::DidWeb;
 pub use crate::resolver::JwksResolver;
 pub use crate::resolver::{
     CompositeKeyResolver, DereferenceError, Dereferenced, DidProducer, DidResolver, DocumentCache,
-    Hosting, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
-    KeyRole, MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
+    Hosting, JwkResolver, JwtValidationError, JwtValidationOptions, JwtValidator, KeyReference,
+    KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole, MethodCapabilities, ProduceError,
+    Resolver, ResolverBuilder,
 };
 
 /// The upper layer's prelude: credentials and presentations as JWTs (feature `vc`), SD-JWT

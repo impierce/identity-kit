@@ -266,6 +266,9 @@ pub trait KeyResolver: Send + Sync {
 }
 pub struct CompositeKeyResolver(..);   // first resolver that does not answer Unsupported
 // in the crate: Resolver (DidUrl), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
+
+pub struct JwtValidator<R: KeyResolver, V: JwsVerifier = DefaultVerifier> { .. }   // validate, validate_as::<T>
+pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issuer_binding, required_claims, now: Option<i64>, leeway }
 ```
 
 - `jose::multikey`: the multicodec table (`ed25519-pub 0xed`, `p256-pub 0x1200`, `secp256k1-pub
@@ -299,6 +302,13 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   party (the DID of a DID URL; `did:jwk` or the RFC 7638 thumbprint of a key by value; the
   issuer URL of a JWKS). `X509Chain` and `Jku` are in the enum and resolve to `Unsupported`
   until implemented.
+- Plain JWTs: `JwtValidator` validates a JWT that is not a credential (an OAuth 2.0 access
+  token, RFC 9068) per RFC 7519 §7.2 and RFC 8725: an `alg` allow-list, the expected `typ`
+  (case-insensitive, `application/` optional), the signature under the key the
+  `KeyReference` names, the key bound to `iss` unless the options waive it for a resolver of
+  trusted keys (`IssuerBinding::Any`), the expected `iss` and `aud`, `exp`/`nbf`/`iat` against
+  an injectable clock in `NumericDate` seconds (the lower layer has no `chrono`) with a
+  leeway, and required claims. It lives in `resolver` because it needs `KeyResolver`.
 
 ## Upper layer
 
