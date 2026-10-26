@@ -347,8 +347,8 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   `credentialStatus`). `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes
   next to `vc+jwt` ones (`PresentedCredentialV2`), with key binding required per
   `PresentationValidationOptions`.
-- `status_list` (`status-list`): the IETF Token Status List, which the draft defines for any JWT
-  (§6.1), so it serves JWT and SD-JWT credentials alike and needs no SD-JWT code:
+- `status_list` (`status-list`): the IETF Token Status List (draft 21), which the draft defines for
+  any JWT (§6.1), so it serves JWT and SD-JWT credentials alike and needs no SD-JWT code:
   `Status`/`StatusListRef`/`StatusMechanism` for the `status` claim, `StatusType`, `StatusList`
   (ZLIB bit array) and `StatusListToken` (signed with any `Signer`, read with `status_of`), and,
   with `did-web` as well, `StatusListCheck`, the `vc` `StatusCheck` over an `HttpClient`:
