@@ -69,10 +69,12 @@
 //! ```
 
 use std::collections::BTreeSet;
+use std::error::Error;
 
 use chrono::{DateTime, Utc};
 use url::Url;
 
+use crate::cause::cause;
 use crate::did::{Did, DidDocument, DidUrl, ResolutionError, Service, ServiceEndpoint, Uri};
 use crate::jose::{DefaultVerifier, JwsError, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError};
@@ -130,7 +132,8 @@ pub fn service(id: DidUrl, urls: impl IntoIterator<Item = Url>) -> Result<Servic
     for url in urls {
         let uri = Uri::parse(url.as_str()).map_err(|e| LinkedVpError::InvalidService {
             id: id.clone(),
-            reason: format!("`{url}` is not a URI: {e}"),
+            reason: format!("`{url}` is not a URI"),
+            source: Some(Box::new(e)),
         })?;
         uris.push(uri);
     }
@@ -140,6 +143,7 @@ pub fn service(id: DidUrl, urls: impl IntoIterator<Item = Url>) -> Result<Servic
             return Err(LinkedVpError::InvalidService {
                 id,
                 reason: "no URL".to_owned(),
+                source: None,
             });
         }
         Err(uris) => ServiceEndpoint::Set(uris.into_iter().collect()),
@@ -179,18 +183,25 @@ pub fn services(
 
 /// `service` with its URLs parsed.
 fn linked_vp_service(service: &Service) -> Result<LinkedVpService<'_>, LinkedVpError> {
-    let invalid = |reason: String| LinkedVpError::InvalidService {
-        id: service.id.clone(),
-        reason,
+    let invalid = |reason: String, source: Option<Box<dyn Error + Send + Sync>>| {
+        LinkedVpError::InvalidService {
+            id: service.id.clone(),
+            reason,
+            source,
+        }
     };
     if matches!(service.service_endpoint, ServiceEndpoint::Map(_)) {
-        return Err(invalid("`serviceEndpoint` is a map, not URLs".to_owned()));
+        return Err(invalid(
+            "`serviceEndpoint` is a map, not URLs".to_owned(),
+            None,
+        ));
     }
     let urls = service
         .service_endpoint
         .uris()
         .map(|uri| {
-            Url::parse(uri.as_str()).map_err(|e| invalid(format!("`{uri}` is not a URL: {e}")))
+            Url::parse(uri.as_str())
+                .map_err(|e| invalid(format!("`{uri}` is not a URL"), Some(Box::new(e))))
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(LinkedVpService { service, urls })
@@ -341,13 +352,16 @@ impl LinkedPresentationBuilder {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum LinkedVpError {
-    /// A `LinkedVerifiablePresentation` service does not name one or more URLs.
-    #[error("service `{id}`: {reason}")]
+    /// A `LinkedVerifiablePresentation` service does not name one or more URLs. The source
+    /// is the URI or URL error, when there is one.
+    #[error("service `{id}`: {reason}{}", cause(.source.as_ref()))]
     InvalidService {
         /// The id of the service.
         id: DidUrl,
         /// What is wrong with it.
         reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
     },
     /// A URL is not `https`: an `ipfs://` endpoint, say. Only HTTPS is fetched.
     #[error("`{0}` is not an HTTPS URL")]
@@ -373,13 +387,15 @@ pub enum LinkedVpError {
     /// not process.
     #[error("`{0}` serves a JSON-LD presentation, which is not supported")]
     UnsupportedFormat(Url),
-    /// The body is not a compact JWT.
-    #[error("`{url}` does not serve a compact JWT: {reason}")]
+    /// The body is not a compact JWT. The source is the UTF-8 or [`JwsError`].
+    #[error("`{url}` does not serve a compact JWT: {reason}{}", cause(.source.as_ref()))]
     InvalidBody {
         /// The URL fetched.
         url: Url,
         /// What is wrong with the body.
-        reason: String,
+        reason: &'static str,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
     },
     /// The presentation's holder is not the DID whose document links it.
     #[error("the holder `{holder}` is not `{did}`, the DID linking the presentation")]
@@ -674,17 +690,20 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
                 status: response.status,
             });
         }
-        let invalid = |reason: String| LinkedVpError::InvalidBody {
-            url: url.clone(),
-            reason,
+        let invalid = |reason: &'static str, source: Box<dyn Error + Send + Sync>| {
+            LinkedVpError::InvalidBody {
+                url: url.clone(),
+                reason,
+                source: Some(source),
+            }
         };
         let body = core::str::from_utf8(&response.body)
-            .map_err(|_| invalid("the body is not UTF-8".to_owned()))?
+            .map_err(|e| invalid("the body is not UTF-8", Box::new(e)))?
             .trim();
         if body.starts_with('{') {
             return Err(LinkedVpError::UnsupportedFormat(url.clone()));
         }
-        Jwt::new(body).map_err(|e: JwsError| invalid(e.to_string()))
+        Jwt::new(body).map_err(|e: JwsError| invalid("not a compact JWS", Box::new(e)))
     }
 
     /// Fetches and validates `url` as a presentation linked from the document of `did`.

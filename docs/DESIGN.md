@@ -145,7 +145,10 @@ The other error types follow the same rule: an error caused by another error kee
 `source()`, typed where the type is already part of the API (`serde_json::Error`,
 `jsonwebtoken::errors::Error`, this crate's own errors) and boxed otherwise, instead of
 formatting it into a string. The message still ends with the cause's, so nothing is lost for
-logs, and a caller can walk the chain or downcast instead of matching on text.
+logs, and a caller can walk the chain or downcast instead of matching on text. A variant that
+an extension point's implementor builds (`ProduceError::UnsupportedKey` and `InvalidParams`,
+`KeyStoreError::InvalidKey`) has a constructor for the case without a cause, so a `DidProducer`
+or `KeyStore` outside the crate need not spell out `source: None`.
 
 Serialization: empty arrays and `None` are omitted; `Did`, `DidUrl` serialize as strings;
 `Service.type` is a string when single; `@context` is emitted first.

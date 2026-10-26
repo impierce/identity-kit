@@ -610,10 +610,10 @@ impl Inner {
         let Some(public) = find_key(session, ObjectClass::PUBLIC_KEY, key)? else {
             return Err(
                 if find_key(session, ObjectClass::PRIVATE_KEY, key)?.is_some() {
-                    KeyStoreError::InvalidKey {
-                        key: key.clone(),
-                        reason: "the token has no public key object with this label".to_owned(),
-                    }
+                    KeyStoreError::invalid_key(
+                        key.clone(),
+                        "the token has no public key object with this label",
+                    )
                 } else {
                     KeyStoreError::NotFound(key.clone())
                 },
@@ -630,9 +630,11 @@ impl Inner {
         public: ObjectHandle,
     ) -> Result<Jwk, KeyStoreError> {
         let kind = key_kind(session, key, public)?;
-        let invalid = |reason: String| KeyStoreError::InvalidKey {
+        let invalid = |reason: &str| KeyStoreError::invalid_key(key.clone(), reason);
+        let not_a_jwk = |error: crate::jose::JwkError| KeyStoreError::InvalidKey {
             key: key.clone(),
-            reason,
+            reason: "the public key does not convert to a JWK".to_owned(),
+            source: Some(Box::new(error)),
         };
         let jwk = match kind {
             KeyKind::Rsa => {
@@ -653,29 +655,21 @@ impl Inner {
                 }
                 let (Some(n), Some(e)) = (modulus, exponent) else {
                     return Err(invalid(
-                        "the public key object has no modulus or public exponent".to_owned(),
+                        "the public key object has no modulus or public exponent",
                     ));
                 };
-                Jwk::from_rsa_public(&n, &e).map_err(|e| invalid(e.to_string()))?
+                Jwk::from_rsa_public(&n, &e).map_err(not_a_jwk)?
             }
             KeyKind::Ed25519 | KeyKind::P256 | KeyKind::Secp256k1 => {
                 let point = ec_point(session, key, public, kind)?;
                 match kind {
-                    KeyKind::Ed25519 => {
-                        Jwk::from_ed25519_public(&point).map_err(|e| invalid(e.to_string()))?
-                    }
-                    KeyKind::P256 => {
-                        Jwk::from_p256_public(&point).map_err(|e| invalid(e.to_string()))?
-                    }
+                    KeyKind::Ed25519 => Jwk::from_ed25519_public(&point).map_err(not_a_jwk)?,
+                    KeyKind::P256 => Jwk::from_p256_public(&point).map_err(not_a_jwk)?,
                     #[cfg(feature = "secp256k1")]
-                    KeyKind::Secp256k1 => {
-                        Jwk::from_secp256k1_public(&point).map_err(|e| invalid(e.to_string()))?
-                    }
+                    KeyKind::Secp256k1 => Jwk::from_secp256k1_public(&point).map_err(not_a_jwk)?,
                     #[cfg(not(feature = "secp256k1"))]
                     KeyKind::Secp256k1 => {
-                        return Err(invalid(
-                            "secp256k1 keys need the `secp256k1` feature".to_owned(),
-                        ));
+                        return Err(invalid("secp256k1 keys need the `secp256k1` feature"));
                     }
                     KeyKind::Rsa => unreachable!("matched above"),
                 }
@@ -862,7 +856,8 @@ impl Inner {
                 jwk.thumbprint_sha256()
                     .map_err(|e| KeyStoreError::InvalidKey {
                         key: KeyId::new(""),
-                        reason: e.to_string(),
+                        reason: "no RFC 7638 thumbprint".to_owned(),
+                        source: Some(Box::new(e)),
                     })
             })
             .and_then(|thumbprint| {
@@ -1040,13 +1035,13 @@ fn find_key(
     match objects.as_slice() {
         [] => Ok(None),
         [object] => Ok(Some(*object)),
-        several => Err(KeyStoreError::InvalidKey {
-            key: key.clone(),
-            reason: format!(
+        several => Err(KeyStoreError::invalid_key(
+            key.clone(),
+            format!(
                 "the label names {} objects of the same class",
                 several.len()
             ),
-        }),
+        )),
     }
 }
 
@@ -1111,10 +1106,7 @@ fn key_kind(
             _ => {}
         }
     }
-    let invalid = |reason: &str| KeyStoreError::InvalidKey {
-        key: key.clone(),
-        reason: reason.to_owned(),
-    };
+    let invalid = |reason: &str| KeyStoreError::invalid_key(key.clone(), reason);
     match key_type {
         Some(CkKeyType::RSA) => Ok(KeyKind::Rsa),
         Some(CkKeyType::EC) => match params.as_deref() {
@@ -1145,10 +1137,7 @@ fn ec_point(
     let attributes = session
         .get_attributes(object, &[AttributeType::EcPoint])
         .map_err(Pkcs11Error::call("C_GetAttributeValue"))?;
-    let invalid = |reason: &str| KeyStoreError::InvalidKey {
-        key: key.clone(),
-        reason: reason.to_owned(),
-    };
+    let invalid = |reason: &str| KeyStoreError::invalid_key(key.clone(), reason);
     let Some(Attribute::EcPoint(encoded)) = attributes.into_iter().next() else {
         return Err(invalid("the public key object has no CKA_EC_POINT"));
     };

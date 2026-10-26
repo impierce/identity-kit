@@ -103,19 +103,25 @@ fn well_known_location() {
         normalize_origin("localhost:3000").unwrap(),
         "https://localhost:3000"
     );
+    // No host: nothing failed to parse, so there is no source.
+    let error = normalize_origin("mailto:someone@example.com").unwrap_err();
     assert!(matches!(
-        normalize_origin("mailto:someone@example.com"),
-        Err(DomainLinkageError::InvalidOrigin(_))
+        &error,
+        DomainLinkageError::InvalidOrigin { origin, reason, source: None }
+            if origin == "mailto:someone@example.com" && reason == "no host"
     ));
-    assert!(matches!(
-        normalize_origin(""),
-        Err(DomainLinkageError::InvalidOrigin(_))
-    ));
-    // A host the WHATWG URL parser accepts but RFC 3986 does not.
-    assert!(matches!(
-        normalize_origin("`example.com"),
-        Err(DomainLinkageError::InvalidOrigin(_))
-    ));
+    assert_eq!(
+        error.to_string(),
+        "invalid origin \"mailto:someone@example.com\": no host"
+    );
+    // Not a URL: the URL error is the source.
+    let error = normalize_origin("").unwrap_err();
+    assert!(matches!(error, DomainLinkageError::InvalidOrigin { .. }));
+    assert!(error.source().unwrap().is::<url::ParseError>(), "{error}");
+    // A host the WHATWG URL parser accepts but RFC 3986 does not: the URI error.
+    let error = normalize_origin("`example.com").unwrap_err();
+    assert!(matches!(error, DomainLinkageError::InvalidOrigin { .. }));
+    assert!(error.source().unwrap().is::<identity_kit::did::DidError>());
 }
 
 #[test]
@@ -354,7 +360,7 @@ fn builder_reproduces_the_example_payload() {
             now(),
             now()
         ),
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
 }
 
@@ -653,7 +659,7 @@ async fn format_rules() {
             &with_vc(&|vc| vc["credentialSubject"]["origin"] = json!("not a url"))
         )
         .await,
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
 
     // A subject that is not a DID.
@@ -828,9 +834,14 @@ fn service_builder() {
         service(id.clone(), []),
         Err(DomainLinkageError::InvalidService { .. })
     ));
+    // An origin that does not normalize: its `InvalidOrigin` is the source.
+    let error = service(id, [url("mailto:someone@example.com")]).unwrap_err();
+    assert!(matches!(error, DomainLinkageError::InvalidService { .. }));
     assert!(matches!(
-        service(id, [url("mailto:someone@example.com")]),
-        Err(DomainLinkageError::InvalidService { .. })
+        error
+            .source()
+            .and_then(|e| e.downcast_ref::<DomainLinkageError>()),
+        Some(DomainLinkageError::InvalidOrigin { .. })
     ));
 }
 
@@ -997,7 +1008,7 @@ async fn fetch_outcomes() {
     ));
     assert!(matches!(
         fetch_configuration(&web, &url("data:text/plain,x")).await,
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
     assert_eq!(web.fetched().len(), before);
 
@@ -1410,7 +1421,7 @@ async fn renewing_and_unlinking() {
     );
     assert!(matches!(
         configuration.remove_origin(&Url::parse("mailto:someone@example.com").unwrap()),
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
 
     // What remains validates as before.
@@ -1444,7 +1455,7 @@ fn entries_report_why_they_do_not_read() {
     claims["vc"]["credentialSubject"]["origin"] = json!("mailto:someone@example.com");
     assert!(matches!(
         read(&claims),
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
     claims["vc"]["credentialSubject"]["origin"] = json!("https://example.com");
     claims["sub"] = json!("https://example.com/not-a-did");
