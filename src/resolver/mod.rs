@@ -47,6 +47,14 @@
 //! the signature verifies, [`KeyReference::binds_to`] checks that the key belongs to the party
 //! the token claims, which the validators of the upper layer do.
 //!
+//! # Plain JWTs
+//!
+//! [`JwtValidator`] validates a JWT that is neither a credential nor a presentation, an OAuth
+//! 2.0 access token say, as RFC 7519 §7.2 and RFC 8725 describe: an allowed `alg`, the
+//! expected `typ`, the signature under the key a [`KeyResolver`] finds, that key bound to
+//! `iss` ([`IssuerBinding`]), the expected `iss` and `aud`, `exp`, `nbf` and `iat` within a
+//! leeway, and the claims the [`JwtValidationOptions`] require.
+//!
 //! # Examples
 //!
 //! A method is a type implementing [`DidResolver`]; here one that serves documents from memory.
@@ -125,6 +133,7 @@ mod cache;
 mod dereference;
 #[cfg(feature = "jwks")]
 mod jwks;
+mod jwt;
 mod key;
 mod producer;
 mod registry;
@@ -134,6 +143,9 @@ pub use dereference::{DereferenceError, Dereferenced};
 #[cfg(feature = "jwks")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jwks")))]
 pub use jwks::{JwksError, JwksResolver};
+pub use jwt::{
+    IssuerBinding, JwtValidationError, JwtValidationOptions, JwtValidator, ValidatedJwt,
+};
 pub use key::{
     CompositeKeyResolver, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError,
     KeyResolver, KeyRole,
