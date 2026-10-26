@@ -449,7 +449,7 @@ async fn signature_and_key_errors() {
             &issuer.signer,
         )
         .await,
-        Err(JwsError::InvalidPayload(reason)) if reason.contains("`exp`")
+        Err(JwsError::InvalidPayload { reason, .. }) if reason.contains("`exp`")
     ));
 
     // A token that is not a credential at all.
@@ -575,9 +575,11 @@ impl StatusCheck for Checker {
                 }
                 _ => Ok(()),
             },
-            "Unavailable" => Err(StatusError::Unavailable(
-                "list could not be fetched".to_owned(),
-            )),
+            "Unavailable" => Err(StatusError::Unavailable {
+                uri: "https://example.com/status".to_owned(),
+                reason: "HTTP 503".to_owned(),
+                source: None,
+            }),
             other => Err(StatusError::Unsupported(other.to_owned())),
         }
     }
@@ -665,7 +667,7 @@ async fn status_policies() {
         validator
             .validate(&unavailable, &options(StatusPolicy::SkipUnsupported))
             .await,
-        Err(ValidationError::Status(StatusError::Unavailable(_)))
+        Err(ValidationError::Status(StatusError::Unavailable { .. }))
     ));
 
     // A shared or boxed check is a check too.

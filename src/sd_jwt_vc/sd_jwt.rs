@@ -163,8 +163,10 @@ impl SdJwt {
     /// [`SdJwtError::Payload`] when the payload is not a JSON object.
     pub fn payload(&self) -> Result<Map<String, Value>, SdJwtError> {
         let jws = self.jwt.decode()?;
-        serde_json::from_slice(jws.payload())
-            .map_err(|e| SdJwtError::Payload(format!("not a JSON object: {e}")))
+        serde_json::from_slice(jws.payload()).map_err(|e| SdJwtError::Payload {
+            reason: "not a JSON object".to_owned(),
+            source: Some(e),
+        })
     }
 
     /// The hash algorithm, from `_sd_alg`; SHA-256 when absent.
@@ -331,7 +333,7 @@ fn hash_algorithm(payload: &Map<String, Value>) -> Result<HashAlgorithm, SdJwtEr
     match payload.get(HashAlgorithm::CLAIM) {
         None => Ok(HashAlgorithm::default()),
         Some(Value::String(name)) => HashAlgorithm::parse(name),
-        Some(_) => Err(SdJwtError::Payload("`_sd_alg` is not a string".into())),
+        Some(_) => Err(SdJwtError::payload("`_sd_alg` is not a string")),
     }
 }
 
@@ -517,7 +519,7 @@ impl<'a> Processor<'a> {
         for (name, value) in object {
             if name == SD_KEY {
                 let Value::Array(array) = value else {
-                    return Err(SdJwtError::Payload(format!(
+                    return Err(SdJwtError::payload(format!(
                         "`_sd` at {path} is not an array"
                     )));
                 };
@@ -529,7 +531,7 @@ impl<'a> Processor<'a> {
         }
         for digest in digests.unwrap_or_default() {
             let Value::String(digest) = digest else {
-                return Err(SdJwtError::Payload(format!(
+                return Err(SdJwtError::payload(format!(
                     "`_sd` at {path} holds a non-string"
                 )));
             };

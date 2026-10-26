@@ -399,9 +399,10 @@ pub enum SdJwtVcError {
     /// A claim that must not be selectively disclosed came from a disclosure.
     #[error("`{0}` must not be selectively disclosed")]
     DisclosedRegisteredClaim(String),
-    /// The processed payload is not an SD-JWT VC claims set: no `vct`, say.
+    /// The processed payload is not an SD-JWT VC claims set: no `vct`, say. The source is the
+    /// JSON error.
     #[error("the payload is not an SD-JWT VC: {0}")]
-    Claims(String),
+    Claims(#[source] serde_json::Error),
     /// A registered claim breaks a rule of SD-JWT VC.
     #[error("claim `{claim}`: {reason}")]
     InvalidClaim {
@@ -740,7 +741,7 @@ impl SdJwtVc {
         }
         let claims: SdJwtVcClaims =
             serde_json::from_value(Value::Object(processed.payload.clone()))
-                .map_err(|e| SdJwtVcError::Claims(e.to_string()))?;
+                .map_err(SdJwtVcError::Claims)?;
         claims.check()?;
         Ok(Self {
             sd_jwt,

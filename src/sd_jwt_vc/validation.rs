@@ -488,8 +488,8 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         }
         jws.verify(&self.verifier, &holder_key.1)
             .map_err(ValidationError::from)?;
-        let claims: JwtClaims = serde_json::from_slice(jws.payload())
-            .map_err(|e| ValidationError::Payload(e.to_string()))?;
+        let claims: JwtClaims =
+            serde_json::from_slice(jws.payload()).map_err(ValidationError::Payload)?;
 
         if !claims.audiences().any(|aud| aud == required.audience) {
             return Err(ValidationError::AudienceMismatch {
@@ -594,9 +594,11 @@ mod status_list {
     use crate::jose::{DefaultVerifier, JwsVerifier};
     use crate::methods::web::{HttpClient, HttpResponse};
     use crate::resolver::{KeyReference, KeyResolver, KeyRole};
-    use crate::sd_jwt_vc::{StatusListToken, StatusMechanism};
+    use crate::sd_jwt_vc::{StatusListError, StatusListToken, StatusMechanism};
     use crate::vc::Jwt;
     use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError};
+
+    type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
     /// A [`StatusCheck`] for the Token Status List: for the `status` claim of an SD-JWT
     /// credential or of a JWT credential ([`CredentialStatus::SdJwt`]), fetches the status
@@ -653,44 +655,55 @@ mod status_list {
 
         /// The response for `uri`, following redirects as the type documentation describes.
         async fn get(&self, uri: &str) -> Result<HttpResponse, StatusError> {
-            let mut url = Url::parse(uri)
-                .map_err(|e| StatusError::Unavailable(format!("`uri` {uri:?}: {e}")))?;
+            let unavailable = |reason: String, source: Option<BoxError>| StatusError::Unavailable {
+                uri: uri.to_owned(),
+                reason,
+                source,
+            };
+            let mut url = Url::parse(uri).map_err(|e| StatusError::InvalidList {
+                uri: uri.to_owned(),
+                reason: "the URI is not a URL".to_owned(),
+                source: Some(Box::new(e)),
+            })?;
             let mut visited = vec![url.clone()];
             loop {
                 let response = self
                     .client
                     .get_accepting(&url, StatusListToken::MEDIA_TYPE)
                     .await
-                    .map_err(|e| StatusError::Unavailable(format!("fetching {url}: {e}")))?;
+                    .map_err(|e| unavailable(format!("fetching {url}"), Some(Box::new(e))))?;
                 if !matches!(response.status, 301 | 302 | 303 | 307 | 308) {
                     return Ok(response);
                 }
                 if visited.len() > Self::MAX_REDIRECTS {
-                    return Err(StatusError::Unavailable(format!(
-                        "fetching {uri}: more than {} redirects",
-                        Self::MAX_REDIRECTS
-                    )));
+                    return Err(unavailable(
+                        format!("more than {} redirects", Self::MAX_REDIRECTS),
+                        None,
+                    ));
                 }
                 let location = response.location.ok_or_else(|| {
-                    StatusError::Unavailable(format!(
-                        "fetching {url}: HTTP {} without a `Location`",
-                        response.status
-                    ))
+                    unavailable(
+                        format!(
+                            "{url} answered HTTP {} without a `Location`",
+                            response.status
+                        ),
+                        None,
+                    )
                 })?;
                 let next = url.join(&location).map_err(|e| {
-                    StatusError::Unavailable(format!(
-                        "fetching {url}: redirect to {location:?}: {e}"
-                    ))
+                    unavailable(
+                        format!("redirect from {url} to {location:?}"),
+                        Some(Box::new(e)),
+                    )
                 })?;
                 if next.scheme() != "https" {
-                    return Err(StatusError::Unavailable(format!(
-                        "fetching {url}: redirect to {next}, which is not HTTPS"
-                    )));
+                    return Err(unavailable(
+                        format!("redirect from {url} to {next}, which is not HTTPS"),
+                        None,
+                    ));
                 }
                 if visited.contains(&next) {
-                    return Err(StatusError::Unavailable(format!(
-                        "fetching {uri}: redirect loop at {next}"
-                    )));
+                    return Err(unavailable(format!("redirect loop at {next}"), None));
                 }
                 visited.push(next.clone());
                 url = next;
@@ -699,42 +712,48 @@ mod status_list {
 
         /// The status list token at `uri`, fetched and verified.
         async fn fetch(&self, uri: &str) -> Result<StatusListToken, StatusError> {
+            let invalid = |reason: &str, source: Option<BoxError>| StatusError::InvalidList {
+                uri: uri.to_owned(),
+                reason: reason.to_owned(),
+                source,
+            };
             let response = self.get(uri).await?;
             if !(200..300).contains(&response.status) {
-                return Err(StatusError::Unavailable(format!(
-                    "fetching {uri}: HTTP {}",
-                    response.status
-                )));
+                return Err(StatusError::Unavailable {
+                    uri: uri.to_owned(),
+                    reason: format!("HTTP {}", response.status),
+                    source: None,
+                });
             }
             let body = String::from_utf8(response.body)
-                .map_err(|_| StatusError::Unavailable(format!("{uri}: body is not UTF-8")))?;
-            let jwt = Jwt::new(body.trim())
-                .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
-            let (_, token) = StatusListToken::decode(&jwt)
-                .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
-            let jws = jwt
-                .decode()
-                .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
+                .map_err(|e| invalid("the body is not UTF-8", Some(Box::new(e))))?;
+            let not_a_token = |e: BoxError| invalid("not a status list token", Some(e));
+            let jwt = Jwt::new(body.trim()).map_err(|e| not_a_token(Box::new(e)))?;
+            let (_, token) = StatusListToken::decode(&jwt).map_err(|e| not_a_token(Box::new(e)))?;
+            let jws = jwt.decode().map_err(|e| not_a_token(Box::new(e)))?;
             let iss = token.additional.get("iss").and_then(|iss| iss.as_str());
             let reference = KeyReference::from_jws(&jws, iss)
-                .map_err(|e| StatusError::Unavailable(format!("{uri}: {e}")))?;
+                .map_err(|e| invalid("no key to verify it with", Some(Box::new(e))))?;
             let key = self
                 .resolver
                 .resolve_key(&reference, KeyRole::Issuer)
                 .await
-                .map_err(|e| {
-                    StatusError::Unavailable(format!("{uri}: resolving key {reference}: {e}"))
+                .map_err(|e| StatusError::UnresolvedKey {
+                    uri: uri.to_owned(),
+                    key: reference.to_string(),
+                    source: e,
                 })?;
             jws.verify(&self.verifier, &key)
-                .map_err(|e| StatusError::Unavailable(format!("{uri}: signature: {e}")))?;
+                .map_err(|e| invalid("the signature does not verify", Some(Box::new(e))))?;
             let bound = match iss {
                 Some(iss) => reference.binds_to(Some(iss), &key),
                 None => matches!(reference, KeyReference::DidUrl(_)),
             };
             if !bound {
-                return Err(StatusError::Unavailable(format!(
-                    "{uri}: key {reference} does not belong to the issuer {iss:?}"
-                )));
+                return Err(invalid(
+                    &format!("key {reference} does not belong to the issuer {iss:?}"),
+                    None,
+                ));
             }
             Ok(token)
         }
@@ -762,10 +781,25 @@ mod status_list {
                     .collect();
                 return Err(StatusError::Unsupported(names.join(", ")));
             };
-            let token = self.fetch(&reference.uri).await?;
-            let status_type = token
-                .status_of(reference, now)
-                .map_err(|e| StatusError::Unavailable(e.to_string()))?;
+            let uri = &reference.uri;
+            let token = self.fetch(uri).await?;
+            let status_type = token.status_of(reference, now).map_err(|e| match e {
+                StatusListError::Expired { expired_at, now } => StatusError::Expired {
+                    uri: uri.clone(),
+                    expired_at,
+                    now,
+                },
+                StatusListError::IndexOutOfRange { idx, len } => StatusError::IndexOutOfRange {
+                    uri: uri.clone(),
+                    idx,
+                    len,
+                },
+                other => StatusError::InvalidList {
+                    uri: uri.clone(),
+                    reason: "it does not cover the reference".to_owned(),
+                    source: Some(Box::new(other)),
+                },
+            })?;
             if status_type.is_valid() {
                 Ok(())
             } else {

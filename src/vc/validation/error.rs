@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
+use crate::cause::cause;
 use crate::did::{OneOrMany, Uri};
 use crate::jose::{JwsError, VerificationError};
 use crate::resolver::{KeyReference, KeyReferenceError, KeyResolutionError};
@@ -29,9 +30,9 @@ pub enum ValidationError {
         /// The `typ` found.
         found: String,
     },
-    /// The payload is not a JSON claims set.
+    /// The payload is not a JSON claims set; the source is the JSON error.
     #[error("the payload is not a JWT claims set: {0}")]
-    Payload(String),
+    Payload(#[source] serde_json::Error),
     /// The claims do not map to a credential or presentation.
     #[error(transparent)]
     Credential(#[from] CredentialError),
@@ -157,16 +158,83 @@ impl From<crate::sd_jwt_vc::SdJwtValidationError> for ValidationError {
 
 /// Why a [`StatusCheck`] did not pass.
 ///
+/// The variants tell apart what a caller may want to handle differently: an
+/// [`Unavailable`](Self::Unavailable) list may be fetched on a later attempt, an
+/// [`Expired`](Self::Expired) one may be valid once its provider has refreshed it, and an
+/// [`UnresolvedKey`](Self::UnresolvedKey) depends on why the resolver failed, which its source
+/// says. An [`InvalidList`](Self::InvalidList) or an
+/// [`IndexOutOfRange`](Self::IndexOutOfRange) will not pass by trying again.
+///
+/// Where a variant has a `source`, [`Error::source`](std::error::Error::source) returns it,
+/// and the message ends with it.
+///
 /// [`StatusCheck`]: super::StatusCheck
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum StatusError {
     /// The check does not understand the status type.
     #[error("status type `{0}` is not supported")]
     Unsupported(String),
-    /// The status could not be obtained: the list could not be fetched, say.
-    #[error("status unavailable: {0}")]
-    Unavailable(String),
+    /// The status list could not be fetched: the request failed, the server answered with an
+    /// error status, or the check refused a redirect. The source is the client's error, when
+    /// there is one.
+    #[error("status list {uri} unavailable: {reason}{}", cause(.source))]
+    Unavailable {
+        /// The status list URI the credential references.
+        uri: String,
+        /// What went wrong, naming the URL of a redirect hop where it is not `uri`.
+        reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+    /// The reference or the status list is not one the check can read or trust: a URI that is
+    /// not a URL, a body that is not a status list token, a `sub` other than the URI, a
+    /// signature that does not verify, a key that is not the issuer's. The source is the
+    /// underlying error, when there is one.
+    #[error("status list {uri} is invalid: {reason}{}", cause(.source))]
+    InvalidList {
+        /// The status list URI the credential references.
+        uri: String,
+        /// What is wrong.
+        reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+    /// The key that signed the status list could not be resolved; the source is the
+    /// resolver's error.
+    #[error("status list {uri}: cannot resolve key {key}: {source}")]
+    UnresolvedKey {
+        /// The status list URI the credential references.
+        uri: String,
+        /// The key reference, as the token's header names it.
+        key: String,
+        /// The resolver's error.
+        source: KeyResolutionError,
+    },
+    /// The status list has expired.
+    #[error(
+        "status list {uri} expired at {} (now is {})",
+        expired_at.to_rfc3339(),
+        now.to_rfc3339()
+    )]
+    Expired {
+        /// The status list URI the credential references.
+        uri: String,
+        /// Its `exp`.
+        expired_at: DateTime<Utc>,
+        /// The validation time.
+        now: DateTime<Utc>,
+    },
+    /// The credential's index is beyond the end of the status list.
+    #[error("index {idx} is out of range of status list {uri} of {len} entries")]
+    IndexOutOfRange {
+        /// The status list URI the credential references.
+        uri: String,
+        /// The credential's index.
+        idx: u64,
+        /// The number of entries in the list.
+        len: usize,
+    },
     /// The credential's status makes it unusable: `revoked`, `suspended`, …
     #[error("credential is {0}")]
     Invalid(String),

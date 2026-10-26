@@ -9,6 +9,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::cause::cause;
 use crate::jose::{JwsError, JwsHeader, Signer, base64url};
 use crate::vc::{Jwt, JwtClaims};
 
@@ -280,9 +281,15 @@ pub enum StatusListError {
         /// The number of entries in the list.
         len: usize,
     },
-    /// `lst` is not base64url, or not a ZLIB-compressed byte array.
-    #[error("invalid status list: {0}")]
-    Compression(String),
+    /// `lst` is not base64url, or not a ZLIB-compressed byte array. The source is the base64url
+    /// error, when that is the cause.
+    #[error("invalid status list: {reason}{}", cause(.source))]
+    Compression {
+        /// What is wrong with `lst`.
+        reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
     /// The decompressed list is larger than the limit.
     #[error("the status list decompresses to more than {limit} bytes")]
     TooLarge {
@@ -299,9 +306,10 @@ pub enum StatusListError {
     /// The status list token's `typ` is not `statuslist+jwt`.
     #[error("header `typ` is {0:?}, not `statuslist+jwt`")]
     UnexpectedTyp(Option<String>),
-    /// The status list token's payload is not a status list token claims set.
+    /// The status list token's payload is not a status list token claims set; the source is
+    /// the JSON error.
     #[error("the payload is not a status list token: {0}")]
-    Payload(String),
+    Payload(#[source] serde_json::Error),
     /// The token's `sub` is not the `uri` of the reference.
     #[error("status list token `sub` {sub:?} is not the referenced {uri:?}")]
     SubjectMismatch {
@@ -479,16 +487,19 @@ impl StatusList {
     /// [`StatusListError::TooLarge`].
     pub fn from_lst(bits: u8, lst: &str, max_bytes: usize) -> Result<Self, StatusListError> {
         check_bits(bits)?;
-        let compressed = base64url::decode(lst)
-            .map_err(|e| StatusListError::Compression(format!("`lst` is not base64url: {e}")))?;
+        let compressed = base64url::decode(lst).map_err(|e| StatusListError::Compression {
+            reason: "`lst` is not base64url".to_owned(),
+            source: Some(Box::new(e)),
+        })?;
         let bytes = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&compressed, max_bytes)
             .map_err(|e| match e.status {
                 miniz_oxide::inflate::TINFLStatus::HasMoreOutput => {
                     StatusListError::TooLarge { limit: max_bytes }
                 }
-                status => {
-                    StatusListError::Compression(format!("`lst` is not ZLIB data: {status:?}"))
-                }
+                status => StatusListError::Compression {
+                    reason: format!("`lst` is not ZLIB data: {status:?}"),
+                    source: None,
+                },
             })?;
         Ok(Self {
             bits,
@@ -641,8 +652,7 @@ impl StatusListToken {
         if jws.header().typ.as_deref() != Some(Self::TYP) {
             return Err(StatusListError::UnexpectedTyp(jws.header().typ.clone()));
         }
-        let token = serde_json::from_slice(jws.payload())
-            .map_err(|e| StatusListError::Payload(e.to_string()))?;
+        let token = serde_json::from_slice(jws.payload()).map_err(StatusListError::Payload)?;
         Ok((jws.header().clone(), token))
     }
 

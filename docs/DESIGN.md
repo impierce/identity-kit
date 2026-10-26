@@ -141,6 +141,12 @@ the detail and source tell a refused URL, a timeout, an HTTP `500` and a malform
 logs. RFC 9457 problem details, which the DID Resolution draft now prefers, map onto the same
 three parts.
 
+The other error types follow the same rule: an error caused by another error keeps it as its
+`source()`, typed where the type is already part of the API (`serde_json::Error`,
+`jsonwebtoken::errors::Error`, this crate's own errors) and boxed otherwise, instead of
+formatting it into a string. The message still ends with the cause's, so nothing is lost for
+logs, and a caller can walk the chain or downcast instead of matching on text.
+
 Serialization: empty arrays and `None` are omitted; `Did`, `DidUrl` serialize as strings;
 `Service.type` is a string when single; `@context` is emitted first.
 
@@ -327,7 +333,9 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   under `authentication`, the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
   `credentialStatus`, `StatusListCheck` over an `HttpClient`: `Accept:
   application/statuslist+jwt`, and at most three redirects, each target `https` and fetched
-  through the client again so that every hop passes its address checks).
+  through the client again so that every hop passes its address checks; its `StatusError` tells
+  a list that could not be fetched from one that is invalid, signed by a key that does not
+  resolve, expired or too short, so that a caller can retry only the first).
   `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
   (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
