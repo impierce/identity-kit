@@ -1,6 +1,6 @@
 [package]
 name = "identity-kit"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.95"
 description = "DID, key management and verifiable credential primitives"
@@ -69,7 +69,7 @@ jsonwebtoken = { version = "11.1", default-features = false }
 k256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
 miniz_oxide = { version = "0.9", optional = true }
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "gzip"], optional = true }
 rsa = { version = "0.10.0-rc.19", default-features = false, features = ["encoding", "sha2", "std"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
@@ -83,6 +83,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 boon = "0.6"
+flate2 = "1.0"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 proptest = "1.0"
 tempfile = "3.0"
@@ -100,6 +101,11 @@ missing_debug_implementations = "warn"
 unreachable_pub = "warn"
 
 [lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# A style choice: `#[must_use]` on every pure function would be noise.
+must_use_candidate = "allow"
+# A style choice: `assert!(v.is_empty())` reads better than `assert_eq!(v, [] as [T; 0])`.
+assert_is_empty = "allow"
 dbg_macro = "warn"
 todo = "warn"
 print_stdout = "warn"

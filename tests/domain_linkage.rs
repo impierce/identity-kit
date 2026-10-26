@@ -4,6 +4,14 @@
 //! configuration issued and validated over the RFC 8037 `did:key`, and fetched over a stub
 //! `HttpClient` for an origin and for every origin of a `did:web` document.
 #![cfg(all(feature = "domain-linkage", feature = "did-key"))]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 mod common;
 

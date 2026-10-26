@@ -4,6 +4,7 @@ use core::fmt;
 use std::error::Error;
 
 use super::{JwsAlgorithm, KeyType};
+use crate::cause::cause;
 
 /// Why a [`Jwk`](super::Jwk) cannot be built, or cannot be used the way it was asked to.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -74,9 +75,9 @@ pub enum JwkError {
         /// The Cargo feature that enables it.
         feature: &'static str,
     },
-    /// `jsonwebtoken` rejected the key material.
+    /// `jsonwebtoken` rejected the key material; the source is its error.
     #[error("cannot build a jsonwebtoken decoding key: {0}")]
-    DecodingKey(String),
+    DecodingKey(#[source] jsonwebtoken::errors::Error),
 }
 
 /// Why a JWS signature did not verify.
@@ -133,9 +134,15 @@ pub enum JwsError {
         /// Which part: `header`, `payload` or `signature`.
         part: &'static str,
     },
-    /// The protected header is not a JSON object with the expected members.
-    #[error("invalid JWS protected header: {0}")]
-    InvalidHeader(String),
+    /// The protected header is not a JSON object with the expected members. The source is
+    /// the JSON error, when there is one.
+    #[error("invalid JWS protected header: {reason}{}", cause(.source.as_ref()))]
+    InvalidHeader {
+        /// What is wrong with it.
+        reason: String,
+        /// The JSON error.
+        source: Option<serde_json::Error>,
+    },
     /// The header `alg` is missing or not a [`JwsAlgorithm`].
     #[error("unsupported JWS algorithm {0:?}")]
     UnsupportedAlgorithm(String),
@@ -149,8 +156,14 @@ pub enum JwsError {
     /// The payload cannot be signed as given (a claims set that holds a registered claim under
     /// `additional` next to its field, say), or is not the JSON
     /// [`CompactJws::claims`](super::CompactJws::claims) was asked to read it as.
-    #[error("invalid JWS payload: {0}")]
-    InvalidPayload(String),
+    /// The source is the JSON error, when there is one.
+    #[error("invalid JWS payload: {reason}{}", cause(.source.as_ref()))]
+    InvalidPayload {
+        /// What is wrong with it.
+        reason: String,
+        /// The JSON error.
+        source: Option<serde_json::Error>,
+    },
     /// The header `alg` differs from the algorithm of the signer.
     #[error("header `alg` {header} does not match the signer's {signer}")]
     AlgorithmMismatch {

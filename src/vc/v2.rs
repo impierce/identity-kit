@@ -653,6 +653,11 @@ impl EnvelopedVc {
     pub const SD_JWT_MEDIA_TYPE: &'static str = crate::sd_jwt_vc::SdJwtCredentialV2::MEDIA_TYPE;
 
     /// An envelope for `sd_jwt`, in its compact serialization.
+    ///
+    /// # Panics
+    ///
+    /// Never: a compact SD-JWT holds only base64url characters, dots and tildes, all of them
+    /// allowed in a URI.
     pub fn from_sd_jwt(sd_jwt: &crate::sd_jwt_vc::SdJwt) -> Self {
         Self::new(Self::SD_JWT_MEDIA_TYPE, &sd_jwt.to_string())
             .expect("a compact SD-JWT is base64url, dots and tildes, all URI characters")

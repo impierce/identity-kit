@@ -101,12 +101,14 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | -------------------------------------------------------------------- | :----: | ------------- | ---------------------------------------------- | --------------------------------------------------------- |
 | Builder with first-class `jti`, parser, `SdJwtCredentialValidator`   |   ✅   | `sd-jwt`      | [RFC 9901][rfc9901], [SD-JWT VC][sd-jwt-vc]    | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | `Status`, `StatusListRef`, `StatusMechanism`                         |   ✅   | `sd-jwt`      | [Token Status List][status-list]               | [#12](https://github.com/impierce/identity-kit/issues/12) |
+| `StatusType` serializes as its registered name or its number, `FromStr`, `utoipa` schema | ✅ | `sd-jwt`, `utoipa` | [Token Status List][status-list] | [#101](https://github.com/impierce/identity-kit/issues/101) |
 | Type metadata                                                        |   ✅   | `sd-jwt`      | [SD-JWT VC §6][sd-jwt-vc]                      | [#12](https://github.com/impierce/identity-kit/issues/12) |
 | `SdJwtCredentialV2`: a VCDM 2.0 credential secured with SD-JWT (`vc+sd-jwt`, `application/vc+sd-jwt`), told apart from an SD-JWT VC by `typ` and payload | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `SdJwtCredentialV2Builder`: conceal credential properties, decoys, `cnf`, `status`, `iat`/`exp` beside `validFrom`/`validUntil` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `SdJwtCredentialValidator::validate_v2`: issuer binding, validity period, key binding, `credentialStatus` and `status` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901 §7][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `JwtPresentationValidator::validate_v2` and `decode_presentation_v2` unwrap `application/vc+sd-jwt` envelopes (`EnvelopedVc::to_sd_jwt`, `PresentedCredentialV2`), key binding required per `PresentationValidationOptions::key_binding` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.2][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | Key binding with the holder key from `cnf.kid` (resolved through `KeyReference`)      |   ✅   | `sd-jwt`      | [RFC 7800 §3.4][rfc7800]                       | [#53](https://github.com/impierce/identity-kit/issues/53) |
+| `StatusListCheck` asks for `application/statuslist+jwt`, reads gzip-encoded tokens and follows up to three redirects, each through the `HttpClient` (`HttpClient::get_accepting`, `HttpResponse::location`) | ✅ | `sd-jwt`, `reqwest` | [Token Status List][status-list] | [#102](https://github.com/impierce/identity-kit/issues/102) |
 
 ### `domain_linkage`: DID configuration
 

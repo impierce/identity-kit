@@ -1,6 +1,10 @@
 //! Specification vectors for `Presentation`: VCDM 1.1 Example 33 (a presentation as JWT
 //! claims and as a JWT) and the presentation examples of §4.10.
 #![cfg(feature = "vc")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 use identity_kit::did::{Did, OneOrMany, Uri};
 use identity_kit::vc::validation::{decode_presentation, extract_holder, extract_issuer};
@@ -270,6 +274,17 @@ fn structural_requirements_and_builder() {
         ])
     );
     assert_eq!(presentation.properties["nonce"], "343s$FSFDa-");
+    assert_eq!(
+        serde_json::to_value(&presentation.context).unwrap(),
+        json!([
+            "https://www.w3.org/2018/credentials/v1",
+            "https://www.w3.org/2018/credentials/examples/v1"
+        ])
+    );
+    assert!(presentation.has_type("CredentialManagerPresentation"));
+    assert!(!presentation.has_type("OtherPresentation"));
+    let jwt: Jwt = EXAMPLE_31.parse().unwrap();
+    assert_eq!(jwt.into_string(), EXAMPLE_31);
     let roundtrip: Presentation =
         serde_json::from_value(serde_json::to_value(&presentation).unwrap()).unwrap();
     assert_eq!(roundtrip, presentation);

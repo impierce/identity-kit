@@ -61,6 +61,7 @@ pub enum DocumentError {
 // ---------------------------------------------------------------------------------------------
 
 /// `skip_serializing_if` for optional lists: `None` and empty lists are omitted alike.
+#[expect(clippy::ref_option, reason = "serde passes the field by reference")]
 fn is_none_or_empty<T>(value: &Option<OneOrMany<T>>) -> bool {
     value.as_ref().is_none_or(OneOrMany::is_empty)
 }

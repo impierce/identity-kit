@@ -98,6 +98,10 @@ fn integer(value: &[u8]) -> Vec<u8> {
     tlv(INTEGER, &body)
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a short-form length is below 0x80, and a long form has at most 8 length octets"
+)]
 fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
     let mut out = vec![tag];
     let len = body.len();

@@ -5,10 +5,19 @@
 //! 7515 Appendix A.3), who presents with key binding and envelopes the credential in a
 //! `vp+jwt` presentation.
 #![cfg(all(feature = "sd-jwt", feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    clippy::similar_names,
+    reason = "the names are the API's terms: `issued` and `issuer`, `signed` and `signer`"
+)]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
 
 mod common;
 
 use std::collections::BTreeSet;
+use std::error::Error as _;
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
@@ -97,10 +106,9 @@ fn suite_basic_credential() {
 
     // So it is not a claims set this crate reads, and not an SD-JWT VC either: `vc+sd-jwt`
     // with `@context` and no `vct` is the VCDM 2.0 type.
-    assert!(matches!(
-        SdJwtCredentialV2::from_sd_jwt(sd_jwt.clone()),
-        Err(SdJwtCredentialV2Error::Payload(_))
-    ));
+    let error = SdJwtCredentialV2::from_sd_jwt(sd_jwt.clone()).unwrap_err();
+    assert!(matches!(error, SdJwtCredentialV2Error::Payload(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
     assert!(matches!(
         SdJwtVc::from_sd_jwt(sd_jwt.clone()),
         Err(SdJwtVcError::VcdmPayload)
@@ -317,6 +325,7 @@ async fn issued_credential_round_trips() {
     // Every disclosure is applied; the issued payload carries the digests and the decoys.
     assert_eq!(issued.processed().disclosed.len(), 3);
     assert!(!issued.payload().contains_key("_sd_alg"));
+    assert_eq!(issued.payload()["issuer"], issuer.did.as_str());
     let raw = issued.sd_jwt().payload().unwrap();
     assert_eq!(raw["_sd_alg"], "sha-256");
     assert_eq!(raw["credentialSubject"]["_sd"].as_array().unwrap().len(), 4);
@@ -520,7 +529,7 @@ async fn typ_routes_between_the_two_credential_types() {
     ));
     assert!(matches!(
         SdJwtVc::from_sd_jwt(wrong_typ.clone()),
-        Err(SdJwtVcError::Claims(reason)) if reason.contains("vct")
+        Err(SdJwtVcError::Claims(error)) if error.to_string().contains("vct")
     ));
     // Unless the caller accepts that `typ`.
     let accepted = BTreeSet::from(["dc+sd-jwt".to_owned()]);
@@ -1336,6 +1345,35 @@ async fn presentation_credential_errors_are_reported_by_index() {
             .unwrap_err(),
     );
     assert!(matches!(&errors[0], (0, ValidationError::Signature(_))));
+}
+
+#[tokio::test]
+async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
+    // Checked at the time of the credential options (2025), not the clock.
+    let (issuer, signer) = issuer();
+    let (holder, _) = holder();
+    let later = builder(
+        credential(&issuer.did, &holder.did)
+            .with_valid_from(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+    )
+    .sign(&signer)
+    .await
+    .unwrap();
+    let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(later.sd_jwt())]).await;
+    let errors = credential_errors(
+        presentation_validator()
+            .validate_v2(&vp, &presentation_options())
+            .await
+            .unwrap_err(),
+    );
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [(0, ValidationError::NotYetValid { not_before, .. })]
+                if *not_before == Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+        ),
+        "{errors:?}"
+    );
 }
 
 #[tokio::test]

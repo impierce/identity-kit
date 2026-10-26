@@ -1,6 +1,10 @@
 //! Specification vectors for `did:jwk`: the P-256 and X25519 examples of the did:jwk method
 //! specification and its Create and Read operations.
 #![cfg(feature = "did-jwk")]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
 
 use std::error::Error as _;
 
@@ -219,6 +223,11 @@ async fn create_operation() {
         DidJwk::document(&did(&too_long)),
         Err(ResolutionErrorKind::InvalidDid.into())
     );
+    // At the limit, it passes the length check and fails on its content.
+    let at_limit = &too_long[..DidJwk::MAX_DID_LEN];
+    let error = DidJwk::document(&did(at_limit)).unwrap_err();
+    assert_eq!(error.kind(), &ResolutionErrorKind::InvalidDid);
+    assert!(!error.to_string().contains("longer than"), "{error}");
     assert!(matches!(
         DidJwk.produce(std::slice::from_ref(&huge), ()).await,
         Err(ProduceError::UnsupportedKey { index: 0, .. })

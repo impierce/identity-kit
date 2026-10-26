@@ -23,6 +23,7 @@
 //!   [`vectors`], the specification vectors the tests of this crate run against.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+mod cause;
 pub mod did;
 #[cfg(feature = "domain-linkage")]
 #[cfg_attr(docsrs, doc(cfg(feature = "domain-linkage")))]

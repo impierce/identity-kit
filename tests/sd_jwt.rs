@@ -3,10 +3,23 @@
 //! Appendix A.1, the complex and credential examples of A.2 to A.4, all verified against the
 //! issuer key of Appendix A.5 and the holder key in `cnf`.
 #![cfg(feature = "sd-jwt")]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 mod common;
 
 use std::collections::BTreeSet;
+use std::error::Error as _;
 
 use chrono::{TimeZone as _, Utc};
 use identity_kit::claim_path;
@@ -114,6 +127,7 @@ fn disclosure_for_an_object_property() {
         assert_eq!(disclosure.value(), &json!("Möbius"));
         assert!(!disclosure.is_element());
         assert_eq!(disclosure.as_str(), variant);
+        assert_eq!(disclosure.to_string(), variant);
     }
     assert_eq!(
         Disclosure::parse(canonical)
@@ -158,18 +172,30 @@ fn disclosure_for_an_array_element() {
 
 #[test]
 fn malformed_disclosures_are_rejected() {
-    for bad in [
-        "not base64url!",
-        &common::encode(b"\"a string\""),
-        &common::encode(b"[\"salt\"]"),
-        &common::encode(b"[1, \"name\", 2]"),
-        &common::encode(b"[\"salt\", 1, 2]"),
-        &common::encode(b"[\"salt\", \"name\", 2, 3]"),
+    for (bad, why) in [
+        ("not base64url!", "not base64url"),
+        (&common::encode(b"\"a string\""), "not a JSON array"),
+        (
+            &common::encode(b"[\"salt\"]"),
+            "not an array of two or three elements",
+        ),
+        (
+            &common::encode(b"[1, \"name\", 2]"),
+            "the salt is not a string",
+        ),
+        (
+            &common::encode(b"[\"salt\", 1, 2]"),
+            "the claim name is not a string",
+        ),
+        (
+            &common::encode(b"[\"salt\", \"name\", 2, 3]"),
+            "not an array of two or three elements",
+        ),
     ] {
         assert!(
             matches!(
                 Disclosure::parse(bad),
-                Err(SdJwtError::InvalidDisclosure { .. })
+                Err(SdJwtError::InvalidDisclosure { ref reason, .. }) if reason == why
             ),
             "{bad}"
         );
@@ -676,11 +702,11 @@ fn processing_rejections() {
     // Malformed digest containers and `_sd_alg`.
     assert!(matches!(
         sd_jwt(json!({"_sd": "x"}), vec![]).process(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { source: None, .. })
     ));
     assert!(matches!(
         sd_jwt(json!({"_sd": [1]}), vec![]).process(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { source: None, .. })
     ));
     assert!(matches!(
         sd_jwt(json!({"_sd_alg": "md5"}), vec![]).process(),
@@ -688,12 +714,14 @@ fn processing_rejections() {
     ));
     assert!(matches!(
         sd_jwt(json!({"_sd_alg": 5}), vec![]).process(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { .. })
     ));
-    assert!(matches!(
-        SdJwt::new(Jwt::new(unsigned_jwt(&header, &json!([]))).unwrap(), vec![]).process(),
-        Err(SdJwtError::Payload(_))
-    ));
+    // A payload that is not a JSON object: the source is the JSON error.
+    let error = SdJwt::new(Jwt::new(unsigned_jwt(&header, &json!([]))).unwrap(), vec![])
+        .process()
+        .unwrap_err();
+    assert!(matches!(error, SdJwtError::Payload { .. }));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 
     // Other hash algorithms are honoured.
     let digest_512 = given_name.digest(HashAlgorithm::Sha512);
@@ -894,6 +922,15 @@ fn disclosures_nested_beyond_the_limit_are_refused() {
     };
     assert!(wrapped(SdJwtBuilder::MAX_DEPTH - 8).is_ok());
     assert!(too_deep(wrapped(SdJwtBuilder::MAX_DEPTH - 7)));
+    // Plain arrays count towards the depth too.
+    let in_arrays = |wraps: usize| {
+        let (inner, disclosures) = disclosure_chain(&[Link::Property; 8]);
+        let payload = json!({ "a": (0..wraps).fold(inner, |inner, _| json!([inner])) });
+        let jwt = Jwt::new(unsigned_jwt(&json!({ "alg": "ES256" }), &payload)).unwrap();
+        SdJwt::new(jwt, disclosures).process()
+    };
+    assert!(in_arrays(SdJwtBuilder::MAX_DEPTH - 9).is_ok());
+    assert!(too_deep(in_arrays(SdJwtBuilder::MAX_DEPTH - 8)));
 }
 
 #[test]
@@ -903,7 +940,7 @@ fn builder_reproduces_the_simple_example() {
     for claim in ["iss", "iat", "exp", "cnf"] {
         claims.insert(claim.to_owned(), spec_payload[claim].clone());
     }
-    let encoded = SdJwtBuilder::new(claims.clone())
+    let builder = SdJwtBuilder::new(claims.clone())
         .conceal(["given_name"])
         .conceal(["family_name"])
         .conceal(["email"])
@@ -913,9 +950,11 @@ fn builder_reproduces_the_simple_example() {
         .conceal(["birthdate"])
         .conceal(["updated_at"])
         .conceal(claim_path!["nationalities", ()])
-        .with_salt_generator(spec_salts(vector!("simple", "disclosures.txt")))
-        .encode()
-        .unwrap();
+        .with_salt_generator(spec_salts(vector!("simple", "disclosures.txt")));
+    assert_eq!(builder.claims(), &claims);
+    assert_eq!(builder.concealed().len(), 9);
+    assert_eq!(builder.concealed()[0], claim_path!["given_name"]);
+    let encoded = builder.encode().unwrap();
 
     // The disclosures have the specification's contents, in its order; only the JSON
     // whitespace differs, so the digests do too.
@@ -1073,13 +1112,13 @@ fn builder_rejects_bad_paths() {
     reserved.insert("_sd".to_owned(), json!([]));
     assert!(matches!(
         SdJwtBuilder::new(reserved).conceal(["sub"]).encode(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { .. })
     ));
     let mut alg = claims.clone();
     alg.insert("_sd_alg".to_owned(), json!("sha-256"));
     assert!(matches!(
         SdJwtBuilder::new(alg).encode(),
-        Err(SdJwtError::Payload(_))
+        Err(SdJwtError::Payload { .. })
     ));
     let mut dots = claims;
     dots.insert("...".to_owned(), json!("x"));
@@ -1121,3 +1160,21 @@ trait AwaitBlocking: Future + Sized {
 }
 
 impl<F: Future> AwaitBlocking for F {}
+
+#[test]
+fn hash_algorithm_names() {
+    // RFC 9901 §4.1.1: `_sd_alg` names the algorithm by its IANA name.
+    for (algorithm, name) in [
+        (HashAlgorithm::Sha256, "sha-256"),
+        (HashAlgorithm::Sha384, "sha-384"),
+        (HashAlgorithm::Sha512, "sha-512"),
+    ] {
+        assert_eq!(algorithm.to_string(), name);
+        assert_eq!(serde_json::to_value(algorithm).unwrap(), json!(name));
+        assert_eq!(
+            serde_json::from_value::<HashAlgorithm>(json!(name)).unwrap(),
+            algorithm
+        );
+    }
+    assert!(serde_json::from_value::<HashAlgorithm>(json!("md5")).is_err());
+}

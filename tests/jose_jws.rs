@@ -1,5 +1,11 @@
 //! Specification vectors for JWS: RFC 7515 Appendix A, RFC 8037 Appendix A, RFC 8812 (ES256K,
 //! cross-checked with `k256`), and the compact serialization grammar.
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "DER lengths here are below 0x10000, and the test modulus bytes wrap on purpose"
+)]
+
+use std::error::Error as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -523,6 +529,21 @@ fn rsa_keys_need_a_modulus_and_an_exponent() {
             }))
         );
     }
+    // An exponent of zero octets only is refused, not trimmed past its end.
+    for e in ["AA", "AAA"] {
+        let key: Jwk =
+            serde_json::from_value(json!({ "kty": "RSA", "n": RFC7515_A2_N, "e": e })).unwrap();
+        assert!(
+            matches!(
+                jws.verify(&DefaultVerifier, &key),
+                Err(VerificationError::Key(JwkError::InvalidKey {
+                    key: "RSA",
+                    ..
+                }))
+            ),
+            "e {e:?}"
+        );
+    }
 }
 
 #[test]
@@ -789,9 +810,27 @@ fn bad_headers_are_rejected() {
     fn decode(header: &str) -> JwsError {
         CompactJws::decode(&compact(header, b"{}", &[0; 64])).unwrap_err()
     }
-    assert!(matches!(decode("not json"), JwsError::InvalidHeader(_)));
-    assert!(matches!(decode("[]"), JwsError::InvalidHeader(_)));
-    assert!(matches!(decode(r#"{"typ":"JWT"}"#), JwsError::InvalidHeader(m) if m.contains("alg")));
+    // Not JSON: the source is the JSON error. Not an object: there is none.
+    assert!(matches!(
+        decode("not json"),
+        JwsError::InvalidHeader {
+            source: Some(_),
+            ..
+        }
+    ));
+    assert!(
+        decode("not json")
+            .source()
+            .unwrap()
+            .is::<serde_json::Error>()
+    );
+    assert!(matches!(
+        decode("[]"),
+        JwsError::InvalidHeader { source: None, .. }
+    ));
+    assert!(
+        matches!(decode(r#"{"typ":"JWT"}"#), JwsError::InvalidHeader { reason, .. } if reason.contains("alg"))
+    );
     assert!(
         matches!(decode(r#"{"alg":"none"}"#), JwsError::UnsupportedAlgorithm(a) if a == "none")
     );
@@ -804,7 +843,10 @@ fn bad_headers_are_rejected() {
     assert!(matches!(decode(r#"{"alg":256}"#), JwsError::UnsupportedAlgorithm(a) if a == "256"));
     assert!(matches!(
         decode(r#"{"alg":"ES256","kid":5}"#),
-        JwsError::InvalidHeader(_)
+        JwsError::InvalidHeader {
+            source: Some(_),
+            ..
+        }
     ));
     assert!(matches!(
         decode(r#"{"alg":"ES256","crit":["exp"],"exp":1}"#),

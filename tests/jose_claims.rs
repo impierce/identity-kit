@@ -1,5 +1,11 @@
 //! Specification vectors for `JwtClaims`: the RFC 7519 §3.1 claims set as RFC 7515 Appendix A.3
 //! signs it, `aud` (RFC 7519 §4.1.3) and `NumericDate` (RFC 7519 §2).
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+
+use std::error::Error as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -79,14 +85,13 @@ fn a_signed_payload_reads_as_claims() {
 
     // Not JSON, or not the JSON asked for.
     let not_json = CompactJws::decode(RFC8037_JWS).unwrap();
-    assert!(matches!(
-        not_json.claims::<JwtClaims>(),
-        Err(JwsError::InvalidPayload(_))
-    ));
-    assert!(matches!(
-        jws.claims::<Vec<String>>(),
-        Err(JwsError::InvalidPayload(_))
-    ));
+    for error in [
+        not_json.claims::<JwtClaims>().unwrap_err(),
+        jws.claims::<Vec<String>>().unwrap_err(),
+    ] {
+        assert!(matches!(error, JwsError::InvalidPayload { .. }));
+        assert!(error.source().unwrap().is::<serde_json::Error>(), "{error}");
+    }
 }
 
 /// RFC 7519 §4.1.3: `aud` is an array of strings or, with one audience, may be a single string.

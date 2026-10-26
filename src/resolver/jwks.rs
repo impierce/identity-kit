@@ -104,7 +104,7 @@ struct KeySet {
 
 impl<C> JwksResolver<C> {
     /// How long [`new`](Self::new) keeps an issuer's key set: five minutes.
-    pub const DEFAULT_TTL: Duration = Duration::from_secs(300);
+    pub const DEFAULT_TTL: Duration = Duration::from_mins(5);
 
     /// How many issuers [`new`](Self::new) keeps key sets of.
     pub const DEFAULT_CAPACITY: usize = 256;
@@ -394,5 +394,21 @@ pub enum JwksError {
 impl From<JwksError> for KeyResolutionError {
     fn from(error: JwksError) -> Self {
         Self::new(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_entry_expires_at_its_instant() {
+        let now = Instant::now();
+        let entry = Entry {
+            keys: Arc::from([]),
+            expires_at: Some(now),
+        };
+        assert!(entry.is_live(now.checked_sub(Duration::from_nanos(1)).unwrap()));
+        assert!(!entry.is_live(now));
     }
 }

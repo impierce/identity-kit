@@ -11,6 +11,7 @@ Thanks for your interest in contributing to `identity-kit`!
   Raise it in its own pull request, together with the dependency updates it unlocks, and mark the pull request as a breaking change (`build!:`), since a crate built on an older toolchain stops compiling.
 - [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) to run the dependency checks locally: `cargo install --locked cargo-deny`.
 - [`cargo-hack`](https://github.com/taiki-e/cargo-hack) to check every feature on its own: `cargo install --locked cargo-hack`.
+- [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) to check the public API for breaking changes: `cargo install --locked cargo-semver-checks`.
 
 ## Checks
 
@@ -25,6 +26,7 @@ cargo hack clippy --each-feature --locked -- -D warnings
 cargo build --no-default-features --features did-key,software --locked
 cargo publish --dry-run --locked
 cargo deny check
+cargo semver-checks --package identity-kit --all-features --baseline-rev main
 ```
 
 The lower layer (`did`, `jose`, `keys`, `identity`, `resolver`, `methods`) never imports the upper layer (`vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`).
@@ -61,7 +63,8 @@ fuzz/run.sh sd_jwt 600      # one target, ten minutes
 Testing every mutant takes hours, so the `Mutants` workflow runs weekly and when started by hand from the Actions tab, optionally limited to a glob such as `src/jose/**`, not on pull requests.
 It splits the crate across twelve jobs, and tests `src/keys/pkcs11.rs` in a job of its own against a SoftHSM2 token.
 Each job lists its missed mutants in the run summary; they are findings to triage, and the run does not fail on them.
-[`.cargo/mutants.toml`](.cargo/mutants.toml) holds the configuration.
+A missed mutant gets a test that fails with it, or a fix when that test shows a bug.
+Only a mutant no test can catch (a trivial impl, or an equivalent change no input tells apart) goes into `exclude_re` in [`.cargo/mutants.toml`](.cargo/mutants.toml), the configuration, with a comment that says why.
 
 To check the mutants of your own change before opening a pull request:
 
@@ -83,6 +86,10 @@ It must follow [Conventional Commits](https://www.conventionalcommits.org/), whi
 The title also determines the next version number and the changelog entry, so describe the change from a user's point of view.
 Write it in terse commit style: drop articles (_the_, _a_, _an_) and wrap code literals in backticks, as in `` feat(did): add `Did` and `DidUrl` types ``.
 Write `feat: add description to file`, not `feat: add a description to the file`.
+
+A change that breaks the public API needs `!` in the title (`feat!:`, `fix!:`): before 1.0 it bumps the minor version, and the changelog lists it as breaking.
+CI's `SemVer` job runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on the public API, with all features, against the pull request's base, unless the title already has the `!`, and fails when it finds a breaking change.
+After adding the `!`, re-run that job: it reads the current title, but editing the title doesn't start it.
 
 ## Releases
 

@@ -206,7 +206,10 @@ impl CompactJws {
     /// # Ok::<(), identity_kit::jose::JwsError>(())
     /// ```
     pub fn claims<T: DeserializeOwned>(&self) -> Result<T, JwsError> {
-        serde_json::from_slice(&self.payload).map_err(|e| JwsError::InvalidPayload(e.to_string()))
+        serde_json::from_slice(&self.payload).map_err(|e| JwsError::InvalidPayload {
+            reason: "not JSON of the expected shape".to_owned(),
+            source: Some(e),
+        })
     }
 
     /// The compact serialization as it was decoded.
@@ -240,18 +243,33 @@ impl AsRef<str> for CompactJws {
     }
 }
 
+/// A [`JwsError::InvalidHeader`] for `reason`, caused by `source`.
+fn header_error(reason: &str, source: serde_json::Error) -> JwsError {
+    JwsError::InvalidHeader {
+        reason: reason.to_owned(),
+        source: Some(source),
+    }
+}
+
 /// Parses the header JSON, naming an unsupported `alg` and rejecting `crit` and `b64: false`.
 fn parse_header(json: &[u8]) -> Result<JwsHeader, JwsError> {
-    let value: Value =
-        serde_json::from_slice(json).map_err(|e| JwsError::InvalidHeader(e.to_string()))?;
+    let value: Value = serde_json::from_slice(json).map_err(|e| header_error("not JSON", e))?;
     let Some(object) = value.as_object() else {
-        return Err(JwsError::InvalidHeader("not a JSON object".to_owned()));
+        return Err(JwsError::InvalidHeader {
+            reason: "not a JSON object".to_owned(),
+            source: None,
+        });
     };
     match object.get("alg") {
         Some(Value::String(alg)) if alg.parse::<JwsAlgorithm>().is_ok() => {}
         Some(Value::String(alg)) => return Err(JwsError::UnsupportedAlgorithm(alg.clone())),
         Some(other) => return Err(JwsError::UnsupportedAlgorithm(other.to_string())),
-        None => return Err(JwsError::InvalidHeader("missing `alg`".to_owned())),
+        None => {
+            return Err(JwsError::InvalidHeader {
+                reason: "missing `alg`".to_owned(),
+                source: None,
+            });
+        }
     }
     if object
         .get("b64")
@@ -260,7 +278,7 @@ fn parse_header(json: &[u8]) -> Result<JwsHeader, JwsError> {
         return Err(JwsError::UnencodedPayload);
     }
     let header: JwsHeader =
-        serde_json::from_value(value).map_err(|e| JwsError::InvalidHeader(e.to_string()))?;
+        serde_json::from_value(value).map_err(|e| header_error("a member is malformed", e))?;
     if let Some(crit) = &header.crit {
         return Err(JwsError::UnsupportedCritical(crit.clone()));
     }
@@ -335,7 +353,7 @@ pub async fn encode_compact(
     }
     // Serializing a header cannot fail: every field is a string, a list, a `Jwk` or a `Value`.
     let header_json =
-        serde_json::to_vec(header).map_err(|e| JwsError::InvalidHeader(e.to_string()))?;
+        serde_json::to_vec(header).map_err(|e| header_error("not serializable", e))?;
     let mut token = base64url::encode(&header_json);
     token.push('.');
     token.push_str(&base64url::encode(payload));

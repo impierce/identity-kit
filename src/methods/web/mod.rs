@@ -15,6 +15,7 @@
 //! [did:web method]: https://w3c-ccg.github.io/did-method-web/
 
 use core::fmt;
+use core::fmt::Write as _;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -62,15 +63,33 @@ pub const CONTEXT: [&str; 2] = [
 /// reference), so an implementation must refuse what [`ReqwestClient`] refuses, or weigh the
 /// consequence: plain `http`, redirects, hosts that resolve to loopback, private, link-local or
 /// other non-public addresses, unbounded bodies and unbounded waits.
+///
+/// A client follows no redirect itself: it returns the 3xx response, with its `Location` in
+/// [`HttpResponse::location`]. A caller that follows redirects, such as the status list check
+/// of the `sd-jwt` feature, fetches each target with a new call, so that every hop goes
+/// through the client's rules.
 #[async_trait::async_trait]
 pub trait HttpClient: Send + Sync {
-    /// Fetches `url`, returning the status and the body of the final response.
+    /// Fetches `url`, returning the status and the body of the response.
     ///
     /// # Errors
     ///
     /// Any failure to get a response: a refused URL, a network or TLS error, a timeout, a body
     /// over the client's limit. An HTTP error status is a response, not an error.
     async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError>;
+
+    /// Fetches `url` asking for a body of `media_type`, sent as the `Accept` header.
+    ///
+    /// The default calls [`get`](Self::get) and sends no `Accept` header; [`ReqwestClient`]
+    /// sends it. Implement it when a server negotiates the content type.
+    ///
+    /// # Errors
+    ///
+    /// As [`get`](Self::get).
+    async fn get_accepting(&self, url: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
+        let _ = media_type;
+        self.get(url).await
+    }
 }
 
 macro_rules! forward_http_client {
@@ -80,13 +99,21 @@ macro_rules! forward_http_client {
             async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
                 (**self).get(url).await
             }
+
+            async fn get_accepting(
+                &self,
+                url: &Url,
+                media_type: &str,
+            ) -> Result<HttpResponse, HttpError> {
+                (**self).get_accepting(url, media_type).await
+            }
         }
     )*};
 }
 
 forward_http_client!(&T, Box<T>, Arc<T>);
 
-/// An HTTP response: the status code and the body.
+/// An HTTP response: the status code, the body and, for a redirect, its target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HttpResponse {
@@ -94,15 +121,26 @@ pub struct HttpResponse {
     pub status: u16,
     /// The body, which a `did:web` resolver parses as JSON.
     pub body: Vec<u8>,
+    /// The `Location` header of a 3xx response, as sent: possibly relative to the requested
+    /// URL. `None` for any other response.
+    pub location: Option<String>,
 }
 
 impl HttpResponse {
-    /// A response with `status` and `body`.
+    /// A response with `status` and `body`, and no `location`.
     pub fn new(status: u16, body: impl Into<Vec<u8>>) -> Self {
         Self {
             status,
             body: body.into(),
+            location: None,
         }
+    }
+
+    /// This response with the `Location` header `location`.
+    #[must_use]
+    pub fn with_location(mut self, location: impl Into<String>) -> Self {
+        self.location = Some(location.into());
+        self
     }
 }
 
@@ -231,7 +269,7 @@ pub fn did_from_url(url: &Url) -> Result<Did, WebError> {
     }
     let mut id = domain.to_owned();
     if let Some(port) = url.port() {
-        id.push_str(&format!("%3A{port}"));
+        let _ = write!(id, "%3A{port}");
     }
     let mut segments: Vec<&str> = url
         .path_segments()
@@ -288,7 +326,7 @@ fn encode_segment(segment: &str) -> String {
             i += 3;
             continue;
         } else {
-            out.push_str(&format!("%{b:02X}"));
+            let _ = write!(out, "%{b:02X}");
         }
         i += 1;
     }
@@ -391,6 +429,7 @@ fn is_dot_segment(segment: &str) -> bool {
 
 /// Decodes the percent-encoded octets of a DID segment, which the DID syntax has checked to be
 /// complete; non-UTF-8 octets become replacement characters and fail the host check.
+#[expect(clippy::cast_possible_truncation, reason = "a hex digit is below 16")]
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());

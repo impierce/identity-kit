@@ -2,6 +2,14 @@
 //! specification, its Read operation over an in-file `HttpClient`, and the hardened default
 //! client's refusals.
 #![cfg(feature = "did-web")]
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
 
 use std::collections::HashMap;
 use std::error::Error as _;
@@ -117,6 +125,53 @@ impl HttpClient for Mock {
     }
 }
 
+/// A client that answers with the media type it was asked for.
+struct Echo;
+
+#[async_trait::async_trait]
+impl HttpClient for Echo {
+    async fn get(&self, _: &Url) -> Result<HttpResponse, HttpError> {
+        Ok(HttpResponse::new(200, "no media type"))
+    }
+
+    async fn get_accepting(&self, _: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
+        Ok(HttpResponse::new(200, media_type))
+    }
+}
+
+#[tokio::test]
+async fn get_accepting_is_forwarded_and_defaults_to_get() {
+    let target = url("https://example.com/statuslists/1");
+    let accept = "application/statuslist+jwt";
+    // `&T`, `Box<T>` and `Arc<T>` pass the media type on, rather than falling back to `get`.
+    async fn ask<C: HttpClient>(client: C, url: &Url, accept: &str) -> String {
+        let response = client.get_accepting(url, accept).await.unwrap();
+        String::from_utf8(response.body).unwrap()
+    }
+    assert_eq!(ask(Echo, &target, accept).await, accept);
+    assert_eq!(ask(&Echo, &target, accept).await, accept);
+    assert_eq!(ask(Box::new(Echo), &target, accept).await, accept);
+    let boxed: Box<dyn HttpClient> = Box::new(Echo);
+    assert_eq!(ask(boxed, &target, accept).await, accept);
+    assert_eq!(
+        ask(std::sync::Arc::new(Echo), &target, accept).await,
+        accept
+    );
+
+    // A client implementing `get` only answers `get_accepting` with it.
+    let mock = Mock::serving(target.as_str(), 200, "{}");
+    assert_eq!(
+        mock.get_accepting(&target, accept).await.unwrap(),
+        mock.get(&target).await.unwrap()
+    );
+    assert_eq!(mock.calls.lock().unwrap().len(), 2);
+
+    // A redirect carries its target; nothing else does.
+    let moved = HttpResponse::new(302, Vec::new()).with_location("/statuslists/2");
+    assert_eq!(moved.location.as_deref(), Some("/statuslists/2"));
+    assert_eq!(HttpResponse::new(200, Vec::new()).location, None);
+}
+
 #[test]
 fn did_to_url_mapping_examples() {
     // did:web specification, "Create" and "Optional Path Considerations".
@@ -183,6 +238,11 @@ fn url_to_did() {
     assert_eq!(
         did_from_url(&url("https://example.com/a%20b/c~d/e!f/g%zz")).unwrap(),
         did("did:web:example.com:a%20b:c%7Ed:e%21f:g%25zz")
+    );
+    // Only `%` with two hex digits is an escape; any other `%` is encoded.
+    assert_eq!(
+        did_from_url(&url("https://example.com/x%20/~ab/abc%2x0")).unwrap(),
+        did("did:web:example.com:x%20:%7Eab:abc%252x0")
     );
     // Only the file name at the end is dropped: `.well-known` elsewhere is a path segment.
     assert_eq!(
@@ -329,6 +389,10 @@ fn did_to_url_rejections() {
             .to_string(),
         "`did:web:192.0.2.1` is not a valid did:web: the host is an IP address"
     );
+    // Three dots, written either way, are no dot segment but an ordinary name.
+    for three in ["did:web:example.com:...", "did:web:example.com:%2E%2E%2E"] {
+        assert!(document_url(&did(three)).is_ok(), "{three}");
+    }
 }
 
 #[tokio::test]
@@ -743,10 +807,119 @@ mod local_network {
     use std::net::IpAddr;
 
     use identity_kit::methods::web::{LocalNetwork, ReqwestClient};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
+
+    fn gzip(data: &[u8]) -> Vec<u8> {
+        use std::io::Write as _;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[tokio::test]
+    async fn sends_the_media_type_and_decodes_gzip() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/statuslists/1"))
+            .and(header("accept", "application/statuslist+jwt"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_bytes(gzip(b"a compressed body")),
+            )
+            .mount(&server)
+            .await;
+        let target = url(&format!(
+            "https://127.0.0.1:{}/statuslists/1",
+            server.address().port()
+        ));
+        let client = loopback();
+        let response = client
+            .get_accepting(&target, "application/statuslist+jwt")
+            .await
+            .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"a compressed body");
+        let requests = server.received_requests().await.unwrap();
+        let headers = &requests[0].headers;
+        assert_eq!(headers["accept"], "application/statuslist+jwt");
+        assert!(
+            headers["accept-encoding"]
+                .to_str()
+                .unwrap()
+                .contains("gzip")
+        );
+        // `get` asks for no media type in particular, so the server's mock does not match.
+        assert_eq!(client.get(&target).await.unwrap().status, 404);
+        assert_eq!(
+            server.received_requests().await.unwrap()[1].headers["accept"],
+            "*/*"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_body_limit_counts_decoded_bytes() {
+        let server = MockServer::start().await;
+        let expanding = gzip(&[b'a'; 4096]);
+        assert!(expanding.len() < 100, "{}", expanding.len());
+        Mock::given(method("GET"))
+            .and(path("/expanding"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .set_body_bytes(expanding),
+            )
+            .mount(&server)
+            .await;
+        let target = url(&format!(
+            "https://127.0.0.1:{}/expanding",
+            server.address().port()
+        ));
+        // A hundred bytes on the wire, four thousand once decoded.
+        let error = loopback()
+            .with_max_body(1000)
+            .get(&target)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("exceeds 1000 bytes"), "{error}");
+        let response = loopback().with_max_body(4096).get(&target).await.unwrap();
+        assert_eq!(response.body, [b'a'; 4096]);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_is_returned_not_followed() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/moved"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/statuslists/1"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/created"))
+            .respond_with(ResponseTemplate::new(201).insert_header("location", "/statuslists/1"))
+            .mount(&server)
+            .await;
+        let port = server.address().port();
+        let client = loopback();
+        let response = client
+            .get(&url(&format!("https://127.0.0.1:{port}/moved")))
+            .await
+            .unwrap();
+        assert_eq!(response.status, 302);
+        assert_eq!(response.location.as_deref(), Some("/statuslists/1"));
+        let response = client
+            .get(&url(&format!("https://127.0.0.1:{port}/created")))
+            .await
+            .unwrap();
+        assert_eq!((response.status, response.location), (201, None));
+        // Two requests: the redirect target was not fetched.
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests.iter().all(|r| r.url.path() != "/statuslists/1"));
+    }
 
     fn loopback() -> ReqwestClient {
         ReqwestClient::builder()
@@ -812,9 +985,11 @@ mod local_network {
         assert!(error.to_string().contains("exceeds 4 bytes"), "{error}");
     }
 
-    #[tokio::test]
-    async fn a_streamed_body_is_limited_too() {
-        // A body without `Content-Length`, sent in chunks, is counted as it arrives.
+    /// Fetches a body sent as `chunks` without `Content-Length`, reading at most `max_body` bytes.
+    async fn get_chunked(
+        chunks: &'static [&'static str],
+        max_body: usize,
+    ) -> Result<HttpResponse, HttpError> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = tokio::spawn(async move {
@@ -822,23 +997,57 @@ mod local_network {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 1024];
             let _ = stream.read(&mut request).await.unwrap();
-            stream
-                .write_all(
-                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
-                      5\r\nhello\r\n5\r\nworld\r\n0\r\n\r\n",
-                )
-                .await
-                .unwrap();
+            let mut response = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+            for chunk in chunks {
+                response.extend_from_slice(format!("{:x}\r\n{chunk}\r\n", chunk.len()).as_bytes());
+            }
+            response.extend_from_slice(b"0\r\n\r\n");
+            stream.write_all(&response).await.unwrap();
         });
-        let error = loopback()
-            .with_max_body(6)
+        let response = loopback()
+            .with_max_body(max_body)
             .get(&url(&format!(
                 "https://127.0.0.1:{port}/.well-known/did.json"
             )))
-            .await
-            .unwrap_err();
-        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+            .await;
         server.await.unwrap();
+        response
+    }
+
+    #[tokio::test]
+    async fn a_streamed_body_is_limited_too() {
+        let error = get_chunked(&["hello", "world"], 6).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+        let error = get_chunked(&["helloworld"], 6).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds 6 bytes"), "{error}");
+        let response = get_chunked(&["hello", "world"], 10).await.unwrap();
+        assert_eq!(response.body, b"helloworld");
+    }
+
+    #[tokio::test]
+    async fn a_body_of_exactly_the_limit_is_read() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("helloworld"))
+            .mount(&server)
+            .await;
+        let target = url(&format!("https://127.0.0.1:{}/x", server.address().port()));
+        let response = loopback().with_max_body(10).get(&target).await.unwrap();
+        assert_eq!(response.body, b"helloworld");
+        let error = loopback().with_max_body(9).get(&target).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds 9 bytes"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn only_web_urls_are_fetched_when_local_addresses_are_allowed() {
+        // Other schemes are refused before any host lookup.
+        for other in ["file:///etc/passwd", "ftp://127.0.0.1/did.json"] {
+            let error = loopback().get(&url(other)).await.unwrap_err();
+            assert!(
+                error.to_string().contains("is not an HTTPS URL"),
+                "{other}: {error}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -5,6 +5,10 @@
 //! and 2) and a trailing comma (Example 4). Where an example is a fragment without `id`, the
 //! `id` the surrounding prose names is added. "Byte-identical" means that parsing an example and
 //! serializing it again gives the same compact JSON, member for member, as the example itself.
+#![expect(
+    clippy::too_many_lines,
+    reason = "a test walks through a specification example from start to end"
+)]
 
 use identity_kit::did::{
     Context, DEFAULT_MAX_LEN, Did, DidDocument, DidError, DidUrl, DidUrlReference, DocumentError,
@@ -731,9 +735,9 @@ fn service_endpoint_forms() {
     .unwrap_err();
     assert!(err.to_string().contains("at least one URI"), "{err}");
     for bad in [
-        r#"42"#,
-        r#"true"#,
-        r#"null"#,
+        r"42",
+        r"true",
+        r"null",
         r#""not a uri""#,
         r#"["https://a.example", 1]"#,
     ] {
@@ -822,7 +826,7 @@ fn method_refs_are_strings_or_objects() {
         r##"["did:example:1#a","#b","?versionId=2#c",{"id":"did:example:1#d","type":"Multikey","controller":"did:example:1","publicKeyMultibase":"z6Mk"}]"##
     );
     for bad in [
-        r#"42"#,
+        r"42",
         r#""not a did url""#,
         r#""key-1""#,
         r#"{"id":"did:example:1#d"}"#,
@@ -836,19 +840,19 @@ fn method_refs_are_strings_or_objects() {
 #[test]
 fn invalid_identifiers_are_rejected_on_read() {
     for (json, what) in [
-        (r##"{"id":"example:1"}"##, "id"),
+        (r#"{"id":"example:1"}"#, "id"),
         (
-            r##"{"id":"did:example:1","controller":"DID:example:2"}"##,
+            r#"{"id":"did:example:1","controller":"DID:example:2"}"#,
             "controller",
         ),
         (
-            r##"{"id":"did:example:1","alsoKnownAs":["no scheme"]}"##,
+            r#"{"id":"did:example:1","alsoKnownAs":["no scheme"]}"#,
             "alsoKnownAs",
         ),
-        (r##"{"id":"did:example:1","@context":[]}"##, "@context"),
-        (r##"{"id":"did:example:1","@context":5}"##, "@context"),
+        (r#"{"id":"did:example:1","@context":[]}"#, "@context"),
+        (r#"{"id":"did:example:1","@context":5}"#, "@context"),
         (
-            r##"{"id":"did:example:1","authentication":"did:example:1#k"}"##,
+            r#"{"id":"did:example:1","authentication":"did:example:1#k"}"#,
             "authentication",
         ),
         (
@@ -860,7 +864,7 @@ fn invalid_identifiers_are_rejected_on_read() {
             "method id",
         ),
         (
-            r##"{"@context":"https://www.w3.org/ns/did/v1"}"##,
+            r#"{"@context":"https://www.w3.org/ns/did/v1"}"#,
             "missing id",
         ),
     ] {
@@ -1130,7 +1134,7 @@ fn services_are_unique_by_id() {
 fn duplicate_method_ids_are_rejected_on_read_and_cleared_on_removal() {
     let listed = |key: &str| {
         format!(
-            r##"{{"id":"did:example:1#k","type":"Multikey","controller":"did:example:1","publicKeyMultibase":"{key}"}}"##
+            r#"{{"id":"did:example:1#k","type":"Multikey","controller":"did:example:1","publicKeyMultibase":"{key}"}}"#
         )
     };
     let (a, b) = (listed("z6MkA"), listed("z6MkB"));
@@ -1809,7 +1813,7 @@ proptest! {
         }
         let mut back = moved.clone();
         back.map_dids(|d| if d == new_id { old_id.clone() } else { d });
-        if document.controller.iter().flat_map(|c| c.iter()).all(|c| *c != new_id) {
+        if document.controller.iter().flat_map(identity_kit::did::OneOrMany::iter).all(|c| *c != new_id) {
             prop_assert_eq!(back, document);
         }
     }

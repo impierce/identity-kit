@@ -1,4 +1,10 @@
 //! Specification vectors for `Jwk` (RFC 7517, RFC 7518, RFC 7638, RFC 8037, RFC 8410, RFC 5480).
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "DER lengths here are below 0x10000, and the test modulus bytes wrap on purpose"
+)]
+
+use std::error::Error as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -100,6 +106,13 @@ fn rfc7517_a2_private_key_keeps_d_in_json_but_not_in_debug_or_display() {
         debug.contains("MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4"),
         "{debug}"
     );
+    assert!(!debug.contains("additional"), "{debug}");
+    let mut extended = jwk.public();
+    extended
+        .additional_mut()
+        .insert("ext".to_owned(), json!(true));
+    let debug = format!("{extended:?}");
+    assert!(debug.contains("additional"), "{debug}");
 
     let display = jwk.to_string();
     assert!(
@@ -785,10 +798,12 @@ fn decoding_keys_are_built_for_supported_types() {
     let bad: Jwk =
         serde_json::from_value(json!({ "kty": "OKP", "crv": "Ed25519", "x": "not base64!" }))
             .unwrap();
-    assert!(matches!(
-        bad.to_decoding_key(),
-        Err(JwkError::DecodingKey(_))
-    ));
+    let error = bad.to_decoding_key().unwrap_err();
+    assert!(matches!(error, JwkError::DecodingKey(_)));
+    // The source is `jsonwebtoken`'s error, and the message still ends with it.
+    let source = error.source().unwrap();
+    assert!(source.is::<jsonwebtoken::errors::Error>());
+    assert!(error.to_string().ends_with(&source.to_string()));
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -3,6 +3,14 @@
 //! with its key in a `jwk` header, the binding rule table, `Resolver`, `JwkResolver` and
 //! `CompositeKeyResolver`.
 #![cfg(all(feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 mod common;
 
@@ -554,6 +562,7 @@ async fn composite_tries_resolvers_in_order() {
         .with_shared(found.clone())
         .with_shared(never.clone());
     assert_eq!(composite.len(), 3);
+    assert!(!composite.is_empty());
     assert_eq!(
         composite
             .resolve_key(&reference, KeyRole::Issuer)

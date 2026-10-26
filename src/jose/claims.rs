@@ -84,6 +84,11 @@ pub struct JwtClaims {
 
 /// Deserializes a `NumericDate` (RFC 7519 §2): a JSON number, possibly with a fraction, floored
 /// to whole seconds.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "a fraction is floored to an `i64` only within the range `i64` covers"
+)]
 pub(crate) fn numeric_date<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<i64>, D::Error> {

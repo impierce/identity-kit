@@ -7,6 +7,8 @@
 
 mod common;
 
+use std::error::Error as _;
+
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
@@ -194,10 +196,9 @@ async fn suite_presentation_with_three_credentials() {
     // NumericDate, so it does not decode as a claims set.
     let raw: Value = serde_json::from_slice(credential.decode().unwrap().payload()).unwrap();
     assert_eq!(raw["iat"], "2010-01-01T19:23:24Z");
-    assert!(matches!(
-        decode_credential_v2(&credential),
-        Err(ValidationError::Payload(_))
-    ));
+    let error = decode_credential_v2(&credential).unwrap_err();
+    assert!(matches!(error, ValidationError::Payload(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 }
 
 #[tokio::test]
@@ -388,7 +389,14 @@ async fn presentation_validates() {
     );
     assert_eq!(decoded.header.typ.as_deref(), Some("vp+jwt"));
     assert_eq!(decoded.holder(), Some(&Uri::from(holder.did.clone())));
-    assert_eq!(decoded.claims.aud.as_ref().map(|aud| aud.len()), Some(1));
+    assert_eq!(
+        decoded
+            .claims
+            .aud
+            .as_ref()
+            .map(identity_kit::did::OneOrMany::len),
+        Some(1)
+    );
     let [validated] = decoded.credentials.as_slice() else {
         panic!("one credential");
     };

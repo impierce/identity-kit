@@ -1,7 +1,7 @@
 //! OpenAPI schemas for the JSON types (feature `utoipa`): [`utoipa::ToSchema`] for
 //! [`DidDocument`], [`VerificationMethod`], [`MethodRef`], [`Service`], [`Jwk`],
-//! `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` with its display and claim
-//! metadata.
+//! `DomainLinkageConfiguration`, `ClaimPath`, `TypeMetadata` with its display and claim
+//! metadata, and `StatusType`.
 //!
 //! The schemas are written by hand rather than derived: every type carries open extension
 //! properties and custom serialization that a derive cannot express. Each schema describes the
@@ -446,7 +446,9 @@ impl ToSchema for crate::domain_linkage::DomainLinkageConfiguration {
 
 #[cfg(feature = "vc")]
 mod claim_path {
-    use super::*;
+    use super::{
+        Cow, ObjectBuilder, PartialSchema, RefOr, Schema, ToSchema, Type, array, one_of, string,
+    };
     use crate::vc::ClaimPath;
 
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
@@ -490,7 +492,10 @@ mod claim_path {
 
 #[cfg(feature = "sd-jwt")]
 mod type_metadata {
-    use super::*;
+    use super::{
+        AdditionalProperties, Cow, ObjectBuilder, PartialSchema, RefBuilder, RefOr, Schema,
+        Schemas, ToSchema, Type, any_object, array, collect, schema_ref, string, uri,
+    };
     use crate::sd_jwt_vc::{ClaimDisplay, ClaimMetadata, DisplayMetadata, TypeMetadata};
     use crate::vc::ClaimPath;
 
@@ -651,6 +656,44 @@ mod type_metadata {
     impl ToSchema for ClaimDisplay {
         fn name() -> Cow<'static, str> {
             Cow::Borrowed("ClaimDisplay")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Token Status List
+// ---------------------------------------------------------------------------------------------
+
+#[cfg(feature = "sd-jwt")]
+mod status {
+    use super::{Cow, ObjectBuilder, PartialSchema, RefOr, Schema, ToSchema, Type, one_of, string};
+    use crate::sd_jwt_vc::StatusType;
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]
+    impl PartialSchema for StatusType {
+        fn schema() -> RefOr<Schema> {
+            one_of(
+                [
+                    string("A status type with a registered name of its own.")
+                        .enum_values(Some(["VALID", "INVALID", "SUSPENDED"]))
+                        .into(),
+                    ObjectBuilder::new()
+                        .schema_type(Type::Integer)
+                        .minimum(Some(0))
+                        .maximum(Some(255))
+                        .description(Some("Any other status type value."))
+                        .into(),
+                ],
+                "A status type (Token Status List §7): its registered name, or its value.",
+            )
+            .into()
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]
+    impl ToSchema for StatusType {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("StatusType")
         }
     }
 }

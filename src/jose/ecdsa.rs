@@ -164,8 +164,7 @@ fn integer(input: &[u8]) -> Result<(&[u8], &[u8]), EcdsaSignatureError> {
                 "integer with a superfluous leading zero",
             ));
         }
-        [0, magnitude @ ..] => magnitude,
-        magnitude => magnitude,
+        [0, magnitude @ ..] | magnitude => magnitude,
     };
     Ok((magnitude, rest))
 }

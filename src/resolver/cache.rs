@@ -168,6 +168,24 @@ impl fmt::Debug for DocumentCache {
             .field("ttl", &self.ttl)
             .field("capacity", &self.capacity)
             .field("len", &self.len())
-            .finish()
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::did::DidDocument;
+
+    #[test]
+    fn an_entry_expires_at_its_instant() {
+        let did: Did = "did:example:123".parse().unwrap();
+        let now = Instant::now();
+        let entry = Entry {
+            result: ResolutionResult::new(DidDocument::new(did)),
+            expires_at: Some(now),
+        };
+        assert!(entry.is_live(now.checked_sub(Duration::from_nanos(1)).unwrap()));
+        assert!(!entry.is_live(now));
     }
 }

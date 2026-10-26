@@ -29,9 +29,9 @@ pub enum SdJwtCredentialV2Error {
     /// A claim that must not be selectively disclosed came from a disclosure.
     #[error("`{0}` must not be selectively disclosed")]
     DisclosedRegisteredClaim(String),
-    /// The processed payload is not a JWT claims set.
+    /// The processed payload is not a JWT claims set; the source is the JSON error.
     #[error("the payload is not a JWT claims set: {0}")]
-    Payload(String),
+    Payload(#[source] serde_json::Error),
     /// `cnf` or `status` is not what the claim must hold.
     #[error("claim `{claim}`: {reason}")]
     InvalidClaim {
@@ -194,7 +194,7 @@ impl SdJwtCredentialV2 {
             }
         }
         let claims: JwtClaims = serde_json::from_value(Value::Object(processed.payload.clone()))
-            .map_err(|e| SdJwtCredentialV2Error::Payload(e.to_string()))?;
+            .map_err(SdJwtCredentialV2Error::Payload)?;
         let mut rest = claims.clone();
         let cnf = take_claim(&mut rest, "cnf")?;
         let status = take_claim(&mut rest, "status")?;
@@ -432,6 +432,7 @@ impl SdJwtCredentialV2Builder {
     }
 
     /// A builder over a copy of this credential, nothing else set.
+    #[must_use]
     pub fn clone_credential(&self) -> Self {
         Self::new(self.credential.clone())
     }
@@ -563,14 +564,18 @@ impl SdJwtCredentialV2Builder {
     ///
     /// [`SdJwtError::NotConcealable`], the errors of [`SdJwtBuilder::sign`], and those of
     /// [`SdJwtCredentialV2::from_sd_jwt`] should the credential not read back.
+    ///
+    /// # Panics
+    ///
+    /// Never: the claims always serialize to a JSON object.
     pub async fn sign(
         self,
         signer: &dyn Signer,
     ) -> Result<SdJwtCredentialV2, SdJwtCredentialV2Error> {
         self.check_concealed()?;
-        let claims = match serde_json::to_value(self.claims()).expect("claims serialize") {
-            Value::Object(map) => map,
-            _ => unreachable!("a struct serializes to an object"),
+        let Value::Object(claims) = serde_json::to_value(self.claims()).expect("claims serialize")
+        else {
+            unreachable!("a struct serializes to an object")
         };
         let mut header = JwsHeader::new(signer.alg()).with_typ(SdJwtCredentialV2::TYP);
         header.kid = self.kid.or_else(|| signer.kid().map(str::to_owned));

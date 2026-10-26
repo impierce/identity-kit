@@ -734,7 +734,7 @@ impl Jwk {
             }
             _ => return Err(self.unsupported()),
         };
-        result.map_err(|e| JwkError::DecodingKey(e.to_string()))
+        result.map_err(JwkError::DecodingKey)
     }
 
     /// Checks that this is a `kty` key on curve `crv`.

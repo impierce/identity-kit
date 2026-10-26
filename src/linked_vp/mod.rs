@@ -121,6 +121,10 @@ pub const CREDENTIAL_TYP: [&str; 2] = ["vc+ld+jwt", "'vc+ld+jwt'"];
 /// assert!(matches!(service.service_endpoint, ServiceEndpoint::Uri(_)));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[expect(
+    clippy::similar_names,
+    reason = "the URLs given and the URIs of the service endpoint are both needed"
+)]
 pub fn service(id: DidUrl, urls: impl IntoIterator<Item = Url>) -> Result<Service, LinkedVpError> {
     let mut uris = Vec::new();
     for url in urls {

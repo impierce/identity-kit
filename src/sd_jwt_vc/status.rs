@@ -2,12 +2,14 @@
 //! status list token.
 
 use core::fmt;
+use core::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::cause::cause;
 use crate::jose::{JwsError, JwsHeader, Signer, base64url};
 use crate::vc::{Jwt, JwtClaims};
 
@@ -118,6 +120,28 @@ impl StatusListRef {
 
 /// A status type value (Token Status List §7): a number in `0..=255`, with the registered
 /// meanings as constants.
+///
+/// It serializes as its registered name when it has one of its own (`"VALID"`, `"INVALID"`,
+/// `"SUSPENDED"`) and as a number otherwise. `APPLICATION_SPECIFIC` names `0x03` and
+/// `0x0C`-`0x0F` alike, so those serialize as numbers too. It deserializes from a registered
+/// name, a number in `0..=255`, or that number as a decimal string; [`parse`](Self::parse) and
+/// [`FromStr`] accept the same strings. Names are case-sensitive. Since the form depends on the
+/// value, deserializing needs a self-describing format such as JSON or CBOR.
+///
+/// # Examples
+///
+/// ```
+/// use identity_kit::sd_jwt_vc::StatusType;
+/// use serde_json::json;
+///
+/// assert_eq!(serde_json::to_value(StatusType::SUSPENDED)?, json!("SUSPENDED"));
+/// assert_eq!(serde_json::to_value(StatusType(3))?, json!(3));
+/// assert_eq!(serde_json::from_value::<StatusType>(json!("INVALID"))?, StatusType::INVALID);
+/// assert_eq!(serde_json::from_value::<StatusType>(json!(12))?, StatusType(0x0C));
+/// assert_eq!("VALID".parse::<StatusType>()?, StatusType::VALID);
+/// assert!("APPLICATION_SPECIFIC".parse::<StatusType>().is_err());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StatusType(pub u8);
 
@@ -148,6 +172,26 @@ impl StatusType {
             _ => None,
         }
     }
+
+    /// The value named `s`: `VALID`, `INVALID`, `SUSPENDED`, or a decimal number in
+    /// `0..=255`.
+    ///
+    /// # Errors
+    ///
+    /// [`StatusListError::UnknownStatusType`] for anything else, `APPLICATION_SPECIFIC`
+    /// included: it names several values.
+    pub fn parse(s: &str) -> Result<Self, StatusListError> {
+        match s {
+            "VALID" => Ok(Self::VALID),
+            "INVALID" => Ok(Self::INVALID),
+            "SUSPENDED" => Ok(Self::SUSPENDED),
+            digits if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) => digits
+                .parse()
+                .map(Self)
+                .map_err(|_| StatusListError::UnknownStatusType(s.to_owned())),
+            _ => Err(StatusListError::UnknownStatusType(s.to_owned())),
+        }
+    }
 }
 
 impl fmt::Display for StatusType {
@@ -162,6 +206,55 @@ impl fmt::Display for StatusType {
 impl From<u8> for StatusType {
     fn from(value: u8) -> Self {
         Self(value)
+    }
+}
+
+impl FromStr for StatusType {
+    type Err = StatusListError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl Serialize for StatusType {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.name() {
+            Some(name) => serializer.serialize_str(name),
+            None => serializer.serialize_u8(self.0),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StatusType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StatusTypeVisitor;
+
+        impl serde::de::Visitor<'_> for StatusTypeVisitor {
+            type Value = StatusType;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("VALID, INVALID, SUSPENDED or a number in 0..=255")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<StatusType, E> {
+                StatusType::parse(s).map_err(E::custom)
+            }
+
+            fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<StatusType, E> {
+                u8::try_from(value)
+                    .map(StatusType)
+                    .map_err(|_| E::invalid_value(serde::de::Unexpected::Unsigned(value), &self))
+            }
+
+            fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<StatusType, E> {
+                u8::try_from(value)
+                    .map(StatusType)
+                    .map_err(|_| E::invalid_value(serde::de::Unexpected::Signed(value), &self))
+            }
+        }
+
+        deserializer.deserialize_any(StatusTypeVisitor)
     }
 }
 
@@ -188,9 +281,15 @@ pub enum StatusListError {
         /// The number of entries in the list.
         len: usize,
     },
-    /// `lst` is not base64url, or not a ZLIB-compressed byte array.
-    #[error("invalid status list: {0}")]
-    Compression(String),
+    /// `lst` is not base64url, or not a ZLIB-compressed byte array. The source is the base64url
+    /// error, when that is the cause.
+    #[error("invalid status list: {reason}{}", cause(.source.as_ref()))]
+    Compression {
+        /// What is wrong with `lst`.
+        reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
     /// The decompressed list is larger than the limit.
     #[error("the status list decompresses to more than {limit} bytes")]
     TooLarge {
@@ -200,12 +299,17 @@ pub enum StatusListError {
     /// The status list token is not a compact JWS this crate decodes.
     #[error("invalid JWS: {0}")]
     Jws(#[from] JwsError),
+    /// A string that is neither a registered status type name of its own nor a number in
+    /// `0..=255`.
+    #[error("{0:?} is not VALID, INVALID, SUSPENDED or a number in 0..=255")]
+    UnknownStatusType(String),
     /// The status list token's `typ` is not `statuslist+jwt`.
     #[error("header `typ` is {0:?}, not `statuslist+jwt`")]
     UnexpectedTyp(Option<String>),
-    /// The status list token's payload is not a status list token claims set.
+    /// The status list token's payload is not a status list token claims set; the source is
+    /// the JSON error.
     #[error("the payload is not a status list token: {0}")]
-    Payload(String),
+    Payload(#[source] serde_json::Error),
     /// The token's `sub` is not the `uri` of the reference.
     #[error("status list token `sub` {sub:?} is not the referenced {uri:?}")]
     SubjectMismatch {
@@ -383,16 +487,19 @@ impl StatusList {
     /// [`StatusListError::TooLarge`].
     pub fn from_lst(bits: u8, lst: &str, max_bytes: usize) -> Result<Self, StatusListError> {
         check_bits(bits)?;
-        let compressed = base64url::decode(lst)
-            .map_err(|e| StatusListError::Compression(format!("`lst` is not base64url: {e}")))?;
+        let compressed = base64url::decode(lst).map_err(|e| StatusListError::Compression {
+            reason: "`lst` is not base64url".to_owned(),
+            source: Some(Box::new(e)),
+        })?;
         let bytes = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&compressed, max_bytes)
             .map_err(|e| match e.status {
                 miniz_oxide::inflate::TINFLStatus::HasMoreOutput => {
                     StatusListError::TooLarge { limit: max_bytes }
                 }
-                status => {
-                    StatusListError::Compression(format!("`lst` is not ZLIB data: {status:?}"))
-                }
+                status => StatusListError::Compression {
+                    reason: format!("`lst` is not ZLIB data: {status:?}"),
+                    source: None,
+                },
             })?;
         Ok(Self {
             bits,
@@ -545,8 +652,7 @@ impl StatusListToken {
         if jws.header().typ.as_deref() != Some(Self::TYP) {
             return Err(StatusListError::UnexpectedTyp(jws.header().typ.clone()));
         }
-        let token = serde_json::from_slice(jws.payload())
-            .map_err(|e| StatusListError::Payload(e.to_string()))?;
+        let token = serde_json::from_slice(jws.payload()).map_err(StatusListError::Payload)?;
         Ok((jws.header().clone(), token))
     }
 
@@ -555,6 +661,11 @@ impl StatusListToken {
     /// # Errors
     ///
     /// [`StatusListError::Jws`] when signing fails.
+    ///
+    /// # Panics
+    ///
+    /// Never: the token always serializes to JSON, and the JWS is one this function has just
+    /// encoded.
     pub async fn sign(&self, signer: &dyn Signer) -> Result<Jwt, StatusListError> {
         let mut header = JwsHeader::new(signer.alg()).with_typ(Self::TYP);
         header.kid = signer.kid().map(str::to_owned);

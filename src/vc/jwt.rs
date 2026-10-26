@@ -55,15 +55,22 @@ impl Jwt {
     ///
     /// [`JwsError::InvalidPayload`] when `additional` holds a registered claim, which would put
     /// the member in the payload twice; otherwise as [`encode_compact`].
+    ///
+    /// # Panics
+    ///
+    /// Never: a claims set always serializes to JSON.
     pub async fn sign(
         header: &JwsHeader,
         claims: &JwtClaims,
         signer: &dyn Signer,
     ) -> Result<Self, JwsError> {
         if let Some(name) = registered_in_additional(claims) {
-            return Err(JwsError::InvalidPayload(format!(
-                "registered claim `{name}` is set under `additional`; set its field instead"
-            )));
+            return Err(JwsError::InvalidPayload {
+                reason: format!(
+                    "registered claim `{name}` is set under `additional`; set its field instead"
+                ),
+                source: None,
+            });
         }
         let payload = serde_json::to_vec(claims).expect("a claims set serializes");
         encode_compact(header, &payload, signer).await.map(Self)

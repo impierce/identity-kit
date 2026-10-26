@@ -104,6 +104,7 @@ async fn default_document_has_no_key_agreement() {
     assert_eq!(value(&document), expected);
     assert!(document.key_agreement.is_empty());
     assert_eq!(document.verification_method.len(), 1);
+    assert!(!DidKey::default().key_agreement());
 }
 
 #[tokio::test]

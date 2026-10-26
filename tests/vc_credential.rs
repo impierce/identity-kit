@@ -1,6 +1,10 @@
 //! Specification vectors for `Credential`: the examples of the Verifiable Credentials Data
 //! Model 1.1 and its JWT profile (§6.3.1).
 #![cfg(feature = "vc")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
 
 use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{OneOrMany, Uri};
@@ -505,6 +509,27 @@ fn multiple_subjects_have_no_jwt_form() {
         Err(CredentialError::MultipleSubjects(2))
     );
 
+    let mut one = serde_json::to_value(&credential).unwrap();
+    one["credentialSubject"].as_array_mut().unwrap().truncate(1);
+    let one: Credential = serde_json::from_value(one).unwrap();
+    let claims = one.to_jwt_claims().unwrap();
+    assert_eq!(
+        claims.sub.as_deref(),
+        Some("did:example:ebfeb1f712ebc6f1c276e12ec21")
+    );
+    assert_eq!(
+        claims.additional["vc"]["credentialSubject"],
+        json!([{ "name": "Jayden Doe", "spouse": "did:example:c276e12ec21ebfeb1f712ebc6f1" }])
+    );
+    let decoded = Credential::from_jwt_claims(&claims).unwrap();
+    assert_eq!(
+        decoded
+            .subject()
+            .and_then(|subject| subject.id.as_ref())
+            .map(identity_kit::did::Uri::as_str),
+        Some("did:example:ebfeb1f712ebc6f1c276e12ec21")
+    );
+
     // A bearer credential has no `sub`.
     let bearer = Credential::new(
         uri("did:example:issuer"),
@@ -571,6 +596,15 @@ fn typed_objects_and_builders() {
             until: "expirationDate"
         })
     );
+    let instant = Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap();
+    Credential::new(
+        uri("did:example:issuer"),
+        instant,
+        Subject::new(uri("did:example:subject")),
+    )
+    .with_expiration_date(instant)
+    .check()
+    .unwrap();
 }
 
 #[test]

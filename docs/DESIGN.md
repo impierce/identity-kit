@@ -71,7 +71,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | -------------------- | ------- | ------------------------------------------------------------- |
 | `did-key`, `did-jwk` | on      | nothing: `bs58` and the multicodec header are always compiled in `jose` (ADR 0003) |
 | `did-web`            | on      | nothing; the method works over any injected `HttpClient`      |
-| `reqwest`            | on      | `reqwest` with `rustls` and `ring`: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
+| `reqwest`            | on      | `reqwest` with `rustls`, `ring` and gzip decoding: the hardened default `HttpClient` for `did:web` (implies `did-web`) |
 | `local-network` | off  | Development and tests only: `ReqwestClient::builder` opt-ins for loopback and private addresses (implies `reqwest`) |
 | `secp256k1`          | on      | `k256`                                                        |
 | `rsa`                | off     | `rsa`                                                         |
@@ -140,6 +140,12 @@ other) plus an optional human-readable detail and an optional `source()`, the wa
 the detail and source tell a refused URL, a timeout, an HTTP `500` and a malformed body apart in
 logs. RFC 9457 problem details, which the DID Resolution draft now prefers, map onto the same
 three parts.
+
+The other error types follow the same rule: an error caused by another error keeps it as its
+`source()`, typed where the type is already part of the API (`serde_json::Error`,
+`jsonwebtoken::errors::Error`, this crate's own errors) and boxed otherwise, instead of
+formatting it into a string. The message still ends with the cause's, so nothing is lost for
+logs, and a caller can walk the chain or downcast instead of matching on text.
 
 Serialization: empty arrays and `None` are omitted; `Did`, `DidUrl` serialize as strings;
 `Service.type` is a string when single; `@context` is emitted first.
@@ -272,9 +278,11 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   queries and fragments; encode a non-default port as `%3A<port>`), DID to document URL mapping
   (`https://host[:port]/.well-known/did.json` when no path segments, else
   `https://host[:port]/<segments>/did.json`), resolver over an injected `HttpClient` trait
-  (`ReqwestClient` default: HTTPS only, no redirects, 1 MiB limit, public addresses only, no
-  proxy, since a proxy resolves the host itself; `from_client` wraps an application's own
-  client, proxy included, whose address checks are then the application's),
+  (`ReqwestClient` default: HTTPS only, no redirects (a 3xx comes back with its `Location` for
+  a caller that follows it through the client again), 1 MiB limit counted after gzip decoding,
+  public addresses only, no proxy, since a proxy resolves the host itself; `from_client` wraps
+  an application's own client, proxy included, whose address checks are then the
+  application's; `get_accepting` sends an `Accept` header),
   producer taking the document URL and setting `@context` to `["https://www.w3.org/ns/did/v1",
   "https://w3id.org/security/suites/jws-2020/v1"]`. For development and tests only, the
   `local-network` feature adds `ReqwestClient::builder` with
@@ -323,7 +331,11 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   `assertionMethod`, `iss` or `issuer` bound to the party it names, time claims and validity
   period, key binding with `KeyBindingOptions` and the holder key from `cnf` (`jwk` or `kid`)
   under `authentication`, the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
-  `credentialStatus`, `StatusListCheck` over an `HttpClient`).
+  `credentialStatus`, `StatusListCheck` over an `HttpClient`: `Accept:
+  application/statuslist+jwt`, and at most three redirects, each target `https` and fetched
+  through the client again so that every hop passes its address checks; its `StatusError` tells
+  a list that could not be fetched from one that is invalid, signed by a key that does not
+  resolve, expired or too short, so that a caller can retry only the first).
   `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
   (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
@@ -361,8 +373,11 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
   `cargo tree` in that configuration must not list `chrono`, `miniz_oxide` or `sd-jwt-payload`.
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, and clippy with
-  `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds
-  (`dbg_macro`, `todo`, `print_stdout`, `print_stderr`). `clippy::pedantic` is not enabled.
+  `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds:
+  `clippy::pedantic` without `must_use_candidate` and `assert_is_empty`, and `dbg_macro`, `todo`, `print_stdout`,
+  `print_stderr`. A deliberate exception is an `#[expect(clippy::…, reason = "…")]` on the item,
+  or on a test file for the lints its specification vectors trip, never a bare `allow`.
+  `clippy.toml` lists the names `doc_markdown` takes for code but are not (`EdDSA`, `SIOPv2`, …).
 - Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID
   methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata, linked presentations),
   seeded from the specification vectors (`fuzz/seeds/`, one named file per example; the

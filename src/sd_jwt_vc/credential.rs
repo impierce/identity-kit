@@ -363,6 +363,10 @@ impl SdJwtVcClaims {
     }
 
     /// The claims as a JSON object.
+    ///
+    /// # Panics
+    ///
+    /// Never: the claims always serialize to a JSON object.
     pub fn to_map(&self) -> Map<String, Value> {
         match serde_json::to_value(self).expect("claims serialize") {
             Value::Object(map) => map,
@@ -395,9 +399,10 @@ pub enum SdJwtVcError {
     /// A claim that must not be selectively disclosed came from a disclosure.
     #[error("`{0}` must not be selectively disclosed")]
     DisclosedRegisteredClaim(String),
-    /// The processed payload is not an SD-JWT VC claims set: no `vct`, say.
+    /// The processed payload is not an SD-JWT VC claims set: no `vct`, say. The source is the
+    /// JSON error.
     #[error("the payload is not an SD-JWT VC: {0}")]
-    Claims(String),
+    Claims(#[source] serde_json::Error),
     /// A registered claim breaks a rule of SD-JWT VC.
     #[error("claim `{claim}`: {reason}")]
     InvalidClaim {
@@ -461,6 +466,7 @@ impl SdJwtVcBuilder {
     }
 
     /// A builder over a copy of these claims, nothing concealed.
+    #[must_use]
     pub fn clone_claims(&self) -> Self {
         Self::from_claims(self.claims.clone())
     }
@@ -736,7 +742,7 @@ impl SdJwtVc {
         }
         let claims: SdJwtVcClaims =
             serde_json::from_value(Value::Object(processed.payload.clone()))
-                .map_err(|e| SdJwtVcError::Claims(e.to_string()))?;
+                .map_err(SdJwtVcError::Claims)?;
         claims.check()?;
         Ok(Self {
             sd_jwt,

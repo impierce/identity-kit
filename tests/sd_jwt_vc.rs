@@ -2,8 +2,22 @@
 //! without key binding) and the PID credential of Appendix A.1; the Token Status List
 //! examples of §4, §5, §6 and Appendix C; the type metadata of §5.1, §5.6 and Appendix A.2.
 #![cfg(feature = "sd-jwt")]
+#![expect(
+    clippy::unreadable_literal,
+    reason = "numbers are written as the specifications' examples write them"
+)]
+#![expect(
+    clippy::items_after_statements,
+    reason = "a helper is defined next to the assertions that use it"
+)]
+#![expect(
+    clippy::needless_pass_by_value,
+    reason = "helpers take `json!` values and results by value, so that calls read naturally"
+)]
 
 mod common;
+
+use std::error::Error as _;
 
 use chrono::{TimeZone as _, Utc};
 use identity_kit::claim_path;
@@ -228,10 +242,9 @@ fn typ_and_registered_claims_are_enforced() {
     assert!(current.sd_jwt().disclosures().is_empty());
 
     // No `vct`.
-    assert!(matches!(
-        credential_of(Some(TYP), json!({"iss": "x"}), vec![]),
-        Err(SdJwtVcError::Claims(_))
-    ));
+    let error = credential_of(Some(TYP), json!({"iss": "x"}), vec![]).unwrap_err();
+    assert!(matches!(error, SdJwtVcError::Claims(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
     // `aka_vcts` rules.
     assert!(matches!(
         credential_of(Some(TYP), json!({"vct": "a", "aka_vcts": []}), vec![]),
@@ -266,7 +279,8 @@ fn typ_and_registered_claims_are_enforced() {
             json!("https://example.com/issuer"),
         );
         let mut payload = json!({"vct": "a"});
-        payload["_sd"] = json!([disclosure.digest(Default::default())]);
+        payload["_sd"] =
+            json!([disclosure.digest(identity_kit::sd_jwt_vc::HashAlgorithm::default())]);
         if claim == "vct" {
             payload.as_object_mut().unwrap().remove("vct");
         }
@@ -278,14 +292,15 @@ fn typ_and_registered_claims_are_enforced() {
     }
     // A sub-claim of one either.
     let disclosure = identity_kit::sd_jwt_vc::Disclosure::property("salt", "jwk", json!({}));
-    let payload = json!({"vct": "a", "cnf": {"_sd": [disclosure.digest(Default::default())]}});
+    let payload = json!({"vct": "a", "cnf": {"_sd": [disclosure.digest(identity_kit::sd_jwt_vc::HashAlgorithm::default())]}});
     assert!(matches!(
         credential_of(Some(TYP), payload, vec![disclosure.as_str()]),
         Err(SdJwtVcError::DisclosedRegisteredClaim(name)) if name == "cnf"
     ));
     // `sub` and `iat` may be disclosed.
     let sub = identity_kit::sd_jwt_vc::Disclosure::property("salt", "sub", json!("user_42"));
-    let payload = json!({"vct": "a", "_sd": [sub.digest(Default::default())]});
+    let payload =
+        json!({"vct": "a", "_sd": [sub.digest(identity_kit::sd_jwt_vc::HashAlgorithm::default())]});
     let credential = credential_of(Some(TYP), payload, vec![sub.as_str()]).unwrap();
     assert_eq!(credential.claims().sub.as_deref(), Some("user_42"));
 
@@ -392,6 +407,8 @@ fn status_claim_of_a_referenced_token() {
         })
     ));
     assert!(Status::new().is_empty());
+    assert!(!status.is_empty());
+    assert!(!other.is_empty());
 
     let sd_jwt = SdJwt::parse(vector!("status_list", "referenced_sd_jwt.txt")).unwrap();
     assert_eq!(
@@ -405,6 +422,97 @@ fn status_claim_of_a_referenced_token() {
         "https://example.com/statuslists/1"
     );
     assert_eq!(processed.payload["address"]["locality"], "Schulpforta");
+}
+
+#[test]
+fn status_type_names_and_numbers() {
+    // Token Status List, "OAuth Status Types" registry: the names of their own serialize as
+    // names, every other value (`APPLICATION_SPECIFIC` 0x03 and 0x0C-0x0F included) as a number.
+    for (status, serialized) in [
+        (StatusType::VALID, json!("VALID")),
+        (StatusType::INVALID, json!("INVALID")),
+        (StatusType::SUSPENDED, json!("SUSPENDED")),
+        (StatusType(0x03), json!(3)),
+        (StatusType(0x0C), json!(12)),
+        (StatusType(255), json!(255)),
+    ] {
+        assert_eq!(serde_json::to_value(status).unwrap(), serialized);
+        assert_eq!(
+            serde_json::from_value::<StatusType>(serialized).unwrap(),
+            status
+        );
+    }
+    // A number may also come as a decimal string, as `FromStr` reads it.
+    assert_eq!(
+        serde_json::from_value::<StatusType>(json!("12")).unwrap(),
+        StatusType(12)
+    );
+    for rejected in [
+        json!("APPLICATION_SPECIFIC"),
+        json!("valid"),
+        json!("REVOKED"),
+        json!(""),
+        json!("256"),
+        json!("+1"),
+        json!(" 1"),
+        json!(256),
+        json!(-1),
+        json!(1.0),
+        json!(null),
+        json!([0]),
+    ] {
+        assert!(
+            serde_json::from_value::<StatusType>(rejected.clone()).is_err(),
+            "{rejected}"
+        );
+    }
+
+    // `FromStr` accepts the same strings as `Deserialize`.
+    for (text, status) in [
+        ("VALID", StatusType::VALID),
+        ("INVALID", StatusType::INVALID),
+        ("SUSPENDED", StatusType::SUSPENDED),
+        ("0", StatusType::VALID),
+        ("3", StatusType(3)),
+        ("255", StatusType(255)),
+    ] {
+        assert_eq!(text.parse::<StatusType>().unwrap(), status);
+        assert_eq!(
+            serde_json::from_value::<StatusType>(json!(text)).unwrap(),
+            status
+        );
+    }
+    for text in ["APPLICATION_SPECIFIC", "Valid", "256", "-1", "0x01", ""] {
+        assert!(
+            matches!(
+                text.parse::<StatusType>(),
+                Err(StatusListError::UnknownStatusType(ref s)) if s == text
+            ),
+            "{text}"
+        );
+        assert!(serde_json::from_value::<StatusType>(json!(text)).is_err());
+    }
+    assert_eq!(
+        "Valid".parse::<StatusType>().unwrap_err().to_string(),
+        r#""Valid" is not VALID, INVALID, SUSPENDED or a number in 0..=255"#
+    );
+
+    // A status type inside a consumer's own model.
+    #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+    struct Revocation {
+        index: u64,
+        status: StatusType,
+    }
+    let revocation = Revocation {
+        index: 7,
+        status: StatusType::INVALID,
+    };
+    let text = serde_json::to_string(&revocation).unwrap();
+    assert_eq!(text, r#"{"index":7,"status":"INVALID"}"#);
+    assert_eq!(
+        serde_json::from_str::<Revocation>(&text).unwrap(),
+        revocation
+    );
 }
 
 #[test]
@@ -457,6 +565,15 @@ fn status_list_encoding_of_section_4() {
         serde_json::from_value::<StatusList>(value).unwrap(),
         rebuilt
     );
+    assert!(!rebuilt.is_empty());
+    assert!(StatusList::new(1, 0).unwrap().is_empty());
+
+    // Overwriting a status leaves its neighbours alone.
+    assert_eq!(rebuilt.get(1), Some(StatusType::SUSPENDED));
+    rebuilt.set(1, StatusType::INVALID).unwrap();
+    assert_eq!(rebuilt.get(1), Some(StatusType::INVALID));
+    assert_eq!(rebuilt.get(0), two_bit.get(0));
+    assert_eq!(rebuilt.get(2), two_bit.get(2));
 
     // Errors.
     assert!(matches!(
@@ -471,10 +588,14 @@ fn status_list_encoding_of_section_4() {
         rebuilt.set(0, StatusType(4)),
         Err(StatusListError::InvalidStatusValue { value: 4, bits: 2 })
     ));
+    // Not ZLIB data has no source; not base64url has the decoding error.
     assert!(matches!(
         StatusList::from_lst(1, "not-zlib", StatusList::MAX_BYTES),
-        Err(StatusListError::Compression(_))
+        Err(StatusListError::Compression { source: None, .. })
     ));
+    let error = StatusList::from_lst(1, "not base64url!", StatusList::MAX_BYTES).unwrap_err();
+    assert!(matches!(error, StatusListError::Compression { .. }));
+    assert!(error.source().unwrap().is::<base64::DecodeError>());
     assert!(matches!(
         StatusList::from_lst(1, "eNrbuRgAAhcBXQ", 1),
         Err(StatusListError::TooLarge { limit: 1 })
@@ -594,6 +715,15 @@ fn status_list_token_of_section_5_and_8() {
     assert_eq!(StatusType::INVALID.to_string(), "INVALID (0x01)");
     assert_eq!(StatusType(0x0c).to_string(), "0x0c");
     assert!(StatusType::VALID.is_valid());
+    // The registered values of Token Status List §7, by number and by name.
+    for (status, value, name) in [
+        (StatusType::VALID, 0, "VALID"),
+        (StatusType::INVALID, 1, "INVALID"),
+        (StatusType::SUSPENDED, 2, "SUSPENDED"),
+    ] {
+        assert_eq!(status.value(), value);
+        assert_eq!(status.name(), Some(name));
+    }
 
     // `typ` is required.
     let plain: Jwt = unsigned_jwt(&json!({"alg": "ES256"}), &payload)
@@ -609,6 +739,16 @@ fn status_list_token_of_section_5_and_8() {
     let mut without_iss = token.clone();
     without_iss.additional.clear();
     assert_eq!(StatusListToken::decode(&typed).unwrap().1, without_iss);
+    // A payload that is not a status list token claims set.
+    let no_list: Jwt = unsigned_jwt(
+        &json!({"alg": "ES256", "typ": "statuslist+jwt"}),
+        &json!({"sub": "https://example.com/statuslists/1"}),
+    )
+    .parse()
+    .unwrap();
+    let error = StatusListToken::decode(&no_list).unwrap_err();
+    assert!(matches!(error, StatusListError::Payload(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 
     // Built and serialized, the claims come out as the example's.
     let built = StatusListToken::new(
@@ -716,10 +856,9 @@ fn type_metadata_documents() {
             .check(),
         Err(TypeMetadataError::DuplicateSvgId(id)) if id == "same"
     ));
-    assert!(matches!(
-        TypeMetadata::parse(b"[]"),
-        Err(TypeMetadataError::Json(_))
-    ));
+    let error = TypeMetadata::parse(b"[]").unwrap_err();
+    assert!(matches!(error, TypeMetadataError::Json(_)));
+    assert!(error.source().unwrap().is::<serde_json::Error>());
 }
 
 #[test]
@@ -788,6 +927,15 @@ fn extending_type_metadata() {
         relaxing.extend(&base),
         Err(TypeMetadataError::IllegalOverride { property: "sd", .. })
     ));
+    // Repeating the fixed policy is no override.
+    let repeating = TypeMetadata::new("https://example.com/child")
+        .with_extends("https://example.com/base", None)
+        .with_claim(ClaimMetadata::new(["email"]).with_sd(SdPolicy::Never));
+    let effective = repeating.extend(&base).unwrap();
+    assert_eq!(
+        effective.claim(&claim_path!["email"]).unwrap().sd_policy(),
+        SdPolicy::Never
+    );
     let optional = TypeMetadata::new("https://example.com/child")
         .with_extends("https://example.com/base", None)
         .with_claim(ClaimMetadata::new(["name"]).with_mandatory(false));
@@ -803,6 +951,19 @@ fn extending_type_metadata() {
         .with_extends("https://example.com/base", None)
         .with_display(identity_kit::sd_jwt_vc::DisplayMetadata::new("de", "Kind"));
     assert_eq!(own.extend(&base).unwrap().display[0].name, "Kind");
+}
+
+#[test]
+fn sd_policy_names() {
+    // The values of `sd` (SD-JWT VC §5.6.4), in serde and in `Display` alike.
+    for (policy, name) in [
+        (SdPolicy::Always, "always"),
+        (SdPolicy::Allowed, "allowed"),
+        (SdPolicy::Never, "never"),
+    ] {
+        assert_eq!(policy.to_string(), name);
+        assert_eq!(serde_json::to_value(policy).unwrap(), name);
+    }
 }
 
 #[test]
@@ -860,8 +1021,18 @@ fn claim_metadata_validation_of_a_presentation() {
     let wrong_kind = TypeMetadata::new("x").with_claim(ClaimMetadata::new(["iss", "x"]));
     assert!(matches!(
         wrong_kind.check_claims(processed, false),
-        Err(TypeMetadataError::Path(_))
+        Err(TypeMetadataError::Path(error)) if error.expected == "an object" && error.depth == 1
     ));
+    let wrong_kind = TypeMetadata::new("x").with_claim(ClaimMetadata::new(claim_path!["iss", 0]));
+    assert!(matches!(
+        wrong_kind.check_claims(processed, false),
+        Err(TypeMetadataError::Path(error)) if error.expected == "an array"
+    ));
+    // `cnf`, an object of one member, is not an undisclosed-element placeholder.
+    let plain =
+        TypeMetadata::new("x").with_claim(ClaimMetadata::new(["cnf"]).with_sd(SdPolicy::Never));
+    assert!(issuance.processed().as_issued().contains_key("cnf"));
+    assert!(plain.check_claims(issuance.processed(), false).is_ok());
 
     // Undisclosed array elements count as present and disclosable, with nothing beneath.
     let simple =
