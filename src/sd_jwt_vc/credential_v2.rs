@@ -11,9 +11,10 @@ use serde_json::{Map, Value};
 
 use super::{
     ClaimPath, Confirmation, Disclosure, HashAlgorithm, KeyBinding, PathComponent, Processed,
-    SdJwt, SdJwtBuilder, SdJwtError, Status,
+    SdJwt, SdJwtBuilder, SdJwtError,
 };
 use crate::jose::{Jwk, JwsHeader, Signer};
+use crate::status_list::Status;
 use crate::vc::{CredentialError, CredentialV2, JwtClaims};
 
 /// Why an SD-JWT is not a VCDM 2.0 credential secured with SD-JWT.

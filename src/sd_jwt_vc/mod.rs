@@ -15,9 +15,12 @@
 //!   §3.2.1): `typ: vc+sd-jwt`, the [`CredentialV2`](crate::vc::CredentialV2) itself as the
 //!   payload, [`SdJwtCredentialV2Builder`] to issue one and
 //!   [`SdJwtCredentialValidator::validate_v2`] to validate one.
-//! - [`Status`], [`StatusListRef`] and [`StatusList`] implement the Token Status List
-//!   referenced from the `status` claim; [`TypeMetadata`] the SD-JWT VC type metadata with
-//!   its claim paths, integrity metadata and `extends` processing.
+//! - [`TypeMetadata`] implements the SD-JWT VC type metadata with its claim paths, integrity
+//!   metadata and `extends` processing.
+//!
+//! The Token Status List referenced from the `status` claim is not specific to SD-JWT and
+//! lives in [`status_list`](crate::status_list), which this feature enables. Its types are
+//! still reachable here, deprecated, for one release.
 //!
 //! The SD-JWT layer is implemented here rather than taken from a dependency (ADR 0005).
 //!
@@ -62,7 +65,6 @@ mod disclosure;
 mod error;
 mod hash;
 mod sd_jwt;
-mod status;
 mod type_metadata;
 pub mod validation;
 
@@ -76,10 +78,6 @@ pub use disclosure::Disclosure;
 pub use error::SdJwtError;
 pub use hash::HashAlgorithm;
 pub use sd_jwt::{DisclosedClaim, ELLIPSIS_KEY, KB_JWT_TYP, KeyBinding, Processed, SD_KEY, SdJwt};
-pub use status::{
-    Status, StatusList, StatusListError, StatusListRef, StatusListToken, StatusMechanism,
-    StatusType,
-};
 
 pub use crate::vc::{ClaimPath, ClaimPathError, PathComponent};
 pub use type_metadata::{
@@ -90,3 +88,28 @@ pub use validation::{
     KeyBindingOptions, SdJwtCredentialValidator, SdJwtValidationError, SdJwtValidationOptions,
     ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
 };
+
+// `#[deprecated]` has no effect on a `pub use` (rust-lang/rust#30827), so the old paths are
+// deprecated type aliases. Remove them in the release after the next one.
+
+/// Moved to [`status_list::Status`](crate::status_list::Status).
+#[deprecated(since = "0.3.0", note = "moved to `status_list::Status`")]
+pub type Status = crate::status_list::Status;
+/// Moved to [`status_list::StatusList`](crate::status_list::StatusList).
+#[deprecated(since = "0.3.0", note = "moved to `status_list::StatusList`")]
+pub type StatusList = crate::status_list::StatusList;
+/// Moved to [`status_list::StatusListError`](crate::status_list::StatusListError).
+#[deprecated(since = "0.3.0", note = "moved to `status_list::StatusListError`")]
+pub type StatusListError = crate::status_list::StatusListError;
+/// Moved to [`status_list::StatusListRef`](crate::status_list::StatusListRef).
+#[deprecated(since = "0.3.0", note = "moved to `status_list::StatusListRef`")]
+pub type StatusListRef = crate::status_list::StatusListRef;
+/// Moved to [`status_list::StatusListToken`](crate::status_list::StatusListToken).
+#[deprecated(since = "0.3.0", note = "moved to `status_list::StatusListToken`")]
+pub type StatusListToken = crate::status_list::StatusListToken;
+/// Moved to [`status_list::StatusMechanism`](crate::status_list::StatusMechanism).
+#[deprecated(since = "0.3.0", note = "moved to `status_list::StatusMechanism`")]
+pub type StatusMechanism<'a> = crate::status_list::StatusMechanism<'a>;
+/// Moved to [`status_list::StatusType`](crate::status_list::StatusType).
+#[deprecated(since = "0.3.0", note = "moved to `status_list::StatusType`")]
+pub type StatusType = crate::status_list::StatusType;

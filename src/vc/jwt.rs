@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 use crate::jose::numeric_date;
 use crate::jose::{CompactJws, JwsError, JwsHeader, JwtClaims, Signer, encode_compact};
 
@@ -144,7 +144,7 @@ fn registered_in_additional(claims: &JwtClaims) -> Option<&'static str> {
 }
 
 /// As [`numeric_date`], for a claim that must be present.
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 pub(crate) fn required_numeric_date<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<i64, D::Error> {

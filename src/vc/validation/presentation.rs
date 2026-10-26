@@ -349,7 +349,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
                         .credential()
                         .statuses()
                         .map(CredentialStatus::Vcdm)
-                        .chain(credential.status().map(CredentialStatus::SdJwt)),
+                        .chain(credential.status().map(CredentialStatus::StatusClaim)),
                     options.credentials.status,
                     options.credentials.time.now(),
                 )

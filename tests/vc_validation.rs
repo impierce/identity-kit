@@ -1191,7 +1191,7 @@ async fn issue_with_status_claim(issuer: &Issuer, credential: &Credential, idx: 
     .await
 }
 
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 mod status_claim {
     use std::sync::Mutex;
 
@@ -1211,7 +1211,7 @@ mod status_claim {
         ) -> Result<(), StatusError> {
             self.0.lock().unwrap().push(status.mechanism());
             match status {
-                CredentialStatus::SdJwt(status) => match &status.status_list {
+                CredentialStatus::StatusClaim(status) => match &status.status_list {
                     Some(reference) if reference.idx == 1 => {
                         Err(StatusError::Invalid("revoked".to_owned()))
                     }
@@ -1386,8 +1386,8 @@ mod status_claim {
     #[tokio::test]
     async fn status_list_check_reads_the_status_claim() {
         use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
-        use identity_kit::sd_jwt_vc::validation::StatusListCheck;
-        use identity_kit::sd_jwt_vc::{StatusList, StatusListToken, StatusType};
+        use identity_kit::status_list::StatusListCheck;
+        use identity_kit::status_list::{StatusList, StatusListToken, StatusType};
         use url::Url;
 
         /// A client serving one status list token at [`LIST_URI`].
@@ -1433,10 +1433,10 @@ mod status_claim {
     }
 }
 
-/// Without the `sd-jwt` feature the claim cannot reach a check, so `Strict` refuses it.
-#[cfg(not(feature = "sd-jwt"))]
+/// Without the `status-list` feature the claim cannot reach a check, so `Strict` refuses it.
+#[cfg(not(feature = "status-list"))]
 #[tokio::test]
-async fn status_claim_without_sd_jwt_feature() {
+async fn status_claim_without_status_list_feature() {
     let (issuer, holder) = (issuer(), holder());
     let credential = credential(&issuer.did, &holder.did);
     let jwt = issue_with_status_claim(&issuer, &credential, 1).await;

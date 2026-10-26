@@ -79,11 +79,11 @@ pub mod validation;
 pub use credential::Credential;
 pub use error::CredentialError;
 pub use jwt::Jwt;
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 pub(crate) use jwt::required_numeric_date;
 
 pub use crate::jose::JwtClaims;
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 pub(crate) use crate::jose::numeric_date;
 pub use model::{CONTEXT_V1, CONTEXT_V2, Party, Subject, TypedObject};
 pub use path::{ClaimPath, ClaimPathError, PathComponent};

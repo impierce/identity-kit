@@ -6,9 +6,8 @@
 use std::str::FromStr as _;
 
 use identity_kit::domain_linkage::DomainLinkageConfiguration;
-use identity_kit::sd_jwt_vc::{
-    Integrity, IntegrityAlgorithm, StatusList, StatusListToken, TypeMetadata,
-};
+use identity_kit::sd_jwt_vc::{Integrity, IntegrityAlgorithm, TypeMetadata};
+use identity_kit::status_list::{StatusList, StatusListToken};
 use identity_kit::vc::{ClaimPath, Jwt, PathComponent};
 use libfuzzer_sys::fuzz_target;
 use serde_json::Value;
