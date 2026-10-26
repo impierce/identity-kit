@@ -157,6 +157,8 @@ jobs:
       # The Token Status List without SD-JWT: the `status` claim of a JWT credential reaches the
       # `StatusCheck` with `vc` and `status-list` alone.
       - run: cargo test --no-default-features --features vc,status-list,did-key,did-jwk --locked --test vc_validation
+      # Without it: a `status` claim reaches no check, so `StatusPolicy::Strict` refuses it.
+      - run: cargo test --no-default-features --features vc,did-key,did-jwk --locked --test vc_validation
 
   # The crate packages and builds from the package, with no git or path dependencies.
   publish:
