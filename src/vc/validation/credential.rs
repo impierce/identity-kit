@@ -169,7 +169,8 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
                 .credential_status
                 .iter()
                 .map(CredentialStatus::Vcdm)
-                .chain(status.iter().map(status_claim_entry)),
+                .chain(status.iter().map(status_claim_entry))
+                .collect(),
             options.status,
             options.time.now(),
         )
@@ -206,7 +207,8 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
                 .credential
                 .statuses()
                 .map(CredentialStatus::Vcdm)
-                .chain(status.iter().map(status_claim_entry)),
+                .chain(status.iter().map(status_claim_entry))
+                .collect(),
             options.status,
             options.time.now(),
         )
@@ -236,9 +238,9 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     }
 
     /// Checks every status entry with this validator's check, per `policy`, at `now`.
-    pub(super) async fn check_status<'a>(
+    pub(super) async fn check_status(
         &self,
-        statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
+        statuses: Vec<CredentialStatus<'_>>,
         policy: StatusPolicy,
         now: DateTime<Utc>,
     ) -> Result<(), ValidationError> {

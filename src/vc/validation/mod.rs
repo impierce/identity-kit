@@ -210,9 +210,9 @@ macro_rules! forward_status_check {
 forward_status_check!(&T, Box<T>, Arc<T>);
 
 /// Checks every entry of `statuses` with `check` per `policy`, at `now`.
-pub(crate) async fn check_statuses<'a>(
+pub(crate) async fn check_statuses(
     check: Option<&dyn StatusCheck>,
-    statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
+    statuses: Vec<CredentialStatus<'_>>,
     policy: StatusPolicy,
     now: DateTime<Utc>,
 ) -> Result<(), ValidationError> {
