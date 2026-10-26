@@ -343,10 +343,12 @@ pub enum KeyReferenceError {
 }
 
 /// The role a key plays in a token, which decides what a DID document must say about it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum KeyRole {
-    /// The key signs as the issuer of a credential or status list: `assertionMethod`.
+    /// The key signs as the issuer of a credential or status list: `assertionMethod`. The
+    /// default.
+    #[default]
     Issuer,
     /// The key proves possession by the subject or holder (a presentation, a key binding JWT,
     /// an ID token): `authentication`.
