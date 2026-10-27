@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/impierce/identity-kit/compare/v0.2.2...v0.3.0) - 2026-10-27
+
+### Added
+
+- [**breaking**] keep error causes in `domain_linkage`, `linked_vp`, `methods` and `keys` ([#128](https://github.com/impierce/identity-kit/pull/128))
+- *(domain-linkage)* read and edit configuration entries unverified ([#127](https://github.com/impierce/identity-kit/pull/127))
+- add OpenAPI schemas for credentials, presentations and `JwsAlgorithm` ([#126](https://github.com/impierce/identity-kit/pull/126))
+- [**breaking**] move Token Status List out of `sd_jwt_vc` ([#133](https://github.com/impierce/identity-kit/pull/133))
+- validate plain JWTs with `JwtValidator` ([#125](https://github.com/impierce/identity-kit/pull/125))
+- [**breaking**] keep error causes as `source()` ([#118](https://github.com/impierce/identity-kit/pull/118))
+- *(sd-jwt)* negotiate content and follow redirects in `StatusListCheck` ([#104](https://github.com/impierce/identity-kit/pull/104))
+
+### Documentation
+
+- *(status-list)* pin Token Status List to draft 21 ([#135](https://github.com/impierce/identity-kit/pull/135))
+
+### Fixed
+
+- *(vc)* make validation futures `Send` ([#130](https://github.com/impierce/identity-kit/pull/130))
+- *(sd-jwt)* return error when OS RNG fails instead of panicking ([#119](https://github.com/impierce/identity-kit/pull/119))
+
+### Other
+
+- adopt `clippy::pedantic` as lint baseline ([#120](https://github.com/impierce/identity-kit/pull/120))
+
 ## [0.2.2](https://github.com/impierce/identity-kit/compare/v0.2.1...v0.2.2) - 2026-10-25
 
 ### Added
