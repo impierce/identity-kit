@@ -3,10 +3,6 @@
 //! SD-JWT key binding with the holder key from `cnf.kid`. Signatures are made with the RFC 8037
 //! Appendix A.1 and RFC 7515 Appendix A.3 keys, as in ADR 0004.
 #![cfg(all(feature = "sd-jwt", feature = "did-key", feature = "did-jwk"))]
-#![expect(
-    clippy::items_after_statements,
-    reason = "a helper is defined next to the assertions that use it"
-)]
 
 mod common;
 
@@ -16,7 +12,7 @@ use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, Verifica
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::{
     CompositeKeyResolver, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError,
-    KeyResolver, KeyRole, Resolver,
+    KeyResolver, KeyRole,
 };
 use identity_kit::sd_jwt_vc::{
     Confirmation, KeyBinding, KeyBindingOptions, SdJwtCredentialValidator, SdJwtValidationError,
@@ -29,6 +25,7 @@ use identity_kit::vc::validation::{
 use identity_kit::vc::{Credential, CredentialV2, Jwt, JwtClaims, Presentation, Subject};
 use serde_json::json;
 
+use common::fixtures::{RefusingRole, resolver};
 use common::{Ed25519Signer, Es256Signer};
 
 fn now() -> DateTime<Utc> {
@@ -37,13 +34,6 @@ fn now() -> DateTime<Utc> {
 
 fn issued_at() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-}
-
-fn resolver() -> Resolver {
-    Resolver::builder()
-        .with(DidKey::default())
-        .with(DidJwk)
-        .build()
 }
 
 /// `did:key` of the RFC 8037 key and the fragment of its verification method.
@@ -412,25 +402,12 @@ async fn cnf_kid_that_does_not_resolve_for_authentication() {
     ));
 
     // A key listed under `assertionMethod` only.
-    struct IssuerOnly(Resolver);
-
-    #[async_trait::async_trait]
-    impl KeyResolver for IssuerOnly {
-        async fn resolve_key(
-            &self,
-            key: &KeyReference,
-            role: KeyRole,
-        ) -> Result<Jwk, KeyResolutionError> {
-            if role == KeyRole::Subject {
-                return Err(KeyResolutionError::msg("not under `authentication`"));
-            }
-            self.0.resolve_key(key, role).await
-        }
-    }
+    let issuer_only = RefusingRole {
+        inner: resolver(),
+        role: KeyRole::Subject,
+    };
     let credential = present(Confirmation::kid(holder_kid().as_str()), &holder).await;
-    let error = validate(IssuerOnly(resolver()), &credential)
-        .await
-        .unwrap_err();
+    let error = validate(issuer_only, &credential).await.unwrap_err();
     assert!(matches!(
         &error,
         SdJwtValidationError::Validation(ValidationError::KeyResolution {

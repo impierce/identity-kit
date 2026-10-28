@@ -26,11 +26,12 @@ use identity_kit::jose::{
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::{
     CompositeKeyResolver, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError,
-    KeyResolver, KeyRole, Resolver,
+    KeyResolver, KeyRole,
 };
 use serde_json::{Value, json};
 use url::Url;
 
+use common::fixtures::resolver;
 use common::{Ed25519Signer, Es256Signer, RFC8037_X, unsigned_jwt};
 
 /// RFC 8037 Appendix A.3: the thumbprint of the A.2 public key.
@@ -52,13 +53,6 @@ fn ed25519() -> Jwk {
 
 fn did_url(s: &str) -> DidUrl {
     DidUrl::parse(s).unwrap()
-}
-
-fn resolver() -> Resolver {
-    Resolver::builder()
-        .with(DidKey::default())
-        .with(DidJwk)
-        .build()
 }
 
 // ---------------------------------------------------------------------------------------------

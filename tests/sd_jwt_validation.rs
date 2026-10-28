@@ -8,10 +8,6 @@
     reason = "a test walks through a specification example from start to end"
 )]
 #![expect(
-    clippy::unreadable_literal,
-    reason = "numbers are written as the specifications' examples write them"
-)]
-#![expect(
     clippy::items_after_statements,
     reason = "a helper is defined next to the assertions that use it"
 )]
@@ -22,7 +18,6 @@ use std::time::Duration;
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
-use identity_kit::did::{Did, DidUrl};
 use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
 use identity_kit::resolver::{KeyReference, KeyReferenceError, Resolver};
@@ -39,36 +34,15 @@ use identity_kit::vc::validation::{
 use identity_kit::vc::{CredentialError, Jwt, JwtClaims};
 use serde_json::json;
 
-use common::{Ed25519Signer, Es256Signer, unsigned_jwt};
+use common::fixtures::{Issuer, expires_at, issued_at, issuer};
+use common::{Es256Signer, unsigned_jwt};
 
 const VCT: &str = "https://credentials.example.com/identity_credential";
 const AUDIENCE: &str = "https://verifier.example.org";
 const NONCE: &str = "1234567890";
 
-fn issued_at() -> DateTime<Utc> {
-    Utc.timestamp_opt(1683000000, 0).unwrap()
-}
-
-fn expires_at() -> DateTime<Utc> {
-    Utc.timestamp_opt(1883000000, 0).unwrap()
-}
-
 fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap()
-}
-
-/// The issuer: `did:key` of the RFC 8037 key.
-struct Issuer {
-    did: Did,
-    kid: DidUrl,
-    signer: Ed25519Signer,
-}
-
-fn issuer() -> Issuer {
-    let signer = Ed25519Signer::rfc8037();
-    let did = DidKey::did(&signer.public_jwk()).unwrap();
-    let kid = did.join(&format!("#{}", did.method_specific_id())).unwrap();
-    Issuer { did, kid, signer }
 }
 
 fn holder() -> Es256Signer {
@@ -730,32 +704,18 @@ async fn disclosures_nested_beyond_the_limit_are_refused_before_any_key_is_resol
 
 #[cfg(feature = "did-web")]
 mod status_list_check {
-    use std::collections::HashMap;
     use std::error::Error as _;
-    use std::sync::Mutex;
 
     use identity_kit::jose::{JwsError, VerificationError};
-    use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
+    use identity_kit::methods::web::{HttpError, HttpResponse};
     use identity_kit::resolver::{CompositeKeyResolver, JwkResolver, KeyResolutionError};
     use identity_kit::status_list::StatusListCheck;
     use identity_kit::status_list::StatusListError;
     use identity_kit::vc::TypedObject;
-    use url::Url;
 
     use super::*;
-
-    /// A client serving fixed bodies.
-    struct Served(HashMap<String, (u16, String)>);
-
-    #[async_trait::async_trait]
-    impl HttpClient for Served {
-        async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-            match self.0.get(url.as_str()) {
-                Some((status, body)) => Ok(HttpResponse::new(*status, body.as_bytes())),
-                None => Err(HttpError::msg("connection refused")),
-            }
-        }
-    }
+    use crate::common::Ed25519Signer;
+    use crate::common::http::Web;
 
     const LIST_URI: &str = "https://example.com/statuslists/1";
 
@@ -850,24 +810,12 @@ mod status_list_check {
             parts[2] = common::encode(&[1u8; 64]);
             parts.join(".")
         };
-        let mut served = HashMap::new();
-        served.insert(LIST_URI.to_owned(), (200, token.as_str().to_owned()));
-        served.insert(
-            "https://example.com/statuslists/2".to_owned(),
-            (404, String::new()),
-        );
-        served.insert(
-            "https://example.com/statuslists/3".to_owned(),
-            (200, expired.as_str().to_owned()),
-        );
-        served.insert(
-            "https://example.com/statuslists/4".to_owned(),
-            (200, forged),
-        );
-        served.insert(
-            "https://example.com/statuslists/5".to_owned(),
-            (200, versioned.as_str().to_owned()),
-        );
+        let mut web = Web::default()
+            .serving(LIST_URI, 200, token.as_str())
+            .serving("https://example.com/statuslists/2", 404, "")
+            .serving("https://example.com/statuslists/3", 200, expired.as_str())
+            .serving("https://example.com/statuslists/4", 200, forged)
+            .serving("https://example.com/statuslists/5", 200, versioned.as_str());
         for (n, token) in [
             (6, relative.as_str().to_owned()),
             (7, by_thumbprint),
@@ -878,10 +826,10 @@ mod status_list_check {
             // The list at `LIST_URI`, served under another URI.
             (12, token.as_str().to_owned()),
         ] {
-            served.insert(format!("https://example.com/statuslists/{n}"), (200, token));
+            web = web.serving(&format!("https://example.com/statuslists/{n}"), 200, token);
         }
         let check = StatusListCheck::new(
-            Served(served),
+            web,
             CompositeKeyResolver::new()
                 .with(Resolver::builder().with(DidKey::default()).build())
                 .with(JwkResolver),
@@ -1038,7 +986,7 @@ mod status_list_check {
     #[tokio::test]
     async fn knows_the_token_status_list_only() {
         let check = StatusListCheck::new(
-            Served(HashMap::new()),
+            Web::default(),
             Resolver::builder().with(DidKey::default()).build(),
             DefaultVerifier,
         );
@@ -1069,65 +1017,17 @@ mod status_list_check {
         ));
     }
 
-    /// A client serving fixed responses and recording each request with the media type it
-    /// asked for.
-    #[derive(Default)]
-    struct Routed {
-        routes: HashMap<String, HttpResponse>,
-        requests: Mutex<Vec<(String, Option<String>)>>,
-    }
-
-    impl Routed {
-        fn with(mut self, url: &str, response: HttpResponse) -> Self {
-            self.routes.insert(url.to_owned(), response);
-            self
+    /// The URLs `client` was asked for so far, each for a status list token, forgotten after.
+    fn take_requests(client: &Web) -> Vec<String> {
+        let requests = client.take();
+        for (url, accept) in &requests {
+            assert_eq!(
+                accept.as_deref(),
+                Some(StatusListToken::MEDIA_TYPE),
+                "{url}"
+            );
         }
-
-        fn redirect(self, url: &str, status: u16, location: &str) -> Self {
-            self.with(
-                url,
-                HttpResponse::new(status, Vec::new()).with_location(location),
-            )
-        }
-
-        fn respond(&self, url: &Url, accept: Option<&str>) -> Result<HttpResponse, HttpError> {
-            self.requests
-                .lock()
-                .unwrap()
-                .push((url.to_string(), accept.map(str::to_owned)));
-            self.routes
-                .get(url.as_str())
-                .cloned()
-                .ok_or_else(|| HttpError::msg("connection refused"))
-        }
-
-        /// The URLs requested so far, forgotten after.
-        fn take(&self) -> Vec<String> {
-            let requests = std::mem::take(&mut *self.requests.lock().unwrap());
-            for (url, accept) in &requests {
-                assert_eq!(
-                    accept.as_deref(),
-                    Some(StatusListToken::MEDIA_TYPE),
-                    "{url}"
-                );
-            }
-            requests.into_iter().map(|(url, _)| url).collect()
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl HttpClient for Routed {
-        async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-            self.respond(url, None)
-        }
-
-        async fn get_accepting(
-            &self,
-            url: &Url,
-            media_type: &str,
-        ) -> Result<HttpResponse, HttpError> {
-            self.respond(url, Some(media_type))
-        }
+        requests.into_iter().map(|(url, _)| url).collect()
     }
 
     /// A signed status list token for the reference `uri`, all statuses valid.
@@ -1216,7 +1116,7 @@ mod status_list_check {
     async fn follows_redirects_through_the_client() {
         let issuer = issuer();
         let at = |path: &str| format!("https://example.com/{path}");
-        let mut client = Routed::default()
+        let mut client = Web::default()
             // One redirect to an absolute URL, and one to a relative one.
             .redirect(&at("a"), 302, "https://example.com/served/a")
             .with(&at("served/a"), token_for(&issuer, &at("a")).await)
@@ -1269,7 +1169,7 @@ mod status_list_check {
             let result = run(at(start)).await;
             assert!(result.is_ok(), "{start}: {result:?}");
             let requested: Vec<String> = hops.into_iter().map(at).collect();
-            assert_eq!(client.take(), requested, "{start}");
+            assert_eq!(take_requests(&client), requested, "{start}");
         }
         for (start, reason, last) in [
             ("d", "more than 3 redirects", "d3"),
@@ -1291,7 +1191,7 @@ mod status_list_check {
                 "{start}: {result:?}"
             );
             // Nothing past the refused hop was requested.
-            assert_eq!(client.take().last(), Some(&at(last)), "{start}");
+            assert_eq!(take_requests(&client).last(), Some(&at(last)), "{start}");
         }
     }
 }

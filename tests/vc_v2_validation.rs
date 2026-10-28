@@ -9,17 +9,15 @@ mod common;
 
 use std::error::Error as _;
 
-use chrono::{DateTime, TimeZone as _, Utc};
+use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
-use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, DecodedPresentationV2, FailFast, JwtPresentationValidator,
-    KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
-    PresentationValidationError, PresentationValidationOptions, SubjectHolderRelationship,
-    TimeOptions, ValidationError, decode_credential_v2, decode_presentation,
-    decode_presentation_v2,
+    KeyReference, KeyReferenceError, KeyResolutionError, KeyRole, PresentationValidationError,
+    PresentationValidationOptions, SubjectHolderRelationship, TimeOptions, ValidationError,
+    decode_credential_v2, decode_presentation, decode_presentation_v2,
 };
 use identity_kit::vc::{
     CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Presentation,
@@ -27,7 +25,7 @@ use identity_kit::vc::{
 };
 use serde_json::{Value, json};
 
-use common::{Ed25519Signer, Es256Signer};
+use common::fixtures::{AUDIENCE, Issuer, NONCE, RefusingRole, holder, issuer, now, resolver};
 
 fn vector(name: &str) -> &'static str {
     match name {
@@ -256,43 +254,8 @@ async fn suite_presentation_with_bad_credential() {
     ));
 }
 
-// Presentations validated end to end.
-
-/// Inside the validity of every credential and presentation built here.
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
-}
-
-const AUDIENCE: &str = "did:example:verifier";
-const NONCE: &str = "n-0S6_WzA2Mj";
-
-struct Party {
-    did: Did,
-    kid: DidUrl,
-}
-
-/// The issuer: `did:key` of the RFC 8037 key.
-fn issuer() -> (Party, Ed25519Signer) {
-    let signer = Ed25519Signer::rfc8037();
-    let did = DidKey::did(&signer.public_jwk()).unwrap();
-    let kid = did.join(&format!("#{}", did.method_specific_id())).unwrap();
-    (Party { did, kid }, signer)
-}
-
-/// The holder: `did:jwk` of the RFC 7515 A.3 key, whose verification method is `#0`.
-fn holder() -> (Party, Es256Signer) {
-    let signer = Es256Signer::rfc7515_a3();
-    let did = DidJwk::did(&signer.public_jwk()).unwrap();
-    let kid = did.join("#0").unwrap();
-    (Party { did, kid }, signer)
-}
-
-fn resolver() -> Resolver {
-    Resolver::builder()
-        .with(DidKey::default())
-        .with(DidJwk)
-        .build()
-}
+// Presentations validated end to end, at the shared `now`, inside the validity of every
+// credential and presentation built here.
 
 fn validator() -> JwtPresentationValidator<Resolver> {
     JwtPresentationValidator::new(resolver(), DefaultVerifier)
@@ -307,7 +270,7 @@ fn options() -> PresentationValidationOptions {
 }
 
 /// The VC-JOSE-COSE credential example's shape, issued about `subject`.
-fn credential(issuer: &Party, subject: &Did) -> CredentialV2 {
+fn credential(issuer: &Issuer, subject: &Did) -> CredentialV2 {
     CredentialV2::new(
         &issuer.did,
         Subject::new(subject).with_property(
@@ -324,11 +287,11 @@ fn credential(issuer: &Party, subject: &Did) -> CredentialV2 {
 
 /// `credential` signed by the issuer under `typ`.
 async fn issue(credential: &CredentialV2, typ: &str) -> Jwt {
-    let (issuer, signer) = issuer();
+    let issuer = issuer();
     let header = JwsHeader::new(JwsAlgorithm::EdDSA)
         .with_typ(typ)
         .with_kid(issuer.kid.as_str());
-    Jwt::sign(&header, &credential.to_jwt_claims(), &signer)
+    Jwt::sign(&header, &credential.to_jwt_claims(), &issuer.signer)
         .await
         .unwrap()
 }
@@ -336,7 +299,7 @@ async fn issue(credential: &CredentialV2, typ: &str) -> Jwt {
 /// A presentation by the holder of `credentials`, its claims for the verifier's audience and
 /// nonce, valid in 2024 and 2025.
 fn presentation(credentials: impl IntoIterator<Item = EnvelopedVc>) -> PresentationV2 {
-    let (holder, _) = holder();
+    let holder = holder();
     credentials.into_iter().fold(
         PresentationV2::new()
             .with_id(Uri::parse("urn:uuid:3978344f-8596-4c3a-a978-8fcaba3903c5").unwrap())
@@ -357,18 +320,18 @@ fn claims(presentation: &PresentationV2) -> JwtClaims {
 /// `claims` signed by the holder, under `typ` when given, naming `kid` (the holder's own by
 /// default).
 async fn present(claims: &JwtClaims, typ: Option<&str>, kid: Option<&DidUrl>) -> Jwt {
-    let (holder, signer) = holder();
+    let holder = holder();
     let mut header =
         JwsHeader::new(JwsAlgorithm::ES256).with_kid(kid.unwrap_or(&holder.kid).as_str());
     if let Some(typ) = typ {
         header = header.with_typ(typ);
     }
-    Jwt::sign(&header, claims, &signer).await.unwrap()
+    Jwt::sign(&header, claims, &holder.signer).await.unwrap()
 }
 
 async fn valid_presentation() -> (PresentationV2, CredentialV2, Jwt) {
-    let (issuer, _) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let credential = credential(&issuer, &holder.did);
     let enveloped = EnvelopedVc::from_jwt(&issue(&credential, CredentialV2::JWT_TYP).await);
     let presentation = presentation([enveloped]);
@@ -379,7 +342,7 @@ async fn valid_presentation() -> (PresentationV2, CredentialV2, Jwt) {
 #[tokio::test]
 async fn presentation_validates() {
     let (presentation, credential, jwt) = valid_presentation().await;
-    let (holder, _) = holder();
+    let holder = holder();
     let decoded: DecodedPresentationV2 = validator().validate_v2(&jwt, &options()).await.unwrap();
     // The payload is the presentation, so the `nonce` claim reads back as one of its
     // properties.
@@ -426,7 +389,7 @@ async fn presentation_validates() {
 #[tokio::test]
 async fn holder_from_iss_and_untyped() {
     let (_, credential, _) = valid_presentation().await;
-    let (holder, _) = holder();
+    let holder = holder();
     let enveloped = EnvelopedVc::from_jwt(&issue(&credential, CredentialV2::JWT_TYP).await);
     let mut presentation = presentation([enveloped]);
     presentation.holder = None;
@@ -464,7 +427,7 @@ async fn presentation_typ_selects_the_profile() {
 
     // A VCDM 1.1 presentation typed `vp+jwt` is refused by the 1.1 validator, and one typed
     // `JWT` by the 2.0 validator.
-    let (holder, _) = holder();
+    let holder = holder();
     let v1 = Presentation::new()
         .with_holder(&holder.did)
         .to_jwt_claims()
@@ -547,11 +510,11 @@ async fn presentation_errors() {
     ));
 
     // The holder must be the DID of `kid`: here the issuer's key names the presentation.
-    let (issuer, issuer_signer) = issuer();
+    let issuer = issuer();
     let header = JwsHeader::new(JwsAlgorithm::EdDSA)
         .with_typ("vp+jwt")
         .with_kid(issuer.kid.as_str());
-    let signed_by_issuer = Jwt::sign(&header, &claims(&presentation), &issuer_signer)
+    let signed_by_issuer = Jwt::sign(&header, &claims(&presentation), &issuer.signer)
         .await
         .unwrap();
     assert!(matches!(
@@ -582,27 +545,14 @@ async fn presentation_errors() {
     ));
 }
 
-/// The crate's resolver, refusing every key for `authentication`.
-struct AssertionMethodOnly(Resolver);
-
-#[async_trait::async_trait]
-impl KeyResolver for AssertionMethodOnly {
-    async fn resolve_key(
-        &self,
-        key: &KeyReference,
-        role: KeyRole,
-    ) -> Result<Jwk, KeyResolutionError> {
-        if role == KeyRole::Subject {
-            return Err(KeyResolutionError::msg("not under `authentication`"));
-        }
-        self.0.resolve_key(key, role).await
-    }
-}
-
 #[tokio::test]
 async fn holder_key_must_be_under_authentication() {
     let (_, _, jwt) = valid_presentation().await;
-    let validator = JwtPresentationValidator::new(AssertionMethodOnly(resolver()), DefaultVerifier);
+    let assertion_method_only = RefusingRole {
+        inner: resolver(),
+        role: KeyRole::Subject,
+    };
+    let validator = JwtPresentationValidator::new(assertion_method_only, DefaultVerifier);
     let error = validator.validate_v2(&jwt, &options()).await.unwrap_err();
     assert!(matches!(
         presentation_error(error),
@@ -612,8 +562,8 @@ async fn holder_key_must_be_under_authentication() {
 
 #[tokio::test]
 async fn credential_errors_are_reported_by_index() {
-    let (issuer, _) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let stranger = Did::parse("did:example:stranger").unwrap();
     let good = EnvelopedVc::from_jwt(&issue(&credential(&issuer, &holder.did), "vc+jwt").await);
     // (An SD-JWT envelope is unwrapped with the `sd-jwt` feature; `tests/sd_jwt_v2.rs` covers
@@ -660,7 +610,7 @@ async fn credential_errors_are_reported_by_index() {
 
 #[tokio::test]
 async fn non_transferable_credentials_must_name_the_holder() {
-    let (issuer, _) = issuer();
+    let issuer = issuer();
     let stranger = Did::parse("did:example:stranger").unwrap();
     let transferable = credential(&issuer, &stranger);
     let non_transferable = transferable.clone().with_property("nonTransferable", true);

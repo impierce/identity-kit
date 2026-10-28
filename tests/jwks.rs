@@ -7,22 +7,19 @@
     clippy::unreadable_literal,
     reason = "numbers are written as the specifications' examples write them"
 )]
-#![expect(
-    clippy::needless_pass_by_value,
-    reason = "helpers take `json!` values and results by value, so that calls read naturally"
-)]
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+mod common;
+
 use std::time::Duration;
 
 use identity_kit::jose::Jwk;
-use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
 use identity_kit::resolver::{
     JwksError, JwksResolver, KeyReference, KeyResolutionError, KeyResolver, KeyRole,
 };
 use serde_json::{Value, json};
 use url::Url;
+
+use common::http::Web;
 
 /// RFC 9901 Appendix A.5: the issuer key of the SD-JWT and SD-JWT VC examples.
 fn issuer_key() -> Value {
@@ -49,40 +46,6 @@ fn ed25519(kid: &str) -> Value {
     })
 }
 
-/// Serves fixed bodies by URL and records what was fetched.
-#[derive(Debug, Default)]
-struct Web {
-    pages: HashMap<String, (u16, String)>,
-    fetched: Mutex<Vec<String>>,
-}
-
-impl Web {
-    fn serve(mut self, url: &str, body: Value) -> Self {
-        self.pages.insert(url.to_owned(), (200, body.to_string()));
-        self
-    }
-
-    fn serve_status(mut self, url: &str, status: u16) -> Self {
-        self.pages.insert(url.to_owned(), (status, String::new()));
-        self
-    }
-
-    fn fetched(&self) -> Vec<String> {
-        self.fetched.lock().unwrap().clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl HttpClient for Web {
-    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-        self.fetched.lock().unwrap().push(url.to_string());
-        match self.pages.get(url.as_str()) {
-            Some((status, body)) => Ok(HttpResponse::new(*status, body.clone())),
-            None => Err(HttpError::msg(format!("no route to {url}"))),
-        }
-    }
-}
-
 fn reference(issuer: &str, kid: &str) -> KeyReference {
     KeyReference::Jwks {
         issuer: Url::parse(issuer).unwrap(),
@@ -106,7 +69,7 @@ const WELL_KNOWN: &str = "https://example.com/.well-known/jwt-vc-issuer";
 #[tokio::test]
 async fn inline_jwks() {
     // The shape of the first example of SD-JWT VC §3.5, with the A.5 key.
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         WELL_KNOWN,
         json!({"issuer": ISSUER, "jwks": {"keys": [with_kid("doc-signer-05-25-2022"), ed25519("other")]}}),
     );
@@ -137,8 +100,8 @@ async fn jwks_uri() {
     // The shape of the second example of SD-JWT VC §3.5.
     let jwks_uri = "https://jwt-vc-issuer.example.org/my_public_keys.jwks";
     let web = Web::default()
-        .serve(WELL_KNOWN, json!({"issuer": ISSUER, "jwks_uri": jwks_uri}))
-        .serve(
+        .serve_json(WELL_KNOWN, json!({"issuer": ISSUER, "jwks_uri": jwks_uri}))
+        .serve_json(
             jwks_uri,
             json!({"keys": [with_kid("doc-signer-05-25-2022")]}),
         );
@@ -151,7 +114,7 @@ async fn jwks_uri() {
     assert_eq!(resolver.client().fetched(), [WELL_KNOWN, jwks_uri]);
 
     // `jwks_uri` over plain HTTP is not fetched.
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         WELL_KNOWN,
         json!({"issuer": ISSUER, "jwks_uri": "http://jwt-vc-issuer.example.org/keys"}),
     );
@@ -181,7 +144,7 @@ async fn well_known_url_inserts_before_the_path() {
         ),
         ("https://example.com/", WELL_KNOWN),
     ] {
-        let web = Web::default().serve(
+        let web = Web::default().serve_json(
             well_known,
             json!({"issuer": issuer, "jwks": {"keys": [ed25519("key-1")]}}),
         );
@@ -214,7 +177,7 @@ async fn issuer_must_be_https_without_query_or_fragment() {
 
 #[tokio::test]
 async fn metadata_must_name_the_issuer() {
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         WELL_KNOWN,
         json!({"issuer": "https://attacker.example", "jwks": {"keys": [ed25519("key-1")]}}),
     );
@@ -232,7 +195,7 @@ async fn metadata_must_name_the_issuer() {
 
 #[tokio::test]
 async fn kid_must_name_exactly_one_key() {
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         WELL_KNOWN,
         json!({"issuer": ISSUER, "jwks": {"keys": [
             ed25519("twice"), with_kid("twice"), ed25519("once"),
@@ -260,7 +223,7 @@ async fn kid_must_name_exactly_one_key() {
 async fn private_keys_are_refused() {
     let mut private = ed25519("leaked");
     private["d"] = json!("nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A");
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         WELL_KNOWN,
         json!({"issuer": ISSUER, "jwks": {"keys": [private]}}),
     );
@@ -279,7 +242,7 @@ async fn malformed_metadata() {
         json!({"issuer": ISSUER, "jwks": {"no_keys": []}}),
         json!(["not", "an", "object"]),
     ] {
-        let web = Web::default().serve(WELL_KNOWN, body.clone());
+        let web = Web::default().serve_json(WELL_KNOWN, body.clone());
         assert!(
             matches!(
                 resolve(&JwksResolver::new(web), ISSUER, "key-1").await,
@@ -288,7 +251,7 @@ async fn malformed_metadata() {
             "{body}"
         );
     }
-    let web = Web::default().serve_status(WELL_KNOWN, 404);
+    let web = Web::default().serving(WELL_KNOWN, 404, "");
     assert!(matches!(
         resolve(&JwksResolver::new(web), ISSUER, "key-1").await,
         Err(JwksError::HttpStatus { status: 404, .. })
@@ -303,11 +266,11 @@ async fn malformed_metadata() {
 async fn key_sets_are_cached_per_issuer() {
     let other = "https://other.example";
     let web = Web::default()
-        .serve(
+        .serve_json(
             WELL_KNOWN,
             json!({"issuer": ISSUER, "jwks": {"keys": [ed25519("key-1"), ed25519("key-2")]}}),
         )
-        .serve(
+        .serve_json(
             "https://other.example/.well-known/jwt-vc-issuer",
             json!({"issuer": other, "jwks": {"keys": [ed25519("key-1")]}}),
         );
@@ -322,11 +285,11 @@ async fn key_sets_are_cached_per_issuer() {
 
     // With a capacity of one, the other issuer's set pushes the first one out.
     let web = Web::default()
-        .serve(
+        .serve_json(
             WELL_KNOWN,
             json!({"issuer": ISSUER, "jwks": {"keys": [ed25519("key-1")]}}),
         )
-        .serve(
+        .serve_json(
             "https://other.example/.well-known/jwt-vc-issuer",
             json!({"issuer": other, "jwks": {"keys": [ed25519("key-1")]}}),
         );
@@ -337,7 +300,7 @@ async fn key_sets_are_cached_per_issuer() {
     assert_eq!(resolver.client().fetched().len(), 3);
 
     // A zero time to live keeps nothing.
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         WELL_KNOWN,
         json!({"issuer": ISSUER, "jwks": {"keys": [ed25519("key-1")]}}),
     );
@@ -346,7 +309,7 @@ async fn key_sets_are_cached_per_issuer() {
     resolve(&resolver, ISSUER, "key-1").await.unwrap();
     assert_eq!(resolver.client().fetched().len(), 2);
 
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         WELL_KNOWN,
         json!({"issuer": ISSUER, "jwks": {"keys": [ed25519("key-1")]}}),
     );
@@ -386,7 +349,8 @@ async fn other_references_are_unsupported() {
 
 #[tokio::test]
 async fn a_failed_fetch_keeps_its_cause() {
-    let error = JwksResolver::new(Web::default())
+    let web = Web::default().failing(WELL_KNOWN, &format!("no route to {WELL_KNOWN}"));
+    let error = JwksResolver::new(web)
         .resolve_key(&reference(ISSUER, "key-1"), KeyRole::Issuer)
         .await
         .unwrap_err();
@@ -416,7 +380,7 @@ async fn sd_jwt_vc_issued_by_an_https_issuer() {
         presentation.claims().iss.as_deref(),
         Some("https://example.com/issuer")
     );
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         "https://example.com/.well-known/jwt-vc-issuer/issuer",
         json!({
             "issuer": "https://example.com/issuer",
@@ -462,7 +426,7 @@ async fn sd_jwt_vc_issued_by_an_https_issuer() {
 
     // Another issuer's metadata naming the same key does not make it this issuer's: the
     // metadata must name the issuer.
-    let web = Web::default().serve(
+    let web = Web::default().serve_json(
         "https://example.com/.well-known/jwt-vc-issuer/issuer",
         json!({
             "issuer": "https://example.com/other",

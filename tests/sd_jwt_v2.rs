@@ -23,7 +23,6 @@ use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
 use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
-use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
 use identity_kit::sd_jwt_vc::{
     Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, SdJwt, SdJwtBuilder,
@@ -34,9 +33,9 @@ use identity_kit::sd_jwt_vc::{
 use identity_kit::status_list::{Status, StatusListRef};
 use identity_kit::vc::validation::{
     CredentialStatus, CredentialValidationOptions, FailFast, JwtPresentationValidator,
-    KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
-    PresentationValidationError, PresentationValidationOptions, PresentedCredentialV2, StatusCheck,
-    StatusError, StatusPolicy, TimeOptions, ValidationError, decode_presentation_v2,
+    KeyReference, KeyReferenceError, KeyRole, PresentationValidationError,
+    PresentationValidationOptions, PresentedCredentialV2, StatusCheck, StatusError, StatusPolicy,
+    TimeOptions, ValidationError, decode_presentation_v2,
 };
 use identity_kit::vc::{
     CredentialError, CredentialV2, EnvelopedVc, Jwt, JwtClaims, PresentationV2, Subject,
@@ -44,7 +43,7 @@ use identity_kit::vc::{
 };
 use serde_json::{Value, json};
 
-use common::{Ed25519Signer, Es256Signer};
+use common::fixtures::{AUDIENCE, NONCE, RefusingRole, holder, issuer, now, resolver};
 
 // The W3C VC-JOSE-COSE test suite's SD-JWT credential inputs.
 
@@ -198,41 +197,6 @@ fn suite_bad_media_type() {
 
 // A credential issued, presented and validated end to end.
 
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
-}
-
-const AUDIENCE: &str = "did:example:verifier";
-const NONCE: &str = "n-0S6_WzA2Mj";
-
-struct Party {
-    did: Did,
-    kid: DidUrl,
-}
-
-/// The issuer: `did:key` of the RFC 8037 key.
-fn issuer() -> (Party, Ed25519Signer) {
-    let signer = Ed25519Signer::rfc8037();
-    let did = DidKey::did(&signer.public_jwk()).unwrap();
-    let kid = did.join(&format!("#{}", did.method_specific_id())).unwrap();
-    (Party { did, kid }, signer)
-}
-
-/// The holder: `did:jwk` of the RFC 7515 A.3 key, whose verification method is `#0`.
-fn holder() -> (Party, Es256Signer) {
-    let signer = Es256Signer::rfc7515_a3();
-    let did = DidJwk::did(&signer.public_jwk()).unwrap();
-    let kid = did.join("#0").unwrap();
-    (Party { did, kid }, signer)
-}
-
-fn resolver() -> Resolver {
-    Resolver::builder()
-        .with(DidKey::default())
-        .with(DidJwk)
-        .build()
-}
-
 fn validator() -> SdJwtCredentialValidator<Resolver> {
     SdJwtCredentialValidator::new(resolver(), DefaultVerifier)
 }
@@ -270,8 +234,8 @@ fn credential(issuer: &Did, subject: &Did) -> CredentialV2 {
 /// A builder over the credential, bound to the holder's key: `degree`, `degree.name` and
 /// `alumniOf` selectively disclosable, two decoys.
 fn builder(credential: CredentialV2) -> SdJwtCredentialV2Builder {
-    let (issuer, _) = issuer();
-    let (_, holder_signer) = holder();
+    let issuer = issuer();
+    let holder_signer = holder().signer;
     SdJwtCredentialV2Builder::new(credential)
         .with_kid(issuer.kid.as_str())
         .with_issued_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
@@ -284,10 +248,10 @@ fn builder(credential: CredentialV2) -> SdJwtCredentialV2Builder {
 }
 
 async fn issue() -> SdJwtCredentialV2 {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     builder(credential(&issuer.did, &holder.did))
-        .sign(&signer)
+        .sign(&issuer.signer)
         .await
         .unwrap()
 }
@@ -295,7 +259,7 @@ async fn issue() -> SdJwtCredentialV2 {
 /// The holder presents `degree` without its name (`select` keeps exactly the chosen
 /// disclosures, where `disclose` would keep the ones beneath a path too), with key binding.
 async fn present(credential: &SdJwtCredentialV2) -> SdJwtCredentialV2 {
-    let (_, signer) = holder();
+    let signer = holder().signer;
     credential
         .select(|disclosure| disclosure.name() == Some("degree"))
         .unwrap()
@@ -306,8 +270,8 @@ async fn present(credential: &SdJwtCredentialV2) -> SdJwtCredentialV2 {
 
 #[tokio::test]
 async fn issued_credential_round_trips() {
-    let (issuer, _) = issuer();
-    let (holder, holder_signer) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let original = credential(&issuer.did, &holder.did);
     let issued = issue().await;
 
@@ -318,7 +282,7 @@ async fn issued_credential_round_trips() {
     assert_eq!(issued.claims().iss.as_deref(), Some(issuer.did.as_str()));
     assert_eq!(issued.claims().iat, Some(1_704_067_200));
     assert_eq!(issued.claims().exp, Some(1_893_456_000));
-    assert_eq!(issued.holder_key(), Some(&holder_signer.public_jwk()));
+    assert_eq!(issued.holder_key(), Some(&holder.signer.public_jwk()));
     assert!(issued.status().is_none());
     assert_eq!(issued.sd_jwt().disclosures().len(), 3);
     assert!(issued.sd_jwt().key_binding_jwt().is_none());
@@ -437,8 +401,8 @@ async fn presentation_with_key_binding_validates() {
 
 #[tokio::test]
 async fn registered_claims_cannot_be_concealed() {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     for claim in [
         "@context",
         "type",
@@ -464,12 +428,12 @@ async fn registered_claims_cannot_be_concealed() {
             ),
             "{claim}"
         );
-        assert!(builder.sign(&signer).await.is_err(), "{claim}");
+        assert!(builder.sign(&issuer.signer).await.is_err(), "{claim}");
     }
     // A property inside the subject may be concealed; `credentialSubject` itself may too.
     let builder = builder(credential(&issuer.did, &holder.did)).conceal(["credentialSubject"]);
     assert!(builder.check_concealed().is_ok());
-    let signed = builder.sign(&signer).await.unwrap();
+    let signed = builder.sign(&issuer.signer).await.unwrap();
     assert_eq!(signed.sd_jwt().disclosures().len(), 4);
 
     // An SD-JWT built by hand with `issuer` concealed is refused when parsed, whether or not
@@ -482,7 +446,7 @@ async fn registered_claims_cannot_be_concealed() {
         .with_kid(issuer.kid.as_str());
     let sd_jwt = SdJwtBuilder::new(claims.as_object().unwrap().clone())
         .conceal(["issuer"])
-        .sign(&header, &signer)
+        .sign(&header, &issuer.signer)
         .await
         .unwrap();
     assert!(matches!(
@@ -502,8 +466,8 @@ async fn registered_claims_cannot_be_concealed() {
 
 /// A VCDM 2.0 payload secured by hand under `typ`.
 async fn vcdm_sd_jwt(typ: Option<&str>) -> SdJwt {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let mut claims = credential(&issuer.did, &holder.did).to_jwt_claims();
     claims.iss = Some(issuer.did.to_string());
     let claims = serde_json::to_value(&claims).unwrap();
@@ -511,15 +475,15 @@ async fn vcdm_sd_jwt(typ: Option<&str>) -> SdJwt {
     header.typ = typ.map(str::to_owned);
     SdJwtBuilder::new(claims.as_object().unwrap().clone())
         .conceal(["credentialSubject", "alumniOf"])
-        .sign(&header, &signer)
+        .sign(&header, &issuer.signer)
         .await
         .unwrap()
 }
 
 #[tokio::test]
 async fn typ_routes_between_the_two_credential_types() {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
 
     // A VCDM 2.0 payload under `dc+sd-jwt` is neither: not this type by `typ`, not an
     // SD-JWT VC by its claims.
@@ -555,7 +519,7 @@ async fn typ_routes_between_the_two_credential_types() {
         .with_kid(issuer.kid.as_str())
         .with_claim("given_name", "Erika")
         .conceal(["given_name"])
-        .sign(&signer)
+        .sign(&issuer.signer)
         .await
         .unwrap();
     assert!(!standard.has_legacy_typ());
@@ -573,7 +537,7 @@ async fn typ_routes_between_the_two_credential_types() {
         .clone(),
     )
     .conceal(["given_name"])
-    .sign(&header, &signer)
+    .sign(&header, &issuer.signer)
     .await
     .unwrap();
     let parsed = SdJwtVc::from_sd_jwt(legacy.clone()).unwrap();
@@ -611,32 +575,15 @@ async fn typ_routes_between_the_two_credential_types() {
     assert!(credential.select(|_| false).is_ok());
 }
 
-/// A resolver that finds no key under `assertionMethod`.
-struct AuthenticationOnly(Resolver);
-
-#[async_trait::async_trait]
-impl KeyResolver for AuthenticationOnly {
-    async fn resolve_key(
-        &self,
-        key: &KeyReference,
-        role: KeyRole,
-    ) -> Result<Jwk, KeyResolutionError> {
-        if role == KeyRole::Issuer {
-            return Err(KeyResolutionError::msg("not an assertion method"));
-        }
-        self.0.resolve_key(key, role).await
-    }
-}
-
 #[tokio::test]
 async fn issuer_binding_and_time_errors() {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
 
     // The credential's `issuer` is not the DID of `kid`.
     let other = Did::parse("did:example:other").unwrap();
     let mismatched = builder(credential(&other, &holder.did))
-        .sign(&signer)
+        .sign(&issuer.signer)
         .await
         .unwrap();
     assert_eq!(
@@ -658,7 +605,10 @@ async fn issuer_binding_and_time_errors() {
     https_credential.issuer = Uri::parse("https://university.example/issuers/14")
         .unwrap()
         .into();
-    let https = builder(https_credential).sign(&signer).await.unwrap();
+    let https = builder(https_credential)
+        .sign(&issuer.signer)
+        .await
+        .unwrap();
     assert!(matches!(
         validator().validate_v2(https.sd_jwt(), &options()).await.unwrap_err(),
         SdJwtValidationError::Validation(ValidationError::IssuerMismatch { issuer, key })
@@ -679,7 +629,7 @@ async fn issuer_binding_and_time_errors() {
             .unwrap()
             .clone(),
     )
-    .sign(&header, &signer)
+    .sign(&header, &issuer.signer)
     .await
     .unwrap();
     assert!(matches!(
@@ -691,7 +641,11 @@ async fn issuer_binding_and_time_errors() {
 
     // The signing key is found only under `authentication`.
     let issued = issue().await;
-    let strict = SdJwtCredentialValidator::new(AuthenticationOnly(resolver()), DefaultVerifier);
+    let authentication_only = RefusingRole {
+        inner: resolver(),
+        role: KeyRole::Issuer,
+    };
+    let strict = SdJwtCredentialValidator::new(authentication_only, DefaultVerifier);
     assert!(matches!(
         strict.validate_v2(issued.sd_jwt(), &options()).await.unwrap_err(),
         SdJwtValidationError::Validation(ValidationError::KeyResolution { key, .. })
@@ -748,7 +702,7 @@ async fn issuer_binding_and_time_errors() {
         credential(&issuer.did, &holder.did)
             .with_valid_from(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
     )
-    .sign(&signer)
+    .sign(&issuer.signer)
     .await
     .unwrap();
     assert!(matches!(
@@ -760,7 +714,7 @@ async fn issuer_binding_and_time_errors() {
         credential(&issuer.did, &holder.did)
             .with_valid_until(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
     )
-    .sign(&signer)
+    .sign(&issuer.signer)
     .await
     .unwrap();
     assert!(matches!(
@@ -771,13 +725,13 @@ async fn issuer_binding_and_time_errors() {
 }
 
 fn issuer_kid() -> DidUrl {
-    issuer().0.kid
+    issuer().kid
 }
 
 #[tokio::test]
 async fn key_binding_errors() {
-    let (issuer, issuer_signer) = issuer();
-    let (holder, holder_signer) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let issued = issue().await;
     let presented = present(&issued).await;
 
@@ -793,10 +747,10 @@ async fn key_binding_errors() {
     // No holder key in the credential.
     let unbound = SdJwtCredentialV2Builder::new(credential(&issuer.did, &holder.did))
         .with_kid(issuer.kid.as_str())
-        .sign(&issuer_signer)
+        .sign(&issuer.signer)
         .await
         .unwrap()
-        .sign_key_binding(&KeyBinding::new(AUDIENCE, NONCE, now()), &holder_signer)
+        .sign_key_binding(&KeyBinding::new(AUDIENCE, NONCE, now()), &holder.signer)
         .await
         .unwrap();
     assert!(unbound.confirmation().is_none());
@@ -827,7 +781,7 @@ async fn key_binding_errors() {
     let foreign = issued
         .disclose(&[claim_path!["credentialSubject", "degree"]])
         .unwrap()
-        .sign_key_binding(&KeyBinding::new(AUDIENCE, NONCE, now()), &issuer_signer)
+        .sign_key_binding(&KeyBinding::new(AUDIENCE, NONCE, now()), &issuer.signer)
         .await
         .unwrap();
     assert!(matches!(
@@ -903,8 +857,8 @@ impl StatusCheck for Verdicts {
 
 /// A credential with a `credentialStatus` entry and a `status` claim.
 async fn with_statuses() -> SdJwtCredentialV2 {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     builder(
         credential(&issuer.did, &holder.did).with_status(
             TypedObject::new("BitstringStatusListEntry")
@@ -915,7 +869,7 @@ async fn with_statuses() -> SdJwtCredentialV2 {
         "https://university.example/status/sd-jwt",
         7,
     )))
-    .sign(&signer)
+    .sign(&issuer.signer)
     .await
     .unwrap()
 }
@@ -1061,18 +1015,18 @@ fn presentation_options() -> PresentationValidationOptions {
 
 /// `credential` signed by the issuer as a `vc+jwt`.
 async fn issue_jwt(credential: &CredentialV2) -> Jwt {
-    let (issuer, signer) = issuer();
+    let issuer = issuer();
     let header = JwsHeader::new(JwsAlgorithm::EdDSA)
         .with_typ(CredentialV2::JWT_TYP)
         .with_kid(issuer.kid.as_str());
-    Jwt::sign(&header, &credential.to_jwt_claims(), &signer)
+    Jwt::sign(&header, &credential.to_jwt_claims(), &issuer.signer)
         .await
         .unwrap()
 }
 
 /// A `vp+jwt` by the holder enveloping `credentials`, for the verifier's audience and nonce.
 async fn present_vp(credentials: impl IntoIterator<Item = EnvelopedVc>) -> (PresentationV2, Jwt) {
-    let (holder, signer) = holder();
+    let holder = holder();
     let presentation = credentials.into_iter().fold(
         PresentationV2::new()
             .with_id(Uri::parse("urn:uuid:3978344f-8596-4c3a-a978-8fcaba3903c5").unwrap())
@@ -1090,7 +1044,7 @@ async fn present_vp(credentials: impl IntoIterator<Item = EnvelopedVc>) -> (Pres
         .with_kid(holder.kid.as_str());
     (
         presentation,
-        Jwt::sign(&header, &claims, &signer).await.unwrap(),
+        Jwt::sign(&header, &claims, &holder.signer).await.unwrap(),
     )
 }
 
@@ -1155,8 +1109,8 @@ async fn enveloped_sd_jwt_round_trips() {
 
 #[tokio::test]
 async fn presentation_with_sd_jwt_and_jwt_credentials_validates() {
-    let (issuer, _) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let issued = issue().await;
     let presented = present(&issued).await;
     let plain = credential(&issuer.did, &holder.did)
@@ -1207,7 +1161,7 @@ async fn presentation_with_sd_jwt_and_jwt_credentials_validates() {
 
 #[tokio::test]
 async fn presentation_credential_errors_are_reported_by_index() {
-    let (issuer, signer) = issuer();
+    let issuer = issuer();
 
     let issued = issue().await;
     let all_errors = || presentation_options().with_fail_fast(FailFast::AllErrors);
@@ -1216,7 +1170,10 @@ async fn presentation_credential_errors_are_reported_by_index() {
     // credential whose subject is not the holder; an SD-JWT credential whose subject is not
     // the holder.
     let stranger = credential(&issuer.did, &Did::parse("did:example:stranger").unwrap());
-    let stranger_sd_jwt = builder(stranger.clone()).sign(&signer).await.unwrap();
+    let stranger_sd_jwt = builder(stranger.clone())
+        .sign(&issuer.signer)
+        .await
+        .unwrap();
     let (_, vp) = present_vp([
         EnvelopedVc::from_sd_jwt(issued.sd_jwt()),
         EnvelopedVc::new("application/vc+cose;base64", "AAAA").unwrap(),
@@ -1351,13 +1308,13 @@ async fn presentation_credential_errors_are_reported_by_index() {
 #[tokio::test]
 async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
     // Checked at the time of the credential options (2025), not the clock.
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let later = builder(
         credential(&issuer.did, &holder.did)
             .with_valid_from(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
     )
-    .sign(&signer)
+    .sign(&issuer.signer)
     .await
     .unwrap();
     let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(later.sd_jwt())]).await;
@@ -1466,8 +1423,8 @@ async fn presentation_status_checks() {
 
 #[tokio::test]
 async fn issuance_is_deterministic_with_fixed_salts() {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let salts = || {
         let mut counter = 0u32;
         move || {
@@ -1478,7 +1435,7 @@ async fn issuance_is_deterministic_with_fixed_salts() {
     let issue = || async {
         builder(credential(&issuer.did, &holder.did))
             .with_salt_generator(salts())
-            .sign(&signer)
+            .sign(&issuer.signer)
             .await
             .unwrap()
     };
@@ -1501,7 +1458,7 @@ async fn issuance_is_deterministic_with_fixed_salts() {
             counter += 1;
             format!("other-{counter:04}")
         })
-        .sign(&signer)
+        .sign(&issuer.signer)
         .await
         .unwrap();
     assert_ne!(other.to_string(), first.to_string());
@@ -1510,8 +1467,8 @@ async fn issuance_is_deterministic_with_fixed_salts() {
 
 #[tokio::test]
 async fn builder_setters_and_debug_output() {
-    let (issuer, signer) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let original = credential(&issuer.did, &holder.did);
     let builder = builder(original.clone())
         .with_not_before(Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap())
@@ -1524,13 +1481,17 @@ async fn builder_setters_and_debug_output() {
     assert!(debug.ends_with(", .. }"));
 
     // A copy of the credential alone: nothing concealed, nothing else set.
-    let bare = builder.clone_credential().sign(&signer).await.unwrap();
+    let bare = builder
+        .clone_credential()
+        .sign(&issuer.signer)
+        .await
+        .unwrap();
     assert!(bare.sd_jwt().disclosures().is_empty());
     assert!(bare.confirmation().is_none());
     assert_eq!(bare.claims().nbf, None);
     assert_eq!(bare.header().kid.as_deref(), None);
 
-    let signed = builder.sign(&signer).await.unwrap();
+    let signed = builder.sign(&issuer.signer).await.unwrap();
     assert_eq!(signed.claims().nbf, Some(1_717_200_000));
     assert_eq!(
         signed.sd_jwt().hash_algorithm().unwrap(),
@@ -1561,7 +1522,7 @@ async fn builder_setters_and_debug_output() {
                 .unwrap()
                 .clone(),
         )
-        .sign(&header, &signer)
+        .sign(&header, &issuer.signer)
         .await
         .unwrap();
         assert!(
