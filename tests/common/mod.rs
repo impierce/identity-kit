@@ -37,13 +37,12 @@ pub(crate) struct Ed25519Signer {
 }
 
 impl Ed25519Signer {
-    /// The RFC 8037 key.
+    /// The RFC 8037 key, checked against the public `x` the RFC gives for it.
     pub(crate) fn rfc8037() -> Self {
         let d: [u8; 32] = decode(RFC8037_D).try_into().unwrap();
-        Self {
-            key: ed25519_dalek::SigningKey::from_bytes(&d),
-            kid: None,
-        }
+        let key = ed25519_dalek::SigningKey::from_bytes(&d);
+        assert_eq!(key.verifying_key().as_bytes(), &decode(RFC8037_X)[..]);
+        Self { key, kid: None }
     }
 
     pub(crate) fn with_kid(mut self, kid: impl Into<String>) -> Self {
