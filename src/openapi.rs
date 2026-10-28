@@ -5,6 +5,12 @@
 //! `EnvelopedVp`), `ClaimPath`, `TypeMetadata` with its display and claim metadata, and
 //! `StatusType`.
 //!
+//! Each schema is registered under the name of its type, prefixed by its module where that name
+//! alone is generic, so that it does not collide with a consumer's own schemas in
+//! `components.schemas`: `DidVerificationMethod`, `DidMethodRef`, `DidService`, `JoseJwk`,
+//! `VcCredential`, `VcPresentation`, `VcCredentialV2`, `VcPresentationV2` and `VcClaimPath`.
+//! The other names are specific already.
+//!
 //! The schemas are written by hand rather than derived: every type carries open extension
 //! properties and custom serialization that a derive cannot express. Each schema describes the
 //! properties its specification defines and, where the specification leaves the object open,
@@ -232,7 +238,7 @@ impl PartialSchema for VerificationMethod {
 #[cfg_attr(docsrs, doc(cfg(feature = "utoipa")))]
 impl ToSchema for VerificationMethod {
     fn name() -> Cow<'static, str> {
-        Cow::Borrowed("VerificationMethod")
+        Cow::Borrowed("DidVerificationMethod")
     }
 
     fn schemas(schemas: &mut Schemas) {
@@ -259,7 +265,7 @@ impl PartialSchema for MethodRef {
 #[cfg_attr(docsrs, doc(cfg(feature = "utoipa")))]
 impl ToSchema for MethodRef {
     fn name() -> Cow<'static, str> {
-        Cow::Borrowed("MethodRef")
+        Cow::Borrowed("DidMethodRef")
     }
 
     fn schemas(schemas: &mut Schemas) {
@@ -307,7 +313,7 @@ impl PartialSchema for Service {
 #[cfg_attr(docsrs, doc(cfg(feature = "utoipa")))]
 impl ToSchema for Service {
     fn name() -> Cow<'static, str> {
-        Cow::Borrowed("Service")
+        Cow::Borrowed("DidService")
     }
 }
 
@@ -385,7 +391,7 @@ impl PartialSchema for Jwk {
 #[cfg_attr(docsrs, doc(cfg(feature = "utoipa")))]
 impl ToSchema for Jwk {
     fn name() -> Cow<'static, str> {
-        Cow::Borrowed("Jwk")
+        Cow::Borrowed("JoseJwk")
     }
 }
 
@@ -636,7 +642,7 @@ mod credentials {
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
     impl ToSchema for Credential {
         fn name() -> Cow<'static, str> {
-            Cow::Borrowed("Credential")
+            Cow::Borrowed("VcCredential")
         }
     }
 
@@ -672,7 +678,7 @@ mod credentials {
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
     impl ToSchema for Presentation {
         fn name() -> Cow<'static, str> {
-            Cow::Borrowed("Presentation")
+            Cow::Borrowed("VcPresentation")
         }
     }
 
@@ -728,7 +734,7 @@ mod credentials {
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
     impl ToSchema for CredentialV2 {
         fn name() -> Cow<'static, str> {
-            Cow::Borrowed("CredentialV2")
+            Cow::Borrowed("VcCredentialV2")
         }
     }
 
@@ -764,7 +770,7 @@ mod credentials {
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
     impl ToSchema for PresentationV2 {
         fn name() -> Cow<'static, str> {
-            Cow::Borrowed("PresentationV2")
+            Cow::Borrowed("VcPresentationV2")
         }
 
         fn schemas(schemas: &mut Schemas) {
@@ -861,7 +867,7 @@ mod claim_path {
     #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
     impl ToSchema for ClaimPath {
         fn name() -> Cow<'static, str> {
-            Cow::Borrowed("ClaimPath")
+            Cow::Borrowed("VcClaimPath")
         }
     }
 }
