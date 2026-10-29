@@ -340,6 +340,72 @@ fn every_schema_compiles_with_its_references_resolved() {
     );
 }
 
+/// Each schema name belongs to one type of the crate: utoipa keys `components.schemas` by name,
+/// so two types under one name would replace each other's schema.
+#[test]
+fn every_schema_name_belongs_to_one_type() {
+    fn entry<T: ToSchema>() -> (String, &'static str) {
+        (T::name().into_owned(), std::any::type_name::<T>())
+    }
+    let mut types = Vec::new();
+    types.extend([
+        entry::<DidDocument>(),
+        entry::<VerificationMethod>(),
+        entry::<MethodRef>(),
+        entry::<Service>(),
+        entry::<Jwk>(),
+        entry::<JwsAlgorithm>(),
+    ]);
+    #[cfg(feature = "domain-linkage")]
+    types.push(entry::<
+        identity_kit::domain_linkage::DomainLinkageConfiguration,
+    >());
+    #[cfg(feature = "vc")]
+    {
+        use identity_kit::vc::{
+            ClaimPath, Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation,
+            PresentationV2,
+        };
+        types.extend([
+            entry::<ClaimPath>(),
+            entry::<Credential>(),
+            entry::<Presentation>(),
+            entry::<CredentialV2>(),
+            entry::<PresentationV2>(),
+            entry::<EnvelopedVc>(),
+            entry::<EnvelopedVp>(),
+        ]);
+    }
+    #[cfg(feature = "sd-jwt")]
+    {
+        use identity_kit::sd_jwt_vc::{ClaimDisplay, ClaimMetadata, DisplayMetadata, TypeMetadata};
+        types.extend([
+            entry::<TypeMetadata>(),
+            entry::<DisplayMetadata>(),
+            entry::<ClaimMetadata>(),
+            entry::<ClaimDisplay>(),
+        ]);
+    }
+    #[cfg(feature = "status-list")]
+    types.push(entry::<identity_kit::status_list::StatusType>());
+
+    let mut owners = std::collections::HashMap::new();
+    for (name, ty) in &types {
+        if let Some(other) = owners.insert(name.as_str(), *ty) {
+            panic!("`{name}` names both `{other}` and `{ty}`");
+        }
+    }
+    // The list above covers every schema the crate registers.
+    let document = openapi();
+    for name in document["components"]["schemas"]
+        .as_object()
+        .unwrap()
+        .keys()
+    {
+        assert!(owners.contains_key(name.as_str()), "`{name}` is not listed");
+    }
+}
+
 /// Each type's `ToSchema::schemas` names every schema its `$ref`s point to.
 #[test]
 fn every_schema_names_the_schemas_it_refers_to() {
