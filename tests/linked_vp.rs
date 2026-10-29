@@ -286,7 +286,7 @@ fn example_jwt_decodes() {
     assert!(decoded.claims.aud.is_none());
     assert!(!decoded.claims.additional.contains_key("nonce"));
 
-    let [credential] = decoded.credentials.as_slice() else {
+    let [Ok(credential)] = decoded.credentials.as_slice() else {
         panic!("one credential");
     };
     assert_eq!(
@@ -988,6 +988,101 @@ async fn urls_past_the_limit_are_reported_without_fetching() {
     ));
     // The invalid entry does not count, and the URL past the limit is never requested.
     assert_eq!(client.http().fetched(), [EXAMPLE_URL, PUBLISHED_URL]);
+}
+
+#[tokio::test]
+async fn an_endpoint_uri_that_is_not_a_url_fails_alone() {
+    // A valid URI whose port is out of range, so not a URL.
+    let out_of_range = "https://example.org:99999/vp";
+    let document: DidDocument = serde_json::from_value(json!({
+        "id": EXAMPLE_DID,
+        "service": [
+            { "id": "did:example:123#vps", "type": SERVICE_TYPE, "serviceEndpoint": [out_of_range, EXAMPLE_URL] },
+            { "id": "did:example:123#map", "type": SERVICE_TYPE, "serviceEndpoint": { "origins": [EXAMPLE_URL] } }
+        ]
+    }))
+    .unwrap();
+    let linked: Vec<_> = services(&document).collect();
+    let vps = linked[0].as_ref().unwrap();
+    assert_eq!(vps.urls, [url(EXAMPLE_URL)]);
+    assert_eq!(
+        vps.invalid_urls,
+        [(
+            Uri::parse(out_of_range).unwrap(),
+            url::ParseError::InvalidPort
+        )]
+    );
+    // A map endpoint names no URL, so the service still fails as a whole.
+    assert!(
+        matches!(&linked[1], Err(LinkedVpError::InvalidService { id, .. }) if id.as_str() == "did:example:123#map")
+    );
+
+    let web = Web::default().serving(EXAMPLE_URL, 200, vector("jwt"));
+    let client = client(web, example_validator());
+    let reports = client.validate_document(&document, &options()).await;
+    assert_eq!(reports.len(), 3);
+    assert!(reports[0].url.is_none());
+    assert!(matches!(
+        &reports[0].result,
+        Err(LinkedVpError::InvalidService { id, reason, .. })
+            if id.as_str() == "did:example:123#vps" && reason.contains(out_of_range)
+    ));
+    assert_eq!(reports[1].url.as_ref(), Some(&url(EXAMPLE_URL)));
+    assert!(reports[1].result.is_ok());
+    assert!(matches!(
+        reports[2].result,
+        Err(LinkedVpError::InvalidService { .. })
+    ));
+    assert_eq!(client.http().fetched(), [EXAMPLE_URL]);
+}
+
+#[tokio::test]
+async fn a_credential_entry_that_is_not_a_jwt_fails_alone() {
+    let holder = holder();
+    let mut claims = builder(&holder)
+        .with_credential(credential(&holder, &holder.did).await)
+        .jwt_claims()
+        .unwrap();
+    let entries = claims.additional["vp"]["verifiableCredential"]
+        .as_array_mut()
+        .unwrap();
+    entries.push(json!("not-a-jwt"));
+    entries.push(json!(42));
+    let jwt = sign(&holder, &claims, None).await;
+
+    let decoded = decode(&jwt).unwrap();
+    assert_eq!(decoded.holder(), Some(&Uri::from(holder.did.clone())));
+    assert_eq!(decoded.presentation.verifiable_credential.len(), 1);
+    let [Ok(valid), Err(not_a_jwt), Err(not_a_string)] = decoded.credentials.as_slice() else {
+        panic!("one result per entry: {:?}", decoded.credentials);
+    };
+    assert_eq!(valid.credential.issuer.id(), &Uri::from(holder.did.clone()));
+    assert!(matches!(not_a_jwt, ValidationError::Jws(_)));
+    assert!(matches!(
+        not_a_string,
+        ValidationError::Credential(CredentialError::InvalidClaim { claim: "vp", .. })
+    ));
+
+    // The holder signed the entries, so the presentation verifies; the entries fail alone.
+    let error = did_key_validator()
+        .validate(
+            &jwt,
+            &holder.did,
+            &options().with_fail_fast(FailFast::AllErrors),
+        )
+        .await
+        .unwrap_err();
+    let errors = credential_errors(error);
+    assert_eq!(
+        errors.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert!(matches!(errors[0].1, ValidationError::Jws(_)));
+    let error = did_key_validator()
+        .validate(&jwt, &holder.did, &options())
+        .await
+        .unwrap_err();
+    assert_eq!(credential_errors(error).len(), 1);
 }
 
 // Fetching.

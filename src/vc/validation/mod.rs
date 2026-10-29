@@ -85,7 +85,7 @@ pub use credential::{
 };
 pub use error::{PresentationValidationError, StatusError, ValidationError};
 #[cfg(feature = "linked-vp")]
-pub(crate) use presentation::decode_presentation_with;
+pub(crate) use presentation::decode_presentation_entries;
 pub use presentation::{
     DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, PresentedCredentialV2,
     decode_presentation, decode_presentation_v2,

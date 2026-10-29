@@ -206,6 +206,10 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
 
     /// Validates a presentation JWT and every credential it carries.
     ///
+    /// An entry of `verifiableCredential` that is not a compact JWT fails as that credential,
+    /// under its index, not as the presentation: the holder's signature covers it, so the
+    /// presentation itself can still verify.
+    ///
     /// # Errors
     ///
     /// A [`PresentationValidationError`] naming what failed: the presentation (in which case
@@ -216,32 +220,31 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
         jwt: &Jwt,
         options: &PresentationValidationOptions,
     ) -> Result<DecodedPresentation, PresentationValidationError> {
-        let mut decoded = self
+        let (mut decoded, entries) = self
             .validate_presentation(jwt, options)
             .await
             .map_err(PresentationValidationError::presentation)?;
         let holder = decoded.holder().cloned();
         let mut errors = BTreeMap::new();
-        for (index, credential) in decoded
-            .presentation
-            .verifiable_credential
-            .iter()
-            .enumerate()
-        {
-            let result = self
-                .credentials
-                .validate(credential, &options.credentials)
-                .await
-                .and_then(|validated| {
-                    let credential = &validated.credential;
-                    check_subject_holder(
-                        &credential.properties,
-                        credential.credential_subject.iter(),
-                        holder.as_ref(),
-                        options.subject_holder,
-                    )?;
-                    Ok(validated)
-                });
+        for (index, entry) in entries.into_iter().enumerate() {
+            let result = match entry {
+                Ok(credential) => {
+                    self.credentials
+                        .validate(&credential, &options.credentials)
+                        .await
+                }
+                Err(error) => Err(error),
+            };
+            let result = result.and_then(|validated| {
+                let credential = &validated.credential;
+                check_subject_holder(
+                    &credential.properties,
+                    credential.credential_subject.iter(),
+                    holder.as_ref(),
+                    options.subject_holder,
+                )?;
+                Ok(validated)
+            });
             match result {
                 Ok(validated) => decoded.credentials.push(validated),
                 Err(error) => {
@@ -377,24 +380,26 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
         Ok(PresentedCredentialV2::Jwt(Box::new(validated)))
     }
 
-    /// Validates the presentation JWT itself; the credentials are left to decode.
+    /// Validates the presentation JWT itself; the credentials are left to validate, one entry
+    /// of `verifiableCredential` each, as [`presentation_entries`] reads them.
     async fn validate_presentation(
         &self,
         jwt: &Jwt,
         options: &PresentationValidationOptions,
-    ) -> Result<DecodedPresentation, ValidationError> {
+    ) -> Result<(DecodedPresentation, Vec<Result<Jwt, ValidationError>>), ValidationError> {
         let jws = jwt.decode()?;
         check_typ(jws.header(), "JWT", &options.additional_typ)?;
         let claims = plain_claims(&jws)?;
-        let presentation = Presentation::from_jwt_claims(&claims)?;
+        let (presentation, entries) = presentation_entries(&claims)?;
         self.check_holder_and_claims(&jws, presentation.holder.as_ref(), "iss", &claims, options)
             .await?;
-        Ok(DecodedPresentation {
+        let decoded = DecodedPresentation {
             header: jws.header().clone(),
             claims,
             presentation,
             credentials: Vec::new(),
-        })
+        };
+        Ok((decoded, entries))
     }
 
     /// Validates the VCDM 2.0 presentation JWT itself; the credentials are left to unwrap.
@@ -482,24 +487,14 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtPresentat
 /// and [`ValidationError::SdJwtPayload`] when one of them is the issuer-signed JWT of an
 /// SD-JWT.
 pub fn decode_presentation(jwt: &Jwt) -> Result<DecodedPresentation, ValidationError> {
-    decode_presentation_with(jwt, &NO_TYP, &NO_TYP)
-}
-
-/// [`decode_presentation`] also accepting `presentation_typ` on the presentation and
-/// `credential_typ` on its credentials.
-pub(crate) fn decode_presentation_with(
-    jwt: &Jwt,
-    presentation_typ: &BTreeSet<String>,
-    credential_typ: &BTreeSet<String>,
-) -> Result<DecodedPresentation, ValidationError> {
     let jws = jwt.decode()?;
-    check_typ(jws.header(), "JWT", presentation_typ)?;
+    check_typ(jws.header(), "JWT", &NO_TYP)?;
     let claims = plain_claims(&jws)?;
     let presentation = Presentation::from_jwt_claims(&claims)?;
     let credentials = presentation
         .verifiable_credential
         .iter()
-        .map(|credential| decode(&credential.decode()?, credential_typ))
+        .map(|credential| decode(&credential.decode()?, &NO_TYP))
         .collect::<Result<_, _>>()?;
     Ok(DecodedPresentation {
         header: jws.header().clone(),
@@ -507,6 +502,95 @@ pub(crate) fn decode_presentation_with(
         presentation,
         credentials,
     })
+}
+
+/// Decodes a VCDM 1.1 presentation JWT, accepting `presentation_typ`, and each entry of its
+/// `verifiableCredential` on its own, accepting `credential_typ`: one result per entry, in
+/// order. The returned presentation's `credentials` stay empty.
+///
+/// # Errors
+///
+/// As [`decode_presentation`], for the presentation alone.
+#[cfg(feature = "linked-vp")]
+pub(crate) fn decode_presentation_entries(
+    jwt: &Jwt,
+    presentation_typ: &BTreeSet<String>,
+    credential_typ: &BTreeSet<String>,
+) -> Result<
+    (
+        DecodedPresentation,
+        Vec<Result<DecodedCredential, ValidationError>>,
+    ),
+    ValidationError,
+> {
+    let jws = jwt.decode()?;
+    check_typ(jws.header(), "JWT", presentation_typ)?;
+    let claims = plain_claims(&jws)?;
+    let (presentation, entries) = presentation_entries(&claims)?;
+    let credentials = entries
+        .into_iter()
+        .map(|entry| decode(&entry?.decode()?, credential_typ))
+        .collect();
+    let decoded = DecodedPresentation {
+        header: jws.header().clone(),
+        claims,
+        presentation,
+        credentials: Vec::new(),
+    };
+    Ok((decoded, credentials))
+}
+
+/// The presentation of `claims` and the entries of its `verifiableCredential`, each a compact
+/// JWT or why it is not one. An entry that is not a JWT is left out of the presentation, so it
+/// fails alone rather than the presentation with it; a `verifiableCredential` that is not an
+/// array is the presentation's error, as before.
+///
+/// # Errors
+///
+/// As [`Presentation::from_jwt_claims`].
+fn presentation_entries(
+    claims: &JwtClaims,
+) -> Result<(Presentation, Vec<Result<Jwt, ValidationError>>), ValidationError> {
+    let Some(Value::Array(values)) = claims
+        .additional
+        .get("vp")
+        .and_then(|vp| vp.get("verifiableCredential"))
+    else {
+        let presentation = Presentation::from_jwt_claims(claims)?;
+        let entries = presentation
+            .verifiable_credential
+            .iter()
+            .cloned()
+            .map(Ok)
+            .collect();
+        return Ok((presentation, entries));
+    };
+    let entries: Vec<Result<Jwt, ValidationError>> = values
+        .iter()
+        .map(|value| match value {
+            Value::String(token) => Jwt::new(token.as_str()).map_err(ValidationError::from),
+            _ => Err(CredentialError::InvalidClaim {
+                claim: "vp",
+                reason: "a `verifiableCredential` entry is not a string".to_owned(),
+            }
+            .into()),
+        })
+        .collect();
+    let presentation = if entries.iter().all(Result::is_ok) {
+        Presentation::from_jwt_claims(claims)?
+    } else {
+        let mut claims = claims.clone();
+        if let Some(Value::Object(vp)) = claims.additional.get_mut("vp") {
+            let jwts = entries
+                .iter()
+                .filter_map(|entry| entry.as_ref().ok())
+                .map(|jwt| Value::String(jwt.as_str().to_owned()))
+                .collect();
+            vp.insert("verifiableCredential".to_owned(), Value::Array(jwts));
+        }
+        Presentation::from_jwt_claims(&claims)?
+    };
+    Ok((presentation, entries))
 }
 
 /// Decodes a VCDM 2.0 presentation JWT and unwraps and decodes its credentials without
