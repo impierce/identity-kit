@@ -278,10 +278,10 @@ fn every_schema_compiles_with_its_references_resolved() {
     let components = document["components"]["schemas"].as_object().unwrap();
     for name in [
         "DidDocument",
-        "DidVerificationMethod",
-        "DidMethodRef",
-        "DidService",
-        "JoseJwk",
+        "VerificationMethod",
+        "MethodRef",
+        "Service",
+        "Jwk",
         "JwsAlgorithm",
     ] {
         assert!(components.contains_key(name), "{name}");
@@ -290,11 +290,11 @@ fn every_schema_compiles_with_its_references_resolved() {
     assert!(components.contains_key("DomainLinkageConfiguration"));
     #[cfg(feature = "vc")]
     for name in [
-        "VcClaimPath",
-        "VcCredential",
-        "VcPresentation",
-        "VcCredentialV2",
-        "VcPresentationV2",
+        "ClaimPath",
+        "Credential",
+        "Presentation",
+        "CredentialV2",
+        "PresentationV2",
         "EnvelopedVc",
         "EnvelopedVp",
     ] {
@@ -336,52 +336,74 @@ fn every_schema_compiles_with_its_references_resolved() {
     }
     assert_eq!(
         properties["verificationMethod"]["items"]["$ref"],
-        json!("#/components/schemas/DidVerificationMethod")
+        json!("#/components/schemas/VerificationMethod")
     );
 }
 
-/// Every name the crate registers in `components.schemas`. A consumer's schemas share that map,
-/// keyed by name, so a generic name such as `Service` or `Credential` would collide with one of
-/// theirs: a name new to the crate is added here once it is specific.
-const SCHEMA_NAMES: [&str; 19] = [
-    "DidDocument",
-    "DidVerificationMethod",
-    "DidMethodRef",
-    "DidService",
-    "JoseJwk",
-    "JwsAlgorithm",
-    "DomainLinkageConfiguration",
-    "VcCredential",
-    "VcPresentation",
-    "VcCredentialV2",
-    "VcPresentationV2",
-    "EnvelopedVc",
-    "EnvelopedVp",
-    "VcClaimPath",
-    "TypeMetadata",
-    "DisplayMetadata",
-    "ClaimMetadata",
-    "ClaimDisplay",
-    "StatusType",
-];
-
+/// Each schema name belongs to one type of the crate: utoipa keys `components.schemas` by name,
+/// so two types under one name would replace each other's schema.
 #[test]
-fn every_schema_name_is_an_expected_one() {
-    let document = openapi();
-    let components = document["components"]["schemas"].as_object().unwrap();
-    for name in components.keys() {
-        assert!(
-            SCHEMA_NAMES.contains(&name.as_str()),
-            "unexpected schema name `{name}`"
-        );
+fn every_schema_name_belongs_to_one_type() {
+    fn entry<T: ToSchema>() -> (String, &'static str) {
+        (T::name().into_owned(), std::any::type_name::<T>())
     }
-    #[cfg(all(
-        feature = "domain-linkage",
-        feature = "vc",
-        feature = "sd-jwt",
-        feature = "status-list"
-    ))]
-    assert_eq!(components.len(), SCHEMA_NAMES.len());
+    let mut types = Vec::new();
+    types.extend([
+        entry::<DidDocument>(),
+        entry::<VerificationMethod>(),
+        entry::<MethodRef>(),
+        entry::<Service>(),
+        entry::<Jwk>(),
+        entry::<JwsAlgorithm>(),
+    ]);
+    #[cfg(feature = "domain-linkage")]
+    types.push(entry::<
+        identity_kit::domain_linkage::DomainLinkageConfiguration,
+    >());
+    #[cfg(feature = "vc")]
+    {
+        use identity_kit::vc::{
+            ClaimPath, Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation,
+            PresentationV2,
+        };
+        types.extend([
+            entry::<ClaimPath>(),
+            entry::<Credential>(),
+            entry::<Presentation>(),
+            entry::<CredentialV2>(),
+            entry::<PresentationV2>(),
+            entry::<EnvelopedVc>(),
+            entry::<EnvelopedVp>(),
+        ]);
+    }
+    #[cfg(feature = "sd-jwt")]
+    {
+        use identity_kit::sd_jwt_vc::{ClaimDisplay, ClaimMetadata, DisplayMetadata, TypeMetadata};
+        types.extend([
+            entry::<TypeMetadata>(),
+            entry::<DisplayMetadata>(),
+            entry::<ClaimMetadata>(),
+            entry::<ClaimDisplay>(),
+        ]);
+    }
+    #[cfg(feature = "status-list")]
+    types.push(entry::<identity_kit::status_list::StatusType>());
+
+    let mut owners = std::collections::HashMap::new();
+    for (name, ty) in &types {
+        if let Some(other) = owners.insert(name.as_str(), *ty) {
+            panic!("`{name}` names both `{other}` and `{ty}`");
+        }
+    }
+    // The list above covers every schema the crate registers.
+    let document = openapi();
+    for name in document["components"]["schemas"]
+        .as_object()
+        .unwrap()
+        .keys()
+    {
+        assert!(owners.contains_key(name.as_str()), "`{name}` is not listed");
+    }
 }
 
 /// Each type's `ToSchema::schemas` names every schema its `$ref`s point to.
@@ -539,7 +561,7 @@ fn documents_the_type_rejects_are_rejected() {
 
 #[test]
 fn rfc_7517_keys_validate() {
-    let validator = Validator::of("JoseJwk");
+    let validator = Validator::of("Jwk");
     for example in [
         // RFC 7517 Appendix A.1, first key.
         r#"{"kty":"EC","crv":"P-256","x":"MKBCTNIcKUSDii11ySs3526iDZ8AiTo7Tu6KPAqv7D4","y":"4Etl6SRW2YiLUrN5vfvVHuhp7x8PxltmWWlbbM4IFyM","use":"enc","kid":"1"}"#,
@@ -652,7 +674,7 @@ fn claim_path_schema() {
         })
     );
 
-    let validator = Validator::of("VcClaimPath");
+    let validator = Validator::of("ClaimPath");
     // The paths of SD-JWT VC §5.6.1.1 and OID4VP §7.
     for path in [
         json!(["name"]),
@@ -853,7 +875,7 @@ fn vcdm_11_examples_validate() {
     use identity_kit::jose::CompactJws;
     use identity_kit::vc::{Credential, JwtClaims, Presentation};
 
-    let credentials = Validator::of("VcCredential");
+    let credentials = Validator::of("Credential");
     credentials.accepts(VCDM_11_EXAMPLE_1);
     let credential: Credential = serde_json::from_str(VCDM_11_EXAMPLE_1).unwrap();
     credentials.accepts(&serde_json::to_string(&credential).unwrap());
@@ -865,7 +887,7 @@ fn vcdm_11_examples_validate() {
 
     // Example 33: the `vp` claim, with Example 31 for its `"..."`, and the presentation the
     // crate maps it to.
-    let presentations = Validator::of("VcPresentation");
+    let presentations = Validator::of("Presentation");
     let vp = json!({
         "@context": [
             "https://www.w3.org/2018/credentials/v1",
@@ -891,7 +913,7 @@ fn vcdm_20_examples_validate() {
     use identity_kit::jose::CompactJws;
     use identity_kit::vc::{CredentialV2, EnvelopedVp, Jwt, PresentationV2};
 
-    let credentials = Validator::of("VcCredentialV2");
+    let credentials = Validator::of("CredentialV2");
     credentials.accepts(VC_JOSE_COSE_CREDENTIAL);
     let credential: CredentialV2 = serde_json::from_str(VC_JOSE_COSE_CREDENTIAL).unwrap();
     credentials.accepts(&serde_json::to_string(&credential).unwrap());
@@ -899,9 +921,9 @@ fn vcdm_20_examples_validate() {
     // The presentation payload, its enveloped credential, and the credential inside it.
     let jws = CompactJws::decode(VC_JOSE_COSE_PRESENTATION_JWT.trim()).unwrap();
     let payload: Value = jws.claims().unwrap();
-    Validator::of("VcPresentationV2").accepts(&payload.to_string());
+    Validator::of("PresentationV2").accepts(&payload.to_string());
     let presentation: PresentationV2 = serde_json::from_value(payload.clone()).unwrap();
-    Validator::of("VcPresentationV2").accepts(&serde_json::to_string(&presentation).unwrap());
+    Validator::of("PresentationV2").accepts(&serde_json::to_string(&presentation).unwrap());
 
     // The envelope as published, whose `data:` URL repeats the credential JWT after a `;`
     // (`tests/vc_v2.rs` reads the first copy).
@@ -930,7 +952,7 @@ fn credentials_the_types_reject_are_rejected() {
         value[member] = replacement;
         value
     };
-    let credentials = Validator::of("VcCredential");
+    let credentials = Validator::of("Credential");
     for invalid in [
         without("@context"),
         without("type"),
@@ -963,7 +985,7 @@ fn credentials_the_types_reject_are_rejected() {
 
     // VCDM 2.0: the 1.1 context, no subject, no issuer.
     let example: Value = serde_json::from_str(VC_JOSE_COSE_CREDENTIAL).unwrap();
-    let credentials = Validator::of("VcCredentialV2");
+    let credentials = Validator::of("CredentialV2");
     let mut v1 = example.clone();
     v1["@context"] = json!(["https://www.w3.org/2018/credentials/v1"]);
     credentials.rejects(&v1);
@@ -974,7 +996,7 @@ fn credentials_the_types_reject_are_rejected() {
     }
 
     // A VCDM 1.1 presentation carries credentials as JWTs.
-    let presentations = Validator::of("VcPresentation");
+    let presentations = Validator::of("Presentation");
     presentations.rejects(&json!({
         "@context": "https://www.w3.org/2018/credentials/v1",
         "type": "VerifiablePresentation",
