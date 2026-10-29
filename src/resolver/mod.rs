@@ -147,8 +147,8 @@ pub use jwt::{
     IssuerBinding, JwtValidationError, JwtValidationOptions, JwtValidator, ValidatedJwt,
 };
 pub use key::{
-    CompositeKeyResolver, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError,
-    KeyResolver, KeyRole,
+    CompositeKeyResolver, DocumentKeyResolver, JwkResolver, KeyReference, KeyReferenceError,
+    KeyResolutionError, KeyResolver, KeyRole,
 };
 pub use producer::{DidProducer, Hosting, MethodCapabilities, ProduceError};
 pub use registry::{Resolver, ResolverBuilder};

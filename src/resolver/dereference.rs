@@ -151,20 +151,7 @@ impl Resolver {
         relationship: Option<VerificationRelationship>,
     ) -> Result<VerificationMethod, DereferenceError> {
         let document = self.resolve_for(url).await?;
-        let Some(fragment) = url.fragment() else {
-            return Err(DereferenceError::NotVerificationMethod(url.clone()));
-        };
-        let id = document.id.to_url().with_fragment(fragment);
-        document
-            .resolve_verification_method(&id, relationship)
-            .cloned()
-            .map_err(|error| match error {
-                DocumentError::NotInRelationship { id, relationship } => {
-                    DereferenceError::NotInRelationship { id, relationship }
-                }
-                _ if document.service(&id).is_some() => DereferenceError::NotVerificationMethod(id),
-                _ => DereferenceError::NotFound(id),
-            })
+        verification_method_in(&document, url, relationship).cloned()
     }
 
     /// The public key of the verification method `url` names, as a JWK: its `publicKeyJwk`,
@@ -183,15 +170,7 @@ impl Resolver {
         relationship: Option<VerificationRelationship>,
     ) -> Result<Jwk, DereferenceError> {
         let method = self.resolve_verification_method(url, relationship).await?;
-        match &method.material {
-            VerificationMaterial::PublicKeyJwk(jwk) => Ok(jwk.public()),
-            VerificationMaterial::PublicKeyMultibase(multikey) => Jwk::from_multikey(multikey)
-                .map_err(|source| DereferenceError::NoJwk {
-                    id: method.id.clone(),
-                    method_type: method.method_type.clone(),
-                    source: Box::new(source),
-                }),
-        }
+        public_key(&method)
     }
 
     /// Resolves the DID of `url` with the resolution options its DID parameters carry, and
@@ -222,6 +201,43 @@ impl Resolver {
 const VERSION_PARAMETERS: [&str; 2] = ["versionId", "versionTime"];
 
 /// The resolution options for the DID parameters of `url`.
+/// The verification method the fragment of `url` names in `document`, the document of
+/// `url`'s DID, usable for `relationship` when one is given.
+pub(crate) fn verification_method_in<'a>(
+    document: &'a DidDocument,
+    url: &DidUrl,
+    relationship: Option<VerificationRelationship>,
+) -> Result<&'a VerificationMethod, DereferenceError> {
+    let Some(fragment) = url.fragment() else {
+        return Err(DereferenceError::NotVerificationMethod(url.clone()));
+    };
+    let id = document.id.to_url().with_fragment(fragment);
+    document
+        .resolve_verification_method(&id, relationship)
+        .map_err(|error| match error {
+            DocumentError::NotInRelationship { id, relationship } => {
+                DereferenceError::NotInRelationship { id, relationship }
+            }
+            _ if document.service(&id).is_some() => DereferenceError::NotVerificationMethod(id),
+            _ => DereferenceError::NotFound(id),
+        })
+}
+
+/// The public key of `method` as a JWK: its `publicKeyJwk`, or its `publicKeyMultibase`
+/// decoded as a Multikey.
+pub(crate) fn public_key(method: &VerificationMethod) -> Result<Jwk, DereferenceError> {
+    match &method.material {
+        VerificationMaterial::PublicKeyJwk(jwk) => Ok(jwk.public()),
+        VerificationMaterial::PublicKeyMultibase(multikey) => {
+            Jwk::from_multikey(multikey).map_err(|source| DereferenceError::NoJwk {
+                id: method.id.clone(),
+                method_type: method.method_type.clone(),
+                source: Box::new(source),
+            })
+        }
+    }
+}
+
 fn resolution_options(url: &DidUrl) -> Result<ResolutionOptions, DereferenceError> {
     if url.path().is_some() {
         return Err(DereferenceError::MethodSpecific(url.clone()));
