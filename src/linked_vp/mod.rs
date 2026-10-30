@@ -18,6 +18,22 @@
 //!   [`HttpClient`] and validates each presentation, reporting per URL: every linked
 //!   presentation stands on its own.
 //!
+//! # What fails alone
+//!
+//! A verifier reads what someone else published, so one malformed entry does not hide the
+//! valid ones next to it:
+//!
+//! - An endpoint URI that is not a URL fails alone: [`services`] lists it in
+//!   [`LinkedVpService::invalid_urls`] and keeps the service's other URLs, and
+//!   [`LinkedVpClient::validate_document`] reports it on its own. A service fails as a whole
+//!   only when its endpoint is a map or names no URL.
+//! - An entry of the presentation's `verifiableCredential` that is not a credential JWT fails
+//!   alone: [`decode`] returns one result per entry, and [`LinkedVpValidator::validate`]
+//!   reports it in [`PresentationValidationError::credentials`] under its index, as any other
+//!   credential that does not validate.
+//! - Everything else is the presentation's: it does not decode, its holder or signer is not
+//!   the linking DID, or its signature or time claims do not hold.
+//!
 //! # A linked presentation proves control at link time only
 //!
 //! Anyone can fetch a linked presentation and replay it, and it says nothing about who
@@ -80,12 +96,12 @@ use crate::jose::{DefaultVerifier, JwsError, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError};
 use crate::resolver::Resolver;
 use crate::vc::validation::{
-    CredentialValidationOptions, DecodedPresentation, FailFast, JwtPresentationValidator,
-    KeyReference, KeyResolver, PresentationValidationError, PresentationValidationOptions,
-    SubjectHolderRelationship, TimeOptions, ValidationError, decode_presentation_with,
-    extract_holder,
+    CredentialValidationOptions, DecodedCredential, DecodedPresentation, FailFast,
+    JwtPresentationValidator, KeyReference, KeyResolver, PresentationValidationError,
+    PresentationValidationOptions, SubjectHolderRelationship, TimeOptions, ValidationError,
+    decode_presentation_entries, extract_holder,
 };
-use crate::vc::{CredentialError, Jwt, JwtClaims, Presentation};
+use crate::vc::{CredentialError, Jwt, JwtClaims, Party, Presentation};
 
 /// The service type, `LinkedVerifiablePresentation`.
 pub const SERVICE_TYPE: &str = "LinkedVerifiablePresentation";
@@ -157,8 +173,11 @@ pub fn service(id: DidUrl, urls: impl IntoIterator<Item = Url>) -> Result<Servic
 pub struct LinkedVpService<'a> {
     /// The service entry.
     pub service: &'a Service,
-    /// Its URLs, in document order.
+    /// Its URLs, in document order: the endpoint URIs that parse as URLs.
     pub urls: Vec<Url>,
+    /// The endpoint URIs that do not parse as URLs, in document order, each with why. They
+    /// do not hide the service's other URLs.
+    pub invalid_urls: Vec<(Uri, url::ParseError)>,
 }
 
 impl LinkedVpService<'_> {
@@ -169,8 +188,10 @@ impl LinkedVpService<'_> {
 }
 
 /// The `LinkedVerifiablePresentation` services of `document`, in document order. A service of
-/// that type whose endpoint is a map, or names something other than a URL, is an
-/// [`LinkedVpError::InvalidService`] rather than silently skipped.
+/// that type whose endpoint is a map, or names no URL at all, is a
+/// [`LinkedVpError::InvalidService`] rather than silently skipped. An endpoint URI that is not
+/// a URL (`https://example.org:99999/vp`, whose port is out of range) is listed in
+/// [`LinkedVpService::invalid_urls`] and leaves the service's other URLs in place.
 pub fn services(
     document: &DidDocument,
 ) -> impl Iterator<Item = Result<LinkedVpService<'_>, LinkedVpError>> {
@@ -196,15 +217,38 @@ fn linked_vp_service(service: &Service) -> Result<LinkedVpService<'_>, LinkedVpE
             None,
         ));
     }
-    let urls = service
-        .service_endpoint
-        .uris()
-        .map(|uri| {
-            Url::parse(uri.as_str())
-                .map_err(|e| invalid(format!("`{uri}` is not a URL"), Some(Box::new(e))))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(LinkedVpService { service, urls })
+    let mut urls = Vec::new();
+    let mut invalid_urls = Vec::new();
+    for uri in service.service_endpoint.uris() {
+        match Url::parse(uri.as_str()) {
+            Ok(url) => urls.push(url),
+            Err(e) => invalid_urls.push((uri.clone(), e)),
+        }
+    }
+    if urls.is_empty() {
+        return Err(match invalid_urls.into_iter().next() {
+            Some((uri, e)) => invalid(format!("`{uri}` is not a URL"), Some(Box::new(e))),
+            None => invalid("no URL".to_owned(), None),
+        });
+    }
+    Ok(LinkedVpService {
+        service,
+        urls,
+        invalid_urls,
+    })
+}
+
+/// The report of `uri`, an endpoint URI of `service` that is not a URL.
+fn invalid_url(service: &Service, uri: &Uri, error: url::ParseError) -> LinkedPresentationReport {
+    LinkedPresentationReport {
+        service: service.id.clone(),
+        url: None,
+        result: Err(LinkedVpError::InvalidService {
+            id: service.id.clone(),
+            reason: format!("`{uri}` is not a URL"),
+            source: Some(Box::new(error)),
+        }),
+    }
 }
 
 /// Builds a linked presentation in the JSON Web Token form: a VCDM 1.1 presentation of
@@ -493,16 +537,50 @@ impl LinkedVpValidationOptions {
     }
 }
 
+/// A linked presentation decoded without verification: the presentation, and each entry of
+/// its `verifiableCredential` decoded on its own.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct DecodedLinkedPresentation {
+    /// The JWS header.
+    pub header: JwsHeader,
+    /// The claims set, `vp` included.
+    pub claims: JwtClaims,
+    /// The presentation, with `iss` and `jti` mapped back into it. Its
+    /// `verifiable_credential` holds the entries that are compact JWTs.
+    pub presentation: Presentation,
+    /// One result per entry of `verifiableCredential`, in order: the credential decoded, or why
+    /// that entry is not one.
+    pub credentials: Vec<Result<DecodedCredential, ValidationError>>,
+}
+
+impl DecodedLinkedPresentation {
+    /// The holder: `holder` of the presentation, which decoding set from `iss`.
+    pub fn holder(&self) -> Option<&Uri> {
+        self.presentation.holder.as_ref().map(Party::id)
+    }
+}
+
 /// Decodes a linked presentation and its credentials without verifying or validating
-/// anything, accepting [`PRESENTATION_TYP`] and [`CREDENTIAL_TYP`].
+/// anything, accepting [`PRESENTATION_TYP`] and [`CREDENTIAL_TYP`]. Each entry of
+/// `verifiableCredential` decodes on its own: one that is not a credential JWT is an error in
+/// [`DecodedLinkedPresentation::credentials`], next to the others.
 ///
 /// # Errors
 ///
-/// As [`decode_presentation`](crate::vc::validation::decode_presentation).
-pub fn decode(jwt: &Jwt) -> Result<DecodedPresentation, ValidationError> {
+/// As [`decode_presentation`](crate::vc::validation::decode_presentation), for the
+/// presentation alone.
+pub fn decode(jwt: &Jwt) -> Result<DecodedLinkedPresentation, ValidationError> {
     let presentation_typ: BTreeSet<String> = PRESENTATION_TYP.map(str::to_owned).into();
     let credential_typ: BTreeSet<String> = CREDENTIAL_TYP.map(str::to_owned).into();
-    decode_presentation_with(jwt, &presentation_typ, &credential_typ)
+    let (decoded, credentials) =
+        decode_presentation_entries(jwt, &presentation_typ, &credential_typ)?;
+    Ok(DecodedLinkedPresentation {
+        header: decoded.header,
+        claims: decoded.claims,
+        presentation: decoded.presentation,
+        credentials,
+    })
 }
 
 /// Validates linked presentations: [`JwtPresentationValidator`] with the options fixed to the
@@ -722,8 +800,9 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
     }
 
     /// Fetches and validates every presentation `document` links, one report per URL in
-    /// document order, and one for each invalid service entry. URLs past the first
-    /// [`max_urls`](Self::max_urls) are not fetched and report [`LinkedVpError::TooManyUrls`].
+    /// document order, one for each endpoint URI that is not a URL, and one for each invalid
+    /// service entry. URLs past the first [`max_urls`](Self::max_urls) are not fetched and
+    /// report [`LinkedVpError::TooManyUrls`].
     pub async fn validate_document(
         &self,
         document: &DidDocument,
@@ -736,18 +815,22 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
             .iter()
             .filter(|service| service.has_type(SERVICE_TYPE))
         {
-            let linked = match linked_vp_service(service) {
-                Ok(linked) => linked,
-                Err(error) => {
-                    reports.push(LinkedPresentationReport {
-                        service: service.id.clone(),
-                        url: None,
-                        result: Err(error),
-                    });
-                    continue;
-                }
-            };
-            for url in linked.urls {
+            if let Err(error) = linked_vp_service(service) {
+                reports.push(LinkedPresentationReport {
+                    service: service.id.clone(),
+                    url: None,
+                    result: Err(error),
+                });
+                continue;
+            }
+            for uri in service.service_endpoint.uris() {
+                let url = match Url::parse(uri.as_str()) {
+                    Ok(url) => url,
+                    Err(error) => {
+                        reports.push(invalid_url(service, uri, error));
+                        continue;
+                    }
+                };
                 let result = if fetched < self.max_urls {
                     fetched += 1;
                     self.validate_url(&url, &document.id, options).await
