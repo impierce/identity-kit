@@ -664,10 +664,10 @@ async fn composite_of_the_crate_resolvers() {
 // `DocumentKeyResolver`
 // ---------------------------------------------------------------------------------------------
 
-/// A `did:web` document in hand: the RFC 7515 A.3 key as `publicKeyJwk` under
+/// A `did:web` document supplied by the caller: the RFC 7515 A.3 key as `publicKeyJwk` under
 /// `authentication`, the RFC 8037 A.2 key as a Multikey (the multibase value of its `did:key`)
 /// under `assertionMethod`, and a service.
-fn held_document() -> DidDocument {
+fn supplied_document() -> DidDocument {
     let multikey = DidKey::did(&ed25519())
         .unwrap()
         .method_specific_id()
@@ -707,7 +707,7 @@ fn dereference_error(error: &KeyResolutionError) -> &DereferenceError {
 
 #[tokio::test]
 async fn document_key_resolver_resolves_the_documents_methods_for_the_role() {
-    let resolver = DocumentKeyResolver::new(held_document());
+    let resolver = DocumentKeyResolver::new(supplied_document());
     let reference = |url: &str| KeyReference::DidUrl(did_url(url));
 
     // Under the role's relationship: `publicKeyJwk` as it is, a Multikey as its JWK.
@@ -792,9 +792,9 @@ async fn document_key_resolver_resolves_the_documents_methods_for_the_role() {
 
 #[tokio::test]
 async fn document_key_resolver_falls_through_a_composite() {
-    // The holder's document in hand; issuers' DIDs resolve as usual.
+    // The holder's document supplied by the caller; issuers' DIDs resolve as usual.
     let composite = CompositeKeyResolver::new()
-        .with(DocumentKeyResolver::new(held_document()))
+        .with(DocumentKeyResolver::new(supplied_document()))
         .with(resolver());
     let did = DidKey::did(&ed25519()).unwrap();
     let issuer = did.join(&format!("#{}", did.method_specific_id())).unwrap();
@@ -822,9 +822,9 @@ async fn document_key_resolver_falls_through_a_composite() {
     );
 
     // Several documents; a later one of the same DID replaces the earlier.
-    let mut replacement = held_document();
+    let mut replacement = supplied_document();
     replacement.authentication.clear();
-    let resolver = DocumentKeyResolver::new(held_document())
+    let resolver = DocumentKeyResolver::new(supplied_document())
         .with(DidKey::default().document(&did).unwrap())
         .with(replacement);
     assert_eq!(resolver.documents().len(), 2);

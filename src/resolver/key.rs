@@ -449,7 +449,7 @@ impl KeyResolver for JwkResolver {
     }
 }
 
-/// Resolves a [`KeyReference::DidUrl`] against DID documents the caller already holds, without
+/// Resolves a [`KeyReference::DidUrl`] against DID documents supplied by the caller, without
 /// resolving the DID again: a document resolved to read its services, or one the caller
 /// fetched or publishes itself.
 ///
@@ -458,11 +458,12 @@ impl KeyResolver for JwkResolver {
 /// `publicKeyJwk` as it is, `publicKeyMultibase` decoded as a Multikey. Every other reference
 /// is [`Unsupported`](KeyResolutionError::Unsupported), so that a [`CompositeKeyResolver`]
 /// tries the next resolver: a DID URL of another DID, and one with a path or query, such as a
-/// `versionId`, which names a document other than the one held.
+/// `versionId`, which names a document other than the one supplied.
 ///
 /// # Examples
 ///
-/// A presentation's holder document is in hand; issuers' keys still resolve over the network.
+/// The caller supplies a presentation's holder document; issuers' keys still resolve over the
+/// network.
 ///
 /// ```
 /// # #[cfg(feature = "did-key")]
@@ -523,11 +524,11 @@ impl DocumentKeyResolver {
         }
     }
 
-    /// This resolver over `document` as well. A document of a DID already held replaces the
+    /// This resolver over `document` as well. A document of a DID already supplied replaces the
     /// earlier one.
     #[must_use]
     pub fn with(mut self, document: DidDocument) -> Self {
-        self.documents.retain(|held| held.id != document.id);
+        self.documents.retain(|supplied| supplied.id != document.id);
         self.documents.push(document);
         self
     }
