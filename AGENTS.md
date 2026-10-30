@@ -8,6 +8,7 @@
 - The work breakdown is tracked as GitHub Issues labelled `ready-for-agent`, linked by native issue dependencies. Pick the lowest-numbered open issue with no open blockers, one pull request per issue, each with its tests.
 - `CONTRIBUTING.md` lists the checks CI runs and the pull request conventions. Read it before writing a pull request title.
 - `docs/FEATURES.md` is the feature checklist. When a pull request implements a row, flip its status to ✅ in that pull request.
+- `docs/guides/` holds task-oriented usage guides (keys and DIDs, JWS, JWT credentials, SD-JWT VC). Start there to learn how the crate is used. Their `rust` code blocks are doctests (included from `src/lib.rs`), so an API change that breaks a guide fails `cargo test --all-features`; update the guide in the same pull request.
 
 ## Ground rules
 

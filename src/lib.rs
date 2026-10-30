@@ -61,3 +61,29 @@ pub mod vc;
 #[cfg(feature = "test-vectors")]
 #[cfg_attr(docsrs, doc(cfg(feature = "test-vectors")))]
 pub mod vectors;
+
+/// The guides in `docs/guides`, included so that rustdoc runs their code blocks as doctests.
+/// Each is gated on the features its code needs.
+#[cfg(doctest)]
+mod guides {
+    #[cfg(all(feature = "in-memory", feature = "did-key", feature = "did-jwk"))]
+    #[doc = include_str!("../docs/guides/keys-and-dids.md")]
+    struct KeysAndDids;
+
+    #[cfg(all(feature = "in-memory", feature = "did-key"))]
+    #[doc = include_str!("../docs/guides/sign-and-verify.md")]
+    struct SignAndVerify;
+
+    #[cfg(all(
+        feature = "in-memory",
+        feature = "vc",
+        feature = "did-key",
+        feature = "did-jwk"
+    ))]
+    #[doc = include_str!("../docs/guides/jwt-credentials.md")]
+    struct JwtCredentials;
+
+    #[cfg(all(feature = "in-memory", feature = "sd-jwt", feature = "did-key"))]
+    #[doc = include_str!("../docs/guides/sd-jwt-vc.md")]
+    struct SdJwtVc;
+}

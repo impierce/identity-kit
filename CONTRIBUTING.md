@@ -102,6 +102,12 @@ Don't bump the version or edit `CHANGELOG.md` by hand.
 [`docs/FEATURES.md`](docs/FEATURES.md) lists every implemented and planned feature with its tracking issue.
 When a pull request implements a feature, change its status to ✅ in the same pull request.
 
+## Guides
+
+[`docs/guides/`](docs/guides/README.md) holds step-by-step usage guides.
+Their `rust` code blocks are doctests, included from `src/lib.rs`, so `cargo test --all-features` fails when an API change breaks one; fix the guide in the same pull request.
+[`docs/guides/README.md`](docs/guides/README.md) explains how to write and register a new guide.
+
 ## Security
 
 Please report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md), and not in public issues or pull requests.
