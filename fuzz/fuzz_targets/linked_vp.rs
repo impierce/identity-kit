@@ -1,5 +1,5 @@
 //! DIF Linked Verifiable Presentation: arbitrary DID documents yield only well-formed linked
-//! presentation services and one report per URL, no more fetched than the limit, arbitrary
+//! presentation services and one report per endpoint URI, no more fetched than the limit, arbitrary
 //! response bodies and tokens never panic the fetcher, decoder or validator, and a built
 //! presentation maps to JWT claims and back unchanged.
 #![no_main]
@@ -69,17 +69,25 @@ fn exercise_document(document: &DidDocument, body: &[u8]) {
     for linked in services(document) {
         match linked {
             Ok(linked) => {
-                expected_reports += linked.urls.len();
                 assert!(linked.service.has_type(SERVICE_TYPE));
                 assert!(!matches!(
                     linked.service.service_endpoint,
                     ServiceEndpoint::Map(_)
                 ));
+                // Every endpoint URI is a URL or listed as invalid, in order; one report each.
                 let uris: Vec<&Uri> = linked.service.service_endpoint.uris().collect();
-                assert_eq!(linked.urls.len(), uris.len());
+                expected_reports += uris.len();
+                assert_eq!(linked.urls.len() + linked.invalid_urls.len(), uris.len());
                 assert!(!linked.urls.is_empty());
-                for (url, uri) in linked.urls.iter().zip(uris) {
+                let (valid, invalid): (Vec<&Uri>, Vec<&Uri>) = uris
+                    .into_iter()
+                    .partition(|uri| Url::parse(uri.as_str()).is_ok());
+                for (url, uri) in linked.urls.iter().zip(valid) {
                     assert_eq!(Url::parse(uri.as_str()).as_ref(), Ok(url));
+                }
+                for ((uri, error), expected) in linked.invalid_urls.iter().zip(invalid) {
+                    assert_eq!(uri, expected);
+                    assert_eq!(Url::parse(uri.as_str()).err(), Some(*error));
                 }
                 if let Ok(rebuilt) = service(linked.id().clone(), linked.urls.clone()) {
                     assert!(rebuilt.has_type(SERVICE_TYPE));
@@ -134,10 +142,8 @@ fn exercise_body(data: &[u8]) {
 
 fn exercise_token(jwt: &Jwt) {
     if let Ok(decoded) = decode(jwt) {
-        assert_eq!(
-            decoded.credentials.len(),
-            decoded.presentation.verifiable_credential.len()
-        );
+        // One result per entry; the presentation keeps the entries that are JWTs.
+        assert!(decoded.credentials.len() >= decoded.presentation.verifiable_credential.len());
     }
     let validator = LinkedVpValidator::new(NoKeys, DefaultVerifier);
     let did = Did::parse("did:example:123").expect("a DID");

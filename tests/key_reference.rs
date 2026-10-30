@@ -1,7 +1,7 @@
 //! `KeyReference`, `KeyRole` and the key resolvers of the lower layer (ADR 0006): the
 //! precedence of `KeyReference::from_jws` over hand-built headers, RFC 7515 Appendix A.3 signed
-//! with its key in a `jwk` header, the binding rule table, `Resolver`, `JwkResolver` and
-//! `CompositeKeyResolver`.
+//! with its key in a `jwk` header, the binding rule table, `Resolver`, `JwkResolver`,
+//! `DocumentKeyResolver` and `CompositeKeyResolver`.
 #![cfg(all(feature = "did-key", feature = "did-jwk"))]
 #![expect(
     clippy::items_after_statements,
@@ -19,14 +19,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use identity_kit::did::{DidUrl, VerificationRelationship};
+use identity_kit::did::{DidDocument, DidUrl, VerificationRelationship};
 use identity_kit::jose::{
     CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, encode_compact,
 };
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::{
-    CompositeKeyResolver, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError,
-    KeyResolver, KeyRole,
+    CompositeKeyResolver, DereferenceError, DocumentKeyResolver, JwkResolver, KeyReference,
+    KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
 };
 use serde_json::{Value, json};
 use url::Url;
@@ -652,6 +652,192 @@ async fn composite_of_the_crate_resolvers() {
     }
     assert!(resolves(&*shared, &reference).await);
     assert!(resolves(boxed, &reference).await);
+}
+
+// ---------------------------------------------------------------------------------------------
+// `DocumentKeyResolver`
+// ---------------------------------------------------------------------------------------------
+
+/// A `did:web` document supplied by the caller: the RFC 7515 A.3 key as `publicKeyJwk` under
+/// `authentication`, the RFC 8037 A.2 key as a Multikey (the multibase value of its `did:key`)
+/// under `assertionMethod`, and a service.
+fn supplied_document() -> DidDocument {
+    let multikey = DidKey::did(&ed25519())
+        .unwrap()
+        .method_specific_id()
+        .to_owned();
+    serde_json::from_value(json!({
+        "id": "did:web:holder.example",
+        "verificationMethod": [
+            {
+                "id": "did:web:holder.example#p256",
+                "type": "JsonWebKey",
+                "controller": "did:web:holder.example",
+                "publicKeyJwk": Es256Signer::rfc7515_a3().public_jwk()
+            },
+            {
+                "id": "did:web:holder.example#ed25519",
+                "type": "Multikey",
+                "controller": "did:web:holder.example",
+                "publicKeyMultibase": multikey
+            }
+        ],
+        "authentication": ["#p256"],
+        "assertionMethod": ["did:web:holder.example#ed25519"],
+        "service": [{
+            "id": "did:web:holder.example#vp",
+            "type": "LinkedVerifiablePresentation",
+            "serviceEndpoint": "https://holder.example/vp.jwt"
+        }]
+    }))
+    .unwrap()
+}
+
+/// The `DereferenceError` behind a failed resolution.
+fn dereference_error(error: &KeyResolutionError) -> &DereferenceError {
+    assert!(!error.is_unsupported(), "{error}");
+    error.inner().unwrap().downcast_ref().unwrap()
+}
+
+#[tokio::test]
+async fn document_key_resolver_resolves_the_documents_methods_for_the_role() {
+    let resolver = DocumentKeyResolver::new(supplied_document());
+    let reference = |url: &str| KeyReference::DidUrl(did_url(url));
+
+    // Under the role's relationship: `publicKeyJwk` as it is, a Multikey as its JWK.
+    assert_eq!(
+        resolver
+            .resolve_key(&reference("did:web:holder.example#p256"), KeyRole::Subject)
+            .await
+            .unwrap(),
+        Es256Signer::rfc7515_a3().public_jwk()
+    );
+    assert_eq!(
+        resolver
+            .resolve_key(
+                &reference("did:web:holder.example#ed25519"),
+                KeyRole::Issuer
+            )
+            .await
+            .unwrap(),
+        ed25519()
+    );
+
+    // Under another relationship only: an error, not a reference to pass on.
+    for (url, role) in [
+        ("did:web:holder.example#p256", KeyRole::Issuer),
+        ("did:web:holder.example#ed25519", KeyRole::Subject),
+    ] {
+        let error = resolver
+            .resolve_key(&reference(url), role)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                dereference_error(&error),
+                DereferenceError::NotInRelationship { relationship, .. }
+                    if *relationship == role.relationship()
+            ),
+            "{error}"
+        );
+    }
+    // No such method, a service, no fragment: errors of the document too.
+    let error = resolver
+        .resolve_key(&reference("did:web:holder.example#nope"), KeyRole::Issuer)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        dereference_error(&error),
+        DereferenceError::NotFound(_)
+    ));
+    for url in ["did:web:holder.example#vp", "did:web:holder.example"] {
+        let error = resolver
+            .resolve_key(&reference(url), KeyRole::Issuer)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                dereference_error(&error),
+                DereferenceError::NotVerificationMethod(_)
+            ),
+            "{url}"
+        );
+    }
+
+    // Another DID, a URL naming another version or a path, and every other kind of reference
+    // are not this resolver's.
+    let mut unsupported = vec![
+        reference("did:web:other.example#p256"),
+        reference("did:web:holder.example?versionId=1#p256"),
+        reference("did:web:holder.example/path#p256"),
+    ];
+    unsupported.extend(every_reference());
+    for key in unsupported {
+        let error = resolver
+            .resolve_key(&key, KeyRole::Subject)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, KeyResolutionError::Unsupported(r) if **r == key),
+            "{key}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn document_key_resolver_falls_through_a_composite() {
+    // The holder's document supplied by the caller; issuers' DIDs resolve as usual.
+    let composite = CompositeKeyResolver::new()
+        .with(DocumentKeyResolver::new(supplied_document()))
+        .with(resolver());
+    let did = DidKey::did(&ed25519()).unwrap();
+    let issuer = did.join(&format!("#{}", did.method_specific_id())).unwrap();
+    assert_eq!(
+        composite
+            .resolve_key(&KeyReference::DidUrl(issuer), KeyRole::Issuer)
+            .await
+            .unwrap(),
+        ed25519()
+    );
+    let holder = KeyReference::DidUrl(did_url("did:web:holder.example#p256"));
+    assert!(
+        composite
+            .resolve_key(&holder, KeyRole::Subject)
+            .await
+            .is_ok()
+    );
+    // An answer of the document is final: the key is not looked up elsewhere.
+    assert!(
+        !composite
+            .resolve_key(&holder, KeyRole::Issuer)
+            .await
+            .unwrap_err()
+            .is_unsupported()
+    );
+
+    // Several documents; a later one of the same DID replaces the earlier.
+    let mut replacement = supplied_document();
+    replacement.authentication.clear();
+    let resolver = DocumentKeyResolver::new(supplied_document())
+        .with(DidKey::default().document(&did).unwrap())
+        .with(replacement);
+    assert_eq!(resolver.documents().len(), 2);
+    assert!(
+        resolver
+            .resolve_key(&holder, KeyRole::Subject)
+            .await
+            .is_err()
+    );
+    let issuer = did.join(&format!("#{}", did.method_specific_id())).unwrap();
+    // Shared behind `Arc`.
+    let shared = Arc::new(resolver);
+    assert_eq!(
+        shared
+            .resolve_key(&KeyReference::DidUrl(issuer), KeyRole::Issuer)
+            .await
+            .unwrap(),
+        ed25519()
+    );
 }
 
 #[test]
