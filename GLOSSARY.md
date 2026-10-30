@@ -23,7 +23,7 @@ The document a DID resolves to: its verification methods, the verification relat
 _Avoid_: DID doc, DID profile
 
 **Controller**:
-The DID that is authorised to make changes to a DID document or that a verification method belongs to.
+The DID authorised to change a DID document, or the DID that controls a verification method.
 _Avoid_: Owner
 
 **Verification method**:
