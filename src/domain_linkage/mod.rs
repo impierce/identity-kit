@@ -30,7 +30,9 @@
 //! [`earliest_expiry`](DomainLinkageConfiguration::earliest_expiry) says when to renew,
 //! [`remove_origin`](DomainLinkageConfiguration::remove_origin) unlinks an origin, and
 //! [`linked_dids`](DomainLinkageConfiguration::linked_dids) is a public `Vec` for anything
-//! else, `retain` included.
+//! else, `retain` included. A configuration left without entries does not read back
+//! ([`check`](DomainLinkageConfiguration::check)): an origin that links no DID publishes no
+//! configuration.
 //!
 //! # Examples
 //!
@@ -385,6 +387,9 @@ pub enum LinkedDid {
 
 /// The DID configuration resource: `@context` and the domain linkage credentials.
 ///
+/// Deserializing [checks](Self::check) it: a resource of another `@context`, or with an
+/// empty `linked_dids`, does not read.
+///
 /// # Examples
 ///
 /// ```
@@ -400,6 +405,10 @@ pub enum LinkedDid {
 /// assert_eq!(configuration.jwts().count(), 1);
 /// assert!(serde_json::from_value::<DomainLinkageConfiguration>(json!({
 ///   "@context": "https://example.com/other", "linked_dids": []
+/// })).is_err());
+/// assert!(serde_json::from_value::<DomainLinkageConfiguration>(json!({
+///   "@context": "https://identity.foundation/.well-known/did-configuration/v1",
+///   "linked_dids": []
 /// })).is_err());
 /// # Ok::<(), serde_json::Error>(())
 /// ```
@@ -420,7 +429,8 @@ impl Default for DomainLinkageConfiguration {
 }
 
 impl DomainLinkageConfiguration {
-    /// An empty configuration.
+    /// An empty configuration, to add credentials to. It does not pass
+    /// [`check`](Self::check) until it holds one.
     pub fn new() -> Self {
         Self {
             context: CONTEXT.to_owned(),
@@ -488,14 +498,19 @@ impl DomainLinkageConfiguration {
         Ok(before - self.linked_dids.len())
     }
 
-    /// Checks that `@context` is [`CONTEXT`].
+    /// Checks that `@context` is [`CONTEXT`] and that [`linked_dids`](Self::linked_dids) holds
+    /// at least one entry. Deserializing and the validators apply it, so a resource without
+    /// entries is malformed rather than an origin that links no DID.
     ///
     /// # Errors
     ///
-    /// [`DomainLinkageError::InvalidContext`].
+    /// [`DomainLinkageError::InvalidContext`] or [`DomainLinkageError::NoEntries`].
     pub fn check(&self) -> Result<(), DomainLinkageError> {
         if self.context != CONTEXT {
             return Err(DomainLinkageError::InvalidContext(self.context.clone()));
+        }
+        if self.linked_dids.is_empty() {
+            return Err(DomainLinkageError::NoEntries);
         }
         Ok(())
     }
@@ -706,6 +721,9 @@ pub enum DomainLinkageError {
     /// The configuration's `@context` is not [`CONTEXT`].
     #[error("`@context` is {0:?}, not `{CONTEXT}`")]
     InvalidContext(String),
+    /// The configuration's `linked_dids` is empty.
+    #[error("`linked_dids` is empty")]
+    NoEntries,
     /// The JWT header has a `typ`, which the format forbids.
     #[error("header `typ` {0:?} must not be present")]
     TypPresent(String),
@@ -966,6 +984,8 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     ///
     /// # Errors
     ///
+    /// [`DomainLinkageError::InvalidContext`] or [`DomainLinkageError::NoEntries`] when the
+    /// configuration does not [`check`](DomainLinkageConfiguration::check),
     /// [`DomainLinkageError::NoCredentialFor`] when no JWT entry names `did` as issuer,
     /// [`DomainLinkageError::NoValidCredential`] with the error of each such entry otherwise,
     /// [`DomainLinkageError::TooManyCredentials`] for those past the limit.
@@ -1011,8 +1031,9 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     ///
     /// # Errors
     ///
-    /// [`DomainLinkageError::InvalidContext`], or [`DomainLinkageError::NoValidCredential`]
-    /// with the error of every JWT entry.
+    /// [`DomainLinkageError::InvalidContext`] or [`DomainLinkageError::NoEntries`] when the
+    /// configuration does not [`check`](DomainLinkageConfiguration::check), or
+    /// [`DomainLinkageError::NoValidCredential`] with the error of every JWT entry.
     ///
     /// # Panics
     ///
@@ -1054,8 +1075,8 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
 
 /// Fetches the DID configuration resource of `origin` with `http`: a `GET` of
 /// [`configuration_url`] over HTTPS, the body deserialized as a
-/// [`DomainLinkageConfiguration`], so its `@context` is checked and Linked Data Proof entries
-/// are carried as data. Nothing is validated.
+/// [`DomainLinkageConfiguration`], so it is [checked](DomainLinkageConfiguration::check) and
+/// Linked Data Proof entries are carried as data. Nothing is validated.
 ///
 /// # Errors
 ///
@@ -1065,7 +1086,8 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
 ///   configuration;
 /// - [`DomainLinkageError::Http`] when there is no response, and
 ///   [`DomainLinkageError::HttpStatus`] for any other status that is not `2xx`;
-/// - [`DomainLinkageError::InvalidConfiguration`] when the body is not a configuration.
+/// - [`DomainLinkageError::InvalidConfiguration`] when the body is not a configuration, one
+///   without entries included.
 pub async fn fetch_configuration<C: HttpClient + ?Sized>(
     http: &C,
     origin: &Url,
