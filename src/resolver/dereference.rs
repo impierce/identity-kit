@@ -200,7 +200,6 @@ impl Resolver {
 /// The DID parameters this crate understands, which select a version of the document.
 const VERSION_PARAMETERS: [&str; 2] = ["versionId", "versionTime"];
 
-/// The resolution options for the DID parameters of `url`.
 /// The verification method the fragment of `url` names in `document`, the document of
 /// `url`'s DID, usable for `relationship` when one is given.
 pub(crate) fn verification_method_in<'a>(
@@ -238,6 +237,7 @@ pub(crate) fn public_key(method: &VerificationMethod) -> Result<Jwk, Dereference
     }
 }
 
+/// The resolution options for the DID parameters of `url`.
 fn resolution_options(url: &DidUrl) -> Result<ResolutionOptions, DereferenceError> {
     if url.path().is_some() {
         return Err(DereferenceError::MethodSpecific(url.clone()));
