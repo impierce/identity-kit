@@ -8,10 +8,9 @@
 
 mod common;
 
-use chrono::{DateTime, TimeZone as _, Utc};
-use identity_kit::did::{Did, DidUrl, Uri};
+use chrono::{TimeZone as _, Utc};
+use identity_kit::did::{DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, JwsHeader, Signer};
-use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, JwtCredentialValidator, JwtPresentationValidator,
@@ -23,7 +22,7 @@ use identity_kit::vc::{
 };
 use serde_json::{Map, Value, json};
 
-use common::{Ed25519Signer, Es256Signer};
+use common::fixtures::{AUDIENCE, NONCE, holder, issuer, now, resolver};
 
 /// RFC 9901 Appendix A.4: an SD-JWT of a VCDM credential, its issuer-signed JWT first.
 const RFC9901_A4_ISSUANCE: &str = include_str!("vectors/sd_jwt/w3c_vcdm/issuance.txt");
@@ -32,41 +31,6 @@ const RFC9901_A4_PAYLOAD: &str = include_str!("vectors/sd_jwt/w3c_vcdm/payload.j
 /// RFC 9901 §5.1: the payload of the issuer-signed JWT, whose `nationalities` has its two
 /// elements concealed.
 const RFC9901_SIMPLE_PAYLOAD: &str = include_str!("vectors/sd_jwt/simple/payload.json");
-
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
-}
-
-const AUDIENCE: &str = "did:example:verifier";
-const NONCE: &str = "n-0S6_WzA2Mj";
-
-struct Party {
-    did: Did,
-    kid: DidUrl,
-}
-
-/// The issuer: `did:key` of the RFC 8037 key.
-fn issuer() -> (Party, Ed25519Signer) {
-    let signer = Ed25519Signer::rfc8037();
-    let did = DidKey::did(&signer.public_jwk()).unwrap();
-    let kid = did.join(&format!("#{}", did.method_specific_id())).unwrap();
-    (Party { did, kid }, signer)
-}
-
-/// The holder: `did:jwk` of the RFC 7515 A.3 key, whose verification method is `#0`.
-fn holder() -> (Party, Es256Signer) {
-    let signer = Es256Signer::rfc7515_a3();
-    let did = DidJwk::did(&signer.public_jwk()).unwrap();
-    let kid = did.join("#0").unwrap();
-    (Party { did, kid }, signer)
-}
-
-fn resolver() -> Resolver {
-    Resolver::builder()
-        .with(DidKey::default())
-        .with(DidJwk)
-        .build()
-}
 
 fn credential_validator() -> JwtCredentialValidator<Resolver> {
     JwtCredentialValidator::new(resolver(), DefaultVerifier)
@@ -99,15 +63,15 @@ async fn sign(claims: &JwtClaims, typ: Option<&str>, kid: &DidUrl, signer: &dyn 
 
 /// `claims` signed by the issuer.
 async fn issue(claims: &JwtClaims, typ: Option<&str>) -> Jwt {
-    let (issuer, signer) = issuer();
-    sign(claims, typ, &issuer.kid, &signer).await
+    let issuer = issuer();
+    sign(claims, typ, &issuer.kid, &issuer.signer).await
 }
 
 /// A VCDM 2.0 credential about the holder, valid from 2024 to 2026, with `properties` on its
 /// subject.
 fn credential_v2(properties: Value) -> CredentialV2 {
-    let (issuer, _) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let Value::Object(properties) = properties else {
         unreachable!()
     };
@@ -125,8 +89,8 @@ fn credential_v2(properties: Value) -> CredentialV2 {
 
 /// A VCDM 1.1 credential about the holder, issued in 2024.
 fn credential(properties: Value) -> Credential {
-    let (issuer, _) = issuer();
-    let (holder, _) = holder();
+    let issuer = issuer();
+    let holder = holder();
     let Value::Object(properties) = properties else {
         unreachable!()
     };
@@ -168,8 +132,8 @@ fn presentation_claims(claims: JwtClaims) -> JwtClaims {
 
 /// `claims` signed by the holder.
 async fn present(claims: &JwtClaims, typ: Option<&str>) -> Jwt {
-    let (holder, signer) = holder();
-    sign(claims, typ, &holder.kid, &signer).await
+    let holder = holder();
+    sign(claims, typ, &holder.kid, &holder.signer).await
 }
 
 fn sd_jwt_claim(error: &ValidationError) -> Option<&'static str> {
@@ -351,7 +315,7 @@ async fn rfc9901_a4_issuer_jwt_is_refused() {
     }
 
     // In the `vc` claim of a VCDM 1.1 JWT, under the issuer's DID.
-    let (issuer, _) = issuer();
+    let issuer = issuer();
     let mut vc = payload;
     vc.insert("issuer".to_owned(), json!(issuer.did.as_str()));
     let jwt = issue(
@@ -402,7 +366,7 @@ async fn sd_jwt_names_as_values_or_in_other_shapes_are_not_refused() {
 
 #[tokio::test]
 async fn vp_jwt_payload_with_sd_is_refused() {
-    let (holder, _) = holder();
+    let holder = holder();
     let enveloped =
         EnvelopedVc::from_jwt(&issue(&credential_v2(degree()).to_jwt_claims(), None).await);
     let presentation = PresentationV2::new()
@@ -441,7 +405,7 @@ async fn vp_jwt_payload_with_sd_is_refused() {
 async fn enveloped_vc_jwt_with_sd_is_refused() {
     // A `vc+jwt` envelope holding the issuer-signed JWT of an SD-JWT: it claims to be a plain
     // JWT, so it fails as one.
-    let (holder, _) = holder();
+    let holder = holder();
     let enveloped = EnvelopedVc::from_jwt(
         &issue(
             &credential_v2(concealed_degree()).to_jwt_claims(),
@@ -469,7 +433,7 @@ async fn enveloped_vc_jwt_with_sd_is_refused() {
 
 #[tokio::test]
 async fn vcdm_1_1_presentation_and_its_credentials_with_sd_are_refused() {
-    let (holder, _) = holder();
+    let holder = holder();
     let plain_credential = issue(&credential(degree()).to_jwt_claims().unwrap(), None).await;
     let presentation = |credentials: Vec<Jwt>| {
         let mut presentation = Presentation::new()

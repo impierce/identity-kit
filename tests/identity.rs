@@ -12,6 +12,8 @@
     reason = "the names are the API's terms: `kid` and `kind`"
 )]
 
+mod common;
+
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -26,8 +28,10 @@ use identity_kit::keys::{
     SoftwareKeyStore,
 };
 use identity_kit::methods::{DidJwk, DidKey};
-use identity_kit::resolver::{DidProducer, MethodCapabilities, ProduceError, Resolver};
+use identity_kit::resolver::{DidProducer, MethodCapabilities, ProduceError};
 use serde_json::json;
+
+use common::fixtures::resolver;
 
 /// RFC 8037 Appendix A.1, the private key.
 const RFC8037_A1: &str = r#"{"kty":"OKP","crv":"Ed25519",
@@ -59,13 +63,6 @@ fn identity() -> (KeyStoreIdentity, Arc<InMemoryKeyStore>) {
         .with_producer(DidKey::default())
         .with_producer(DidJwk);
     (identity, store)
-}
-
-fn resolver() -> Resolver {
-    Resolver::builder()
-        .with(DidKey::default())
-        .with(DidJwk)
-        .build()
 }
 
 /// Signs a token with the identity's signer for `(kind, alg)`, with its `kid` in the header,

@@ -15,10 +15,9 @@
 
 mod common;
 
-use std::collections::HashMap;
 use std::error::Error as _;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri};
@@ -30,7 +29,7 @@ use identity_kit::domain_linkage::{
 };
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
-use identity_kit::methods::web::{DidWeb, HttpClient, HttpError, HttpResponse};
+use identity_kit::methods::web::DidWeb;
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
@@ -41,6 +40,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use common::Ed25519Signer;
+use common::http::Web;
 
 const DID: &str = "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM";
 const ORIGIN: &str = "https://identity.foundation";
@@ -891,41 +891,6 @@ fn service_builder() {
 // Fetching
 // ---------------------------------------------------------------------------------------------
 
-/// A web serving fixed responses, recording what was fetched; `404` for anything else.
-#[derive(Default)]
-struct Web {
-    pages: HashMap<String, Result<(u16, Vec<u8>), String>>,
-    fetched: Mutex<Vec<String>>,
-}
-
-impl Web {
-    fn serving(mut self, url: &str, status: u16, body: impl Into<Vec<u8>>) -> Self {
-        self.pages.insert(url.to_owned(), Ok((status, body.into())));
-        self
-    }
-
-    fn failing(mut self, url: &str, message: &str) -> Self {
-        self.pages.insert(url.to_owned(), Err(message.to_owned()));
-        self
-    }
-
-    fn fetched(&self) -> Vec<String> {
-        self.fetched.lock().unwrap().clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl HttpClient for Web {
-    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-        self.fetched.lock().unwrap().push(url.to_string());
-        match self.pages.get(url.as_str()) {
-            Some(Ok((status, body))) => Ok(HttpResponse::new(*status, body.clone())),
-            Some(Err(message)) => Err(HttpError::msg(message)),
-            None => Ok(HttpResponse::new(404, Vec::new())),
-        }
-    }
-}
-
 const EXAMPLE_RESOURCE_URL: &str = "https://identity.foundation/.well-known/did-configuration.json";
 
 #[tokio::test]
@@ -987,9 +952,10 @@ async fn fetch_outcomes() {
             200,
             other_context.to_string(),
         )
-        .serving(&resource_of("empty.example"), 200, CONTEXT_ONLY);
+        .serving(&resource_of("empty.example"), 200, CONTEXT_ONLY)
+        .serving(&resource_of("missing.example"), 404, "");
 
-    // Not published: `404` (here: anything not served) and `410`.
+    // Not published: `404` and `410`.
     for (host, expected) in [("missing.example", 404), ("gone.example", 410)] {
         let error = fetch(&web, host).await.unwrap_err();
         assert!(error.is_not_published(), "{host}");
@@ -1149,7 +1115,13 @@ async fn origins_of_a_did_web_are_reported_one_by_one() {
                 200,
                 configuration.to_string(),
             )
-            .serving(EXAMPLE_RESOURCE_URL, 200, resource()),
+            .serving(
+                "https://example.org/.well-known/did-configuration.json",
+                404,
+                "",
+            )
+            .serving(EXAMPLE_RESOURCE_URL, 200, resource())
+            .serving("https://example.net/.well-known/did.json", 404, ""),
     );
     let resolver = Resolver::builder()
         .with(DidKey::default())

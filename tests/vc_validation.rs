@@ -12,6 +12,8 @@
     reason = "numbers are written as the specifications' examples write them"
 )]
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,9 +23,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl, Uri, VerificationRelationship};
 use identity_kit::jose::{
-    DefaultVerifier, Jwk, JwsAlgorithm, JwsError, JwsHeader, SignError, Signer, VerificationError,
+    DefaultVerifier, Jwk, JwsAlgorithm, JwsError, JwsHeader, VerificationError,
 };
-use identity_kit::methods::{DidJwk, DidKey};
+use identity_kit::methods::DidJwk;
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialStatus, CredentialValidationOptions, FailFast, JwtCredentialValidator,
@@ -37,18 +39,12 @@ use identity_kit::vc::{
 };
 use serde_json::json;
 
-// ---------------------------------------------------------------------------------------------
-// Keys and signers
-// ---------------------------------------------------------------------------------------------
+use common::fixtures::{Holder, Issuer, holder, issuer, resolver};
+use common::{RFC8037_X, decode};
 
-/// RFC 8037 Appendix A.1: the issuer's Ed25519 key.
-const RFC8037_X: &str = "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo";
-const RFC8037_D: &str = "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A";
-
-/// RFC 7515 Appendix A.3: the holder's P-256 key.
-const RFC7515_A3_X: &str = "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU";
-const RFC7515_A3_Y: &str = "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0";
-const RFC7515_A3_D: &str = "jpsQnnGQmL-YBIffH1136cspYG6-0iY7X1fCE9-E9LI";
+// ---------------------------------------------------------------------------------------------
+// Fixtures: the issuer, holder and resolver of `common::fixtures`
+// ---------------------------------------------------------------------------------------------
 
 /// VCDM 1.1 Example 31's `nbf` and `exp`, and a validation time in between.
 const NBF: i64 = 1541493724;
@@ -60,89 +56,6 @@ fn now() -> DateTime<Utc> {
 
 fn at(now: DateTime<Utc>) -> CredentialValidationOptions {
     CredentialValidationOptions::new().with_time(TimeOptions::at(now))
-}
-
-fn decode(s: &str) -> Vec<u8> {
-    URL_SAFE_NO_PAD.decode(s).unwrap()
-}
-
-struct Ed25519Signer(ed25519_dalek::SigningKey);
-
-#[async_trait::async_trait]
-impl Signer for Ed25519Signer {
-    fn alg(&self) -> JwsAlgorithm {
-        JwsAlgorithm::EdDSA
-    }
-
-    fn kid(&self) -> Option<&str> {
-        None
-    }
-
-    async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, SignError> {
-        use ed25519_dalek::Signer as _;
-        Ok(self.0.sign(signing_input).to_bytes().to_vec())
-    }
-}
-
-struct Es256Signer(p256::ecdsa::SigningKey);
-
-#[async_trait::async_trait]
-impl Signer for Es256Signer {
-    fn alg(&self) -> JwsAlgorithm {
-        JwsAlgorithm::ES256
-    }
-
-    fn kid(&self) -> Option<&str> {
-        None
-    }
-
-    async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, SignError> {
-        use p256::ecdsa::signature::Signer as _;
-        let signature: p256::ecdsa::Signature = self.0.sign(signing_input);
-        Ok(signature.to_bytes().to_vec())
-    }
-}
-
-/// The issuer: `did:key` of the RFC 8037 key, with its one verification method.
-struct Issuer {
-    did: Did,
-    kid: DidUrl,
-    signer: Ed25519Signer,
-}
-
-fn issuer() -> Issuer {
-    let d: [u8; 32] = decode(RFC8037_D).try_into().unwrap();
-    let signer = Ed25519Signer(ed25519_dalek::SigningKey::from_bytes(&d));
-    let jwk = Jwk::from_ed25519_public(&decode(RFC8037_X)).unwrap();
-    assert_eq!(signer.0.verifying_key().as_bytes(), &decode(RFC8037_X)[..]);
-    let did = DidKey::did(&jwk).unwrap();
-    let kid = did.join(&format!("#{}", did.method_specific_id())).unwrap();
-    Issuer { did, kid, signer }
-}
-
-/// The holder: `did:jwk` of the RFC 7515 A.3 key, whose verification method is `#0`.
-struct Holder {
-    did: Did,
-    kid: DidUrl,
-    signer: Es256Signer,
-}
-
-fn holder() -> Holder {
-    let signer = Es256Signer(p256::ecdsa::SigningKey::from_slice(&decode(RFC7515_A3_D)).unwrap());
-    let jwk: Jwk = serde_json::from_value(json!({
-        "kty": "EC", "crv": "P-256", "x": RFC7515_A3_X, "y": RFC7515_A3_Y
-    }))
-    .unwrap();
-    let did = DidJwk::did(&jwk).unwrap();
-    let kid = did.join("#0").unwrap();
-    Holder { did, kid, signer }
-}
-
-fn resolver() -> Resolver {
-    Resolver::builder()
-        .with(DidKey::default())
-        .with(DidJwk)
-        .build()
 }
 
 fn credential_validator() -> JwtCredentialValidator<Resolver> {
@@ -1385,23 +1298,10 @@ mod status_claim {
     #[cfg(feature = "did-web")]
     #[tokio::test]
     async fn status_list_check_reads_the_status_claim() {
-        use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
         use identity_kit::status_list::StatusListCheck;
         use identity_kit::status_list::{StatusList, StatusListToken, StatusType};
-        use url::Url;
 
-        /// A client serving one status list token at [`LIST_URI`].
-        struct Served(String);
-
-        #[async_trait::async_trait]
-        impl HttpClient for Served {
-            async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-                match url.as_str() {
-                    LIST_URI => Ok(HttpResponse::new(200, self.0.as_bytes())),
-                    _ => Err(HttpError::msg("connection refused")),
-                }
-            }
-        }
+        use crate::common::http::Web;
 
         let (issuer, holder) = (issuer(), holder());
         let mut list = StatusList::new(1, 8).unwrap();
@@ -1418,7 +1318,11 @@ mod status_claim {
         )
         .await
         .unwrap();
-        let check = StatusListCheck::new(Served(token), resolver(), DefaultVerifier);
+        let check = StatusListCheck::new(
+            Web::default().serving(LIST_URI, 200, token),
+            resolver(),
+            DefaultVerifier,
+        );
         let validator = credential_validator().with_status_check(check);
         let credential = credential(&issuer.did, &holder.did);
 
