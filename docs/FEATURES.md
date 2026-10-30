@@ -128,6 +128,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `DomainLinkageClient`: fetches and validates an origin, one DID at an origin, or every origin of a DID document or resolved DID (at most `max_origins`, 32 by default, fetched), reporting per origin | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#38](https://github.com/impierce/identity-kit/issues/38) |
 | `DomainLinkageValidator` validates at most `max_credentials` (32 by default) entries of a configuration; the rest report `TooManyCredentials` without resolving their issuer | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#45](https://github.com/impierce/identity-kit/issues/45) |
 | Maintaining a configuration: `entries` reads each JWT entry back unverified (`UnverifiedLinkage`: DID, origin, issuer, validity period), `earliest_expiry`, `remove_origin` | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#123](https://github.com/impierce/identity-kit/issues/123) |
+| A configuration with an empty `linked_dids` is rejected, not taken for an origin that links no DID: `check` and the validators fail with `NoEntries`, deserializing with the deserializer's error carrying it, `fetch_configuration` with `InvalidConfiguration` | ✅ | `domain-linkage` | [Well Known DID Configuration][did-config] | [#142](https://github.com/impierce/identity-kit/issues/142) |
 
 ### `linked_vp`: linked presentations
 

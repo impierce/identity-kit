@@ -173,11 +173,53 @@ fn example_resource() {
     assert!(
         serde_json::from_value::<DomainLinkageConfiguration>(json!({"linked_dids": []})).is_err()
     );
-    let mut wrong = DomainLinkageConfiguration::new();
+    let mut wrong = DomainLinkageConfiguration::new().with_credential(example_jwt());
     wrong.context = "https://example.com/other".to_owned();
     assert!(matches!(
         wrong.check(),
         Err(DomainLinkageError::InvalidContext(_))
+    ));
+
+    // At least one entry: a resource without any is malformed, not an origin that links no
+    // DID. A configuration being built starts empty and passes once it holds a credential.
+    let error = serde_json::from_value::<DomainLinkageConfiguration>(json!({
+        "@context": CONTEXT, "linked_dids": []
+    }))
+    .unwrap_err();
+    assert_eq!(error.to_string(), "`linked_dids` is empty");
+    let empty = DomainLinkageConfiguration::new();
+    assert!(matches!(empty.check(), Err(DomainLinkageError::NoEntries)));
+    assert!(empty.with_credential(example_jwt()).check().is_ok());
+    // A Linked Data Proof entry is an entry: the example's alone still reads.
+    let mut linked_data_proof: Value = serde_json::from_str(resource()).unwrap();
+    linked_data_proof["linked_dids"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    let configuration: DomainLinkageConfiguration =
+        serde_json::from_value(linked_data_proof).unwrap();
+    assert!(matches!(
+        configuration.linked_dids.as_slice(),
+        [LinkedDid::LinkedDataProof(_)]
+    ));
+    assert_eq!(configuration.jwts().count(), 0);
+}
+
+#[tokio::test]
+async fn validators_refuse_a_configuration_without_entries() {
+    let empty = DomainLinkageConfiguration::new();
+    let validator = validator();
+    assert!(matches!(
+        validator
+            .validate_configuration(&empty, &origin(), &at(now()))
+            .await,
+        Err(DomainLinkageError::NoEntries)
+    ));
+    assert!(matches!(
+        validator
+            .validate_linkage(&empty, &Did::parse(DID).unwrap(), &origin(), &at(now()))
+            .await,
+        Err(DomainLinkageError::NoEntries)
     ));
 }
 
@@ -996,9 +1038,12 @@ async fn fetch_outcomes() {
             .contains("https://example.com/other")
     );
 
-    // A configuration without credentials fetches, and validates to nothing.
-    let empty = fetch(&web, "empty.example").await.unwrap();
-    assert!(empty.linked_dids.is_empty());
+    // A configuration without entries is malformed.
+    let error = fetch(&web, "empty.example").await.unwrap_err();
+    assert!(
+        matches!(&error, DomainLinkageError::InvalidConfiguration { source, .. } if source.to_string().starts_with("`linked_dids` is empty")),
+        "{error}"
+    );
 
     // Only HTTPS origins are fetched; nothing reaches the client for the others.
     let before = web.fetched().len();
@@ -1035,7 +1080,7 @@ async fn fetch_outcomes() {
         client
             .validate_origin(&url("https://empty.example"), &at(now()))
             .await,
-        Err(DomainLinkageError::NoValidCredential(errors)) if errors.is_empty()
+        Err(DomainLinkageError::InvalidConfiguration { .. })
     ));
 }
 
