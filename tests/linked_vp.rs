@@ -14,11 +14,9 @@
 
 mod common;
 
-use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use chrono::{DateTime, TimeZone as _, Utc};
+use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{
     Context, Did, DidDocument, DidUrl, ResolutionError, ResolutionErrorKind, ResolutionOptions,
     ResolutionResult, Service, ServiceEndpoint, Uri,
@@ -29,7 +27,6 @@ use identity_kit::linked_vp::{
     LinkedVpValidationOptions, LinkedVpValidator, PRESENTATION_TYP, SERVICE_TYPE, decode, service,
     services,
 };
-use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::{CompositeKeyResolver, DidResolver, JwkResolver, Resolver};
 use identity_kit::vc::validation::{
@@ -42,6 +39,8 @@ use serde_json::{Value, json};
 use url::Url;
 
 use common::Ed25519Signer;
+use common::fixtures::{self, Party, now};
+use common::http::Web;
 
 const EXAMPLE_DID: &str = "did:example:123";
 const EXAMPLE_KID: &str = "did:example:123#_Qq0UL2Fq651Q0Fjd6TvnYE-faHiOpRlPVQcY_-tA4A";
@@ -79,12 +78,8 @@ fn url(s: &str) -> Url {
     Url::parse(s).unwrap()
 }
 
-/// Inside the validity of the example (2024-02-08 to 2029-02-08) and of the presentations built
-/// here (2024-01-01 to 2026-01-01).
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
-}
-
+/// At [`now`], inside the validity of the example (2024-02-08 to 2029-02-08) and of the
+/// presentations built here (2024-01-01 to 2026-01-01).
 fn options() -> LinkedVpValidationOptions {
     LinkedVpValidationOptions::new()
         .with_time(TimeOptions::at(now()))
@@ -145,41 +140,6 @@ impl DidResolver for Documents {
             .cloned()
             .map(ResolutionResult::new)
             .ok_or(ResolutionErrorKind::NotFound.into())
-    }
-}
-
-/// A web serving fixed responses, recording what was fetched.
-#[derive(Default)]
-struct Web {
-    pages: HashMap<String, Result<(u16, Vec<u8>), String>>,
-    fetched: Mutex<Vec<String>>,
-}
-
-impl Web {
-    fn serving(mut self, url: &str, status: u16, body: impl Into<Vec<u8>>) -> Self {
-        self.pages.insert(url.to_owned(), Ok((status, body.into())));
-        self
-    }
-
-    fn failing(mut self, url: &str, message: &str) -> Self {
-        self.pages.insert(url.to_owned(), Err(message.to_owned()));
-        self
-    }
-
-    fn fetched(&self) -> Vec<String> {
-        self.fetched.lock().unwrap().clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl HttpClient for Web {
-    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-        self.fetched.lock().unwrap().push(url.to_string());
-        match self.pages.get(url.as_str()) {
-            Some(Ok((status, body))) => Ok(HttpResponse::new(*status, body.clone())),
-            Some(Err(message)) => Err(HttpError::msg(message)),
-            None => Ok(HttpResponse::new(404, Vec::new())),
-        }
     }
 }
 
@@ -482,19 +442,13 @@ async fn top_level_payload_is_not_a_vcdm_jwt() {
     ));
 }
 
-// Presentations built here, by the RFC 8037 key behind a `did:key`.
+// Presentations built here, by the RFC 8037 key behind a `did:key`: the shared issuer, here
+// holding.
 
-struct Holder {
-    signer: Ed25519Signer,
-    did: Did,
-    kid: DidUrl,
-}
+type Holder = Party<Ed25519Signer>;
 
 fn holder() -> Holder {
-    let signer = Ed25519Signer::rfc8037();
-    let did = DidKey::did(&signer.public_jwk()).unwrap();
-    let kid = did.join(&format!("#{}", did.method_specific_id())).unwrap();
-    Holder { signer, did, kid }
+    fixtures::issuer()
 }
 
 fn did_key_validator() -> LinkedVpValidator<Resolver> {
@@ -966,7 +920,9 @@ async fn urls_past_the_limit_are_reported_without_fetching() {
         ]
     }))
     .unwrap();
-    let web = Web::default().serving(EXAMPLE_URL, 200, vector("jwt"));
+    let web = Web::default()
+        .serving(EXAMPLE_URL, 200, vector("jwt"))
+        .serving(PUBLISHED_URL, 404, "");
     let client = client(web, example_validator());
     assert_eq!(client.max_urls(), 32);
     let client = client.with_max_urls(2);
@@ -1094,7 +1050,8 @@ async fn fetch_failures() {
         .failing("https://holder.example/refused", "connection refused")
         .serving("https://holder.example/binary", 200, vec![0xff, 0xfe])
         .serving("https://holder.example/text", 200, "not a token")
-        .serving("https://holder.example/empty", 200, "  \n");
+        .serving("https://holder.example/empty", 200, "  \n")
+        .serving("https://holder.example/missing", 404, "");
     let client = client(web, example_validator());
     assert!(matches!(
         client.fetch(&url("https://holder.example/gone")).await,

@@ -11,9 +11,9 @@
     reason = "a helper is defined next to the assertions that use it"
 )]
 
-use std::collections::HashMap;
+mod common;
+
 use std::error::Error as _;
-use std::sync::Mutex;
 
 use identity_kit::did::{Did, DidUrl, ResolutionErrorKind, ResolutionOptions};
 use identity_kit::jose::Jwk;
@@ -24,6 +24,8 @@ use identity_kit::methods::web::{
 use identity_kit::resolver::{DidProducer, DidResolver, Hosting, ProduceError, Resolver};
 use serde_json::{Value, json};
 use url::Url;
+
+use common::http::Web;
 
 /// did:web specification, first example. (The specification's JSON has a trailing comma after
 /// the last verification method, removed here.)
@@ -88,44 +90,19 @@ fn url(s: &str) -> Url {
     Url::parse(s).unwrap()
 }
 
-/// Serves canned responses and records the URLs asked for.
-#[derive(Default)]
-struct Mock {
-    responses: HashMap<String, Result<HttpResponse, String>>,
-    calls: Mutex<Vec<String>>,
-}
-
-impl Mock {
-    fn serving(url: &str, status: u16, body: &str) -> Self {
-        let mut mock = Self::default();
-        mock.responses.insert(
-            url.to_owned(),
-            Ok(HttpResponse::new(status, body.as_bytes())),
-        );
-        mock
-    }
-
-    fn failing(url: &str, message: &str) -> Self {
-        let mut mock = Self::default();
-        mock.responses
-            .insert(url.to_owned(), Err(message.to_owned()));
-        mock
-    }
-}
+/// A client implementing `get` only, so that `get_accepting` is the trait's default, which the
+/// shared `Web` overrides.
+struct GetOnly(Web);
 
 #[async_trait::async_trait]
-impl HttpClient for Mock {
+impl HttpClient for GetOnly {
     async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-        self.calls.lock().unwrap().push(url.to_string());
-        match self.responses.get(url.as_str()) {
-            Some(Ok(response)) => Ok(response.clone()),
-            Some(Err(message)) => Err(HttpError::msg(message)),
-            None => Ok(HttpResponse::new(404, Vec::new())),
-        }
+        self.0.get(url).await
     }
 }
 
-/// A client that answers with the media type it was asked for.
+/// A client that answers with the media type it was asked for, to tell the forwarded
+/// `get_accepting` from the default.
 struct Echo;
 
 #[async_trait::async_trait]
@@ -159,12 +136,12 @@ async fn get_accepting_is_forwarded_and_defaults_to_get() {
     );
 
     // A client implementing `get` only answers `get_accepting` with it.
-    let mock = Mock::serving(target.as_str(), 200, "{}");
+    let mock = GetOnly(Web::default().serving(target.as_str(), 200, "{}"));
     assert_eq!(
         mock.get_accepting(&target, accept).await.unwrap(),
         mock.get(&target).await.unwrap()
     );
-    assert_eq!(mock.calls.lock().unwrap().len(), 2);
+    assert_eq!(mock.0.fetched().len(), 2);
 
     // A redirect carries its target; nothing else does.
     let moved = HttpResponse::new(302, Vec::new()).with_location("/statuslists/2");
@@ -397,7 +374,7 @@ fn did_to_url_rejections() {
 
 #[tokio::test]
 async fn read_operation() {
-    let mock = Mock::serving("https://example.com/.well-known/did.json", 200, EXAMPLE);
+    let mock = Web::default().serving("https://example.com/.well-known/did.json", 200, EXAMPLE);
     let method = DidWeb::new(mock);
     assert_eq!(DidResolver::method(&method), "web");
     let resolver = Resolver::builder().with(method).build();
@@ -451,47 +428,47 @@ async fn read_operation_failures() {
     };
     for (mock, kind, cause) in [
         (
-            Mock::serving(url, 404, ""),
+            Web::default().serving(url, 404, ""),
             ResolutionErrorKind::NotFound,
             Cause::Detail(status(404)),
         ),
         (
-            Mock::serving(url, 410, ""),
+            Web::default().serving(url, 410, ""),
             ResolutionErrorKind::NotFound,
             Cause::Detail(status(410)),
         ),
         (
-            Mock::serving(url, 500, ""),
+            Web::default().serving(url, 500, ""),
             ResolutionErrorKind::InternalError,
             Cause::Detail(status(500)),
         ),
         (
-            Mock::serving(url, 301, ""),
+            Web::default().serving(url, 301, ""),
             ResolutionErrorKind::InternalError,
             Cause::Detail(status(301)),
         ),
         (
-            Mock::failing(url, "connection refused"),
+            Web::default().failing(url, "connection refused"),
             ResolutionErrorKind::InternalError,
             Cause::Http("connection refused"),
         ),
         (
-            Mock::failing(url, "`https://example.com/` is not a public address"),
+            Web::default().failing(url, "`https://example.com/` is not a public address"),
             ResolutionErrorKind::InternalError,
             Cause::Http("`https://example.com/` is not a public address"),
         ),
         (
-            Mock::serving(url, 200, "<html>"),
+            Web::default().serving(url, 200, "<html>"),
             ResolutionErrorKind::InvalidDidDocument,
             Cause::Json,
         ),
         (
-            Mock::serving(url, 200, "{}"),
+            Web::default().serving(url, 200, "{}"),
             ResolutionErrorKind::InvalidDidDocument,
             Cause::Json,
         ),
         (
-            Mock::serving(url, 200, other),
+            Web::default().serving(url, 200, other),
             ResolutionErrorKind::InvalidDidDocument,
             Cause::Detail(
                 "`https://example.com/.well-known/did.json` holds the document of \
@@ -499,7 +476,9 @@ async fn read_operation_failures() {
             ),
         ),
         (
-            Mock::serving("https://example.com/did.json", 200, EXAMPLE),
+            Web::default()
+                .serving("https://example.com/did.json", 200, EXAMPLE)
+                .serving(url, 404, ""),
             ResolutionErrorKind::NotFound,
             Cause::Detail(status(404)),
         ),
@@ -510,7 +489,7 @@ async fn read_operation_failures() {
             .await
             .unwrap_err();
         assert_eq!(error, kind);
-        assert_eq!(method.client().calls.lock().unwrap().len(), 1);
+        assert_eq!(method.client().fetched().len(), 1);
         match cause {
             Cause::Detail(detail) => {
                 assert_eq!(error.detail(), Some(detail));
@@ -538,19 +517,19 @@ async fn read_operation_failures() {
         }
     }
     // A DID without a document URL never reaches the client.
-    let method = DidWeb::new(Mock::default());
+    let method = DidWeb::new(Web::default());
     let error = method
         .resolve(&did("did:web:192.0.2.1"), &ResolutionOptions::default())
         .await
         .unwrap_err();
     assert_eq!(error, ResolutionErrorKind::InvalidDid);
     assert!(error.source().unwrap().is::<WebError>(), "{error}");
-    assert!(method.client().calls.lock().unwrap().is_empty());
+    assert!(method.client().fetched().is_empty());
 }
 
 #[tokio::test]
 async fn produce_the_document_to_publish() {
-    let method = DidWeb::new(Mock::default());
+    let method = DidWeb::new(Web::default());
     assert_eq!(DidProducer::method(&method), "web");
     let capabilities = method.capabilities();
     assert_eq!(capabilities.hosting, Hosting::Web);
@@ -606,10 +585,10 @@ async fn produce_the_document_to_publish() {
     // The produced document resolves through the method it was made for.
     let served = serde_json::to_string(&document).unwrap();
     let resolver = Resolver::builder()
-        .with(DidWeb::new(Mock::serving(
+        .with(DidWeb::new(Web::default().serving(
             "https://example.com/user/alice/did.json",
             200,
-            &served,
+            served,
         )))
         .build();
     assert_eq!(
