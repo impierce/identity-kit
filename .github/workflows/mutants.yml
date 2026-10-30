@@ -169,8 +169,10 @@ jobs:
         id: collect
         run: |
           cat mutants/*/missed.txt > missed.txt 2>/dev/null || true
+          # On its own line, so that a failed lookup fails the step instead of reading as "no issue".
+          issue=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')
           echo "count=$(wc -l < missed.txt)" >> "$GITHUB_OUTPUT"
-          echo "issue=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')" >> "$GITHUB_OUTPUT"
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
       - name: Open or update the issue
         if: steps.collect.outputs.count != '0'
         env:
