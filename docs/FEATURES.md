@@ -140,6 +140,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `LinkedVpValidator`: holder and `iss` are the linking DID, key under `authentication`, credentials' subject is the holder, the specification's `typ` values accepted | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 | `LinkedVpClient`: fetches over an `HttpClient` (HTTPS only), reports per URL; JSON-LD presentations, IPFS and hashlink verification unsupported | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#34](https://github.com/impierce/identity-kit/issues/34) |
 | `LinkedVpClient` fetches at most `max_urls` (32 by default) URLs of a document; the rest report `TooManyUrls` without being fetched | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#45](https://github.com/impierce/identity-kit/issues/45) |
+| One malformed entry fails alone: an endpoint URI that is not a URL is listed in `LinkedVpService::invalid_urls` and reported on its own, and a `verifiableCredential` entry that is not a JWT fails as that credential, under its index (`decode` returns one result per entry) | ✅ | `linked-vp` | [Linked VP][linked-vp] | [#145](https://github.com/impierce/identity-kit/issues/145) |
 
 ## Tooling and integration
 
