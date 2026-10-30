@@ -2,8 +2,9 @@ name: Mutants
 
 # Mutation testing with cargo-mutants: change the code (a return value, an operator, a match
 # arm) and check that some test fails. A mutant no test catches is code the tests run but do not
-# check. Informational: not part of QA, and missed mutants do not fail the run. Testing every
-# mutant of the crate takes hours, so it runs weekly and by hand, not on pull requests.
+# check. Informational: not part of QA, and missed mutants do not fail the run; the `report` job
+# lists them in an issue. Testing every mutant of the crate takes hours, so it runs weekly and by
+# hand, not on pull requests.
 
 on:
   schedule:
@@ -143,3 +144,78 @@ jobs:
           name: mutants-pkcs11
           path: mutants.out
           if-no-files-found: ignore
+
+  # One issue for the missed mutants of a run over the whole crate: opened when a run misses
+  # some, updated by each later run that does, closed by the first complete run that misses none.
+  # A run started by hand for a glob leaves it alone, since its list says nothing about the rest.
+  report:
+    name: Report missed mutants
+    needs: [shards, pkcs11]
+    if: always() && github.repository_owner == 'impierce' && (github.event_name == 'schedule' || inputs.files == '')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      # A job that failed early uploads nothing; the report then counts the run as incomplete.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: mutants-*
+          path: mutants
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULTS: ${{ needs.shards.result }} ${{ needs.pkcs11.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          title="Missed mutants in the weekly run"
+          # The twelve shards and the PKCS#11 job. Without all thirteen, an empty list doesn't
+          # mean that nothing was missed.
+          outcomes=(mutants/*/outcomes.json)
+          complete=false
+          if [ "$RESULTS" = "success success" ] && [ "${#outcomes[@]}" -eq 13 ]; then complete=true; fi
+          missed=$(cat /dev/null mutants/*/missed.txt | sort)
+          issue=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg title "$title" '[.[] | select(.title == $title)][0].number // empty')
+
+          if [ -n "$missed" ]; then
+            count=$(printf '%s\n' "$missed" | wc -l)
+            {
+              echo "No test caught these changes to the code in the [weekly mutation testing run]($RUN_URL), $count in all."
+              echo "Each needs a test that fails with it, or, when no input can tell it apart, an entry in \`exclude_re\` in \`.cargo/mutants.toml\` with a comment that says why (\`CONTRIBUTING.md\`, \"Mutation testing\")."
+              if [ "$complete" != true ]; then
+                echo
+                echo "Not every job of the run finished, so the list may be incomplete."
+              fi
+              # missed.txt lines read `src/file.rs:line:column: description`; group them by file.
+              # shellcheck disable=SC2016 # literal backticks, for Markdown code spans
+              printf '%s\n' "$missed" | awk -F: '
+                $1 != file { file = $1; printf "\n### `%s`\n\n", file }
+                { printf "- `%s`\n", substr($0, length($1) + 2) }'
+              echo
+              echo "Each run over the whole crate updates this issue, and the first complete one that misses nothing closes it."
+            } > body.md
+            # An issue body holds at most 65,536 characters.
+            if [ "$(wc -c < body.md)" -gt 60000 ]; then
+              {
+                echo "No test caught $count changes to the code in the [weekly mutation testing run]($RUN_URL), too many to list here: the run summary lists them per job."
+                echo
+                echo "Each run over the whole crate updates this issue, and the first complete one that misses nothing closes it."
+              } > body.md
+            fi
+            if [ -n "$issue" ]; then
+              gh issue edit "$issue" --body-file body.md
+              echo "Updated #$issue: $count missed." >> "$GITHUB_STEP_SUMMARY"
+            else
+              url=$(gh issue create --title "$title" --body-file body.md)
+              echo "Opened $url: $count missed." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          elif [ "$complete" = true ] && [ -n "$issue" ]; then
+            gh issue close "$issue" --comment "The [run]($RUN_URL) missed no mutants."
+            echo "Closed #$issue: none missed." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$complete" != true ]; then
+            echo "Not every job finished and none reported a missed mutant: the issue is left as it is." >> "$GITHUB_STEP_SUMMARY"
+          fi
