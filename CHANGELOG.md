@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/impierce/identity-kit/compare/v0.3.0...v0.4.0) - 2026-10-30
+
+### Added
+
+- *(resolver)* add `DocumentKeyResolver` over DID documents supplied by the caller ([#148](https://github.com/impierce/identity-kit/pull/148))
+
+### Fixed
+
+- *(linked-vp)* [**breaking**] fail malformed endpoint URLs and credential entries alone ([#147](https://github.com/impierce/identity-kit/pull/147))
+- *(domain-linkage)* reject configuration without entries ([#146](https://github.com/impierce/identity-kit/pull/146))
+
 ## [0.3.0](https://github.com/impierce/identity-kit/compare/v0.2.2...v0.3.0) - 2026-10-27
 
 ### Added
