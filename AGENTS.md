@@ -28,7 +28,7 @@ Issues live in GitHub Issues on `impierce/identity-kit` (via the `gh` CLI). See 
 
 ### Triage labels
 
-Default vocabulary, except the `wontfix` role, which uses the existing `Wontfix` label. See `docs/agents/triage-labels.md`.
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
