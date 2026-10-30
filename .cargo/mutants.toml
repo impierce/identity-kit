@@ -25,7 +25,7 @@ exclude_re = [
     'src/jose/multikey\.rs:\d+:\d+: replace \| with \^ in varint::encode',
     'src/jose/pkcs1\.rs:\d+:\d+: replace \| with \^ in (tlv|read_tlv)',
     'src/methods/web/mod\.rs:\d+:\d+: replace \| with \^ in percent_decode',
-    'src/sd_jwt_vc/status\.rs:\d+:\d+: replace \| with \^ in StatusList::set',
+    'src/status_list/mod\.rs:\d+:\d+: replace \| with \^ in StatusList::set',
     # Fallback for an all-zero length, which the long form never has.
     'src/jose/pkcs1\.rs:112:\d+: replace - with [+/] in tlv',
     # An all-zero integer trimmed to nothing or to one zero octet is still zero.
@@ -40,9 +40,13 @@ exclude_re = [
     # `ResolverBuilder::new` is `Default::default`.
     'src/resolver/registry\.rs:\d+:\d+: replace Resolver::builder -> ResolverBuilder with Default::default\(\)',
     # One byte past the end fails the lookup that follows just the same.
-    'src/sd_jwt_vc/status\.rs:\d+:\d+: replace < with <= in StatusList::position',
+    'src/status_list/mod\.rs:\d+:\d+: replace < with <= in StatusList::position',
     # For a bare file name, `""` and `"."` are the same directory.
     'src/keys/software\.rs:\d+:\d+: replace match guard !dir\.as_os_str\(\)\.is_empty\(\) with true in write_atomically',
+
+    # Code compiled only without a feature, which `--all-features` never builds. The CI
+    # `Features` job tests it: `status_claim_without_status_list_feature` in `vc_validation`.
+    'src/vc/validation/mod\.rs:\d+:\d+: delete match arm StatusPolicy::Strict in status_claim',
 
     # PKCS#11 paths SoftHSM cannot reach (both RSA mechanisms; no panics or cancellation).
     'src/keys/pkcs11\.rs:\d+:\d+: delete match arm JwsAlgorithm::PS256 in Pkcs11KeyStore::open_with',
