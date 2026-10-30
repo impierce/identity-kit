@@ -9,8 +9,9 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use url::Url;
 
+use super::dereference::{public_key, verification_method_in};
 use super::{DereferenceError, Resolver};
-use crate::did::{Did, DidError, DidUrl, VerificationRelationship};
+use crate::did::{Did, DidDocument, DidError, DidUrl, VerificationRelationship};
 use crate::jose::{CompactJws, Jwk, base64url};
 
 /// Where a token says the key that signed it is (ADR 0006).
@@ -445,6 +446,120 @@ impl KeyResolver for JwkResolver {
             KeyReference::Jwk(jwk) => Ok(jwk.public()),
             other => Err(KeyResolutionError::unsupported(other)),
         }
+    }
+}
+
+/// Resolves a [`KeyReference::DidUrl`] against DID documents supplied by the caller, without
+/// resolving the DID again: a document resolved to read its services, or one the caller
+/// fetched or publishes itself.
+///
+/// A DID URL of one of the documents' DIDs resolves to the verification method its fragment
+/// names, which must be usable for the relationship of the role, as [`Resolver`] would:
+/// `publicKeyJwk` as it is, `publicKeyMultibase` decoded as a Multikey. Every other reference
+/// is [`Unsupported`](KeyResolutionError::Unsupported), so that a [`CompositeKeyResolver`]
+/// tries the next resolver: a DID URL of another DID, and one with a path or query, such as a
+/// `versionId`, which names a document other than the one supplied.
+///
+/// # Examples
+///
+/// The caller supplies a presentation's holder document; issuers' keys still resolve over the
+/// network.
+///
+/// ```
+/// # #[cfg(feature = "did-key")]
+/// # tokio::runtime::Builder::new_current_thread().build()?.block_on(async {
+/// use identity_kit::did::{DidDocument, DidUrl};
+/// use identity_kit::jose::Jwk;
+/// use identity_kit::methods::DidKey;
+/// use identity_kit::resolver::{
+///     CompositeKeyResolver, DocumentKeyResolver, KeyReference, KeyResolver as _, KeyRole,
+///     Resolver,
+/// };
+///
+/// // The holder's `did:web` document, already resolved; its key is RFC 7515 Appendix A.3's.
+/// let holder: DidDocument = serde_json::from_str(r##"{
+///   "id": "did:web:holder.example",
+///   "verificationMethod": [{
+///     "id": "did:web:holder.example#key-1",
+///     "type": "JsonWebKey",
+///     "controller": "did:web:holder.example",
+///     "publicKeyJwk": {
+///       "kty": "EC", "crv": "P-256",
+///       "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+///       "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+///     }
+///   }],
+///   "authentication": ["#key-1"]
+/// }"##)?;
+/// let resolver = CompositeKeyResolver::new()
+///     .with(DocumentKeyResolver::new(holder))
+///     .with(Resolver::builder().with(DidKey::default()).build());
+///
+/// let holder_key = KeyReference::DidUrl("did:web:holder.example#key-1".parse()?);
+/// let jwk = resolver.resolve_key(&holder_key, KeyRole::Subject).await?;
+/// assert_eq!(jwk.kty(), "EC");
+/// // Listed under `authentication` only: not a key the holder issues with.
+/// assert!(resolver.resolve_key(&holder_key, KeyRole::Issuer).await.is_err());
+///
+/// // An issuer's `did:key` falls through to the `Resolver`: RFC 8037 Appendix A.2's key.
+/// let issuer = DidKey::did(&serde_json::from_str::<Jwk>(
+///     r#"{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}"#,
+/// )?)?;
+/// let issuer_key: DidUrl = issuer.join(&format!("#{}", issuer.method_specific_id()))?;
+/// assert!(resolver.resolve_key(&KeyReference::DidUrl(issuer_key), KeyRole::Issuer).await.is_ok());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// # })?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentKeyResolver {
+    documents: Vec<DidDocument>,
+}
+
+impl DocumentKeyResolver {
+    /// A resolver over `document`.
+    pub fn new(document: DidDocument) -> Self {
+        Self {
+            documents: vec![document],
+        }
+    }
+
+    /// This resolver over `document` as well. A document of a DID already supplied replaces the
+    /// earlier one.
+    #[must_use]
+    pub fn with(mut self, document: DidDocument) -> Self {
+        self.documents.retain(|supplied| supplied.id != document.id);
+        self.documents.push(document);
+        self
+    }
+
+    /// The documents it resolves against.
+    pub fn documents(&self) -> &[DidDocument] {
+        &self.documents
+    }
+}
+
+#[async_trait::async_trait]
+impl KeyResolver for DocumentKeyResolver {
+    async fn resolve_key(
+        &self,
+        key: &KeyReference,
+        role: KeyRole,
+    ) -> Result<Jwk, KeyResolutionError> {
+        let KeyReference::DidUrl(url) = key else {
+            return Err(KeyResolutionError::unsupported(key));
+        };
+        let document = self
+            .documents
+            .iter()
+            .find(|document| document.id == *url.did())
+            .filter(|_| url.path().is_none() && url.query().is_none());
+        let Some(document) = document else {
+            return Err(KeyResolutionError::unsupported(key));
+        };
+        verification_method_in(document, url, Some(role.relationship()))
+            .and_then(public_key)
+            .map_err(KeyResolutionError::from)
     }
 }
 

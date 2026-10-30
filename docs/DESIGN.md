@@ -267,7 +267,7 @@ pub trait KeyResolver: Send + Sync {
     async fn resolve_key(&self, key: &KeyReference, role: KeyRole) -> Result<Jwk, KeyResolutionError>;   // Unsupported(reference) when it cannot
 }
 pub struct CompositeKeyResolver(..);   // first resolver that does not answer Unsupported
-// in the crate: Resolver (DidUrl), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
+// in the crate: Resolver (DidUrl), DocumentKeyResolver (DidUrl, over documents supplied by the caller), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
 
 pub struct JwtValidator<R: KeyResolver, V: JwsVerifier = DefaultVerifier> { .. }   // validate, validate_as::<T>
 pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issuer_binding, required_claims, now: Option<i64>, leeway }
