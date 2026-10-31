@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use identity_kit::jose::{
     CompactJws, DefaultVerifier, JwsAlgorithm, JwsHeader, JwsVerifier as _, KeyType, encode_compact,
@@ -276,6 +277,50 @@ async fn a_key_signer_signs_a_jws() {
         .verify(&DefaultVerifier, signer.public_jwk())
         .expect("the JWS verifies");
     store.delete(&key).await.unwrap();
+}
+
+/// Keys generated while other sessions search the token. SoftHSM2's file object store creates
+/// a new key's object file empty, and a search in between marks the object invalid, failing the
+/// generation with `CKR_GENERAL_ERROR`, unless the store keeps searches apart from generation.
+#[tokio::test]
+async fn keys_are_generated_while_other_sessions_search() {
+    let token = token!();
+    let _shared = TOKEN.read().await;
+    let store = open(&token);
+    let searching = open_with(&token, Pkcs11KeyStoreOptions::new().sessions(4));
+    let label = "generated-while-searched";
+    remove(&store, &[label]).await;
+
+    let done = Arc::new(AtomicBool::new(false));
+    let searches: Vec<_> = (0..4)
+        .map(|_| {
+            let store = searching.clone();
+            let done = Arc::clone(&done);
+            tokio::spawn(async move {
+                let missing = KeyId::new("never-generated");
+                while !done.load(Ordering::Relaxed) {
+                    assert!(!store.exists(&missing).await.unwrap());
+                }
+            })
+        })
+        .collect();
+    let mut generated = Vec::new();
+    for _ in 0..20 {
+        let key = store
+            .generate(KeySpec::new(KeyType::Ed25519, JwsAlgorithm::EdDSA).with_label(label))
+            .await;
+        if let Ok(key) = &key {
+            store.delete(key).await.unwrap();
+        }
+        generated.push(key);
+    }
+    done.store(true, Ordering::Relaxed);
+    for search in searches {
+        search.await.unwrap();
+    }
+    for key in generated {
+        key.unwrap();
+    }
 }
 
 #[tokio::test]
