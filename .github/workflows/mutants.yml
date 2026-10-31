@@ -147,11 +147,11 @@ jobs:
 
   # Keeps one issue, "Missed mutants in the weekly run", in step with the latest run over the
   # whole crate: opened or updated when the run missed mutants, closed when it missed none. A run
-  # started by hand for a glob leaves it alone, since its list says nothing about the rest.
+  # started by hand for a glob, or cancelled, leaves it alone, since its list says nothing about the rest.
   report:
     name: Report missed mutants
     needs: [shards, pkcs11]
-    if: always() && github.repository_owner == 'impierce' && (github.event_name == 'schedule' || inputs.files == '')
+    if: ${{ !cancelled() && github.repository_owner == 'impierce' && (github.event_name == 'schedule' || inputs.files == '') }}
     runs-on: ubuntu-latest
     permissions:
       issues: write
