@@ -19,6 +19,7 @@ use identity_kit::resolver::{
 };
 use serde_json::{Value, json};
 
+use common::fixtures::RefusingRole;
 use common::{Ed25519Signer, Es256Signer};
 
 /// The `kid` of the RFC 9068 §2.2 example header.
@@ -178,16 +179,26 @@ async fn did_issuer_with_relative_kid() {
         .unwrap();
     assert_eq!(validated.claims.iss.as_deref(), Some(did.as_str()));
 
-    // The same key under `authentication`, for a token proving possession.
-    validator
-        .validate(
-            &token,
-            &JwtValidationOptions::new()
-                .with_role(KeyRole::Subject)
-                .at(NOW),
-        )
-        .await
-        .unwrap();
+    // The same key under `authentication`, for a token proving possession. Behind a resolver
+    // that finds no key under `assertionMethod`, only that role resolves it.
+    let validator = JwtValidator::new(
+        RefusingRole {
+            inner: Resolver::builder().with(DidKey::default()).build(),
+            role: KeyRole::Issuer,
+        },
+        DefaultVerifier,
+    );
+    let subject = JwtValidationOptions::new()
+        .with_role(KeyRole::Subject)
+        .at(NOW);
+    assert_eq!(subject.role, KeyRole::Subject);
+    validator.validate(&token, &subject).await.unwrap();
+    assert!(matches!(
+        validator
+            .validate(&token, &JwtValidationOptions::new().at(NOW))
+            .await,
+        Err(JwtValidationError::KeyResolution { .. })
+    ));
 }
 
 #[tokio::test]
@@ -300,6 +311,15 @@ async fn typ() {
         JwtValidationError::UnexpectedTyp { ref expected, found: Some(ref found) }
             if expected == "JWT" && found == "at+JWT"
     ));
+    // Only `application/` is optional: another 12-character prefix is part of the type.
+    let error = validator
+        .validate(
+            &token,
+            &access_token_options().with_typ("vnd.example/at+jwt"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, JwtValidationError::UnexpectedTyp { .. }));
 
     // A required `typ` must be there.
     let signer = Ed25519Signer::rfc8037();

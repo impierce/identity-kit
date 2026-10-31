@@ -513,6 +513,13 @@ fn status_type_names_and_numbers() {
             "{rejected}"
         );
     }
+    // A number out of range is refused with the values that are accepted.
+    assert_eq!(
+        serde_json::from_value::<StatusType>(json!(256))
+            .unwrap_err()
+            .to_string(),
+        "invalid value: integer `256`, expected VALID, INVALID, SUSPENDED or a number in 0..=255"
+    );
 
     // `FromStr` accepts the same strings as `Deserialize`.
     for (text, status) in [
