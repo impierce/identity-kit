@@ -566,13 +566,16 @@ impl Inner {
     }
 
     /// Runs `f` with a session, sharing the token's lock with the store's other reads; see
-    /// [`TOKEN_WRITES`].
+    /// [`TOKEN_WRITES`]. The session comes first, so that a call waiting for one does not hold
+    /// the lock.
     fn reading<T>(
         &self,
         f: impl FnOnce(&Session) -> Result<T, KeyStoreError>,
     ) -> Result<T, KeyStoreError> {
-        let _reading = self.writes.read().unwrap_or_else(PoisonError::into_inner);
-        self.with_session(f)
+        self.with_session(|session| {
+            let _reading = self.writes.read().unwrap_or_else(PoisonError::into_inner);
+            f(session)
+        })
     }
 
     /// Runs `f` with a session, holding the token's lock alone; see [`TOKEN_WRITES`].
@@ -580,8 +583,10 @@ impl Inner {
         &self,
         f: impl FnOnce(&Session) -> Result<T, KeyStoreError>,
     ) -> Result<T, KeyStoreError> {
-        let _writing = self.writes.write().unwrap_or_else(PoisonError::into_inner);
-        self.with_session(f)
+        self.with_session(|session| {
+            let _writing = self.writes.write().unwrap_or_else(PoisonError::into_inner);
+            f(session)
+        })
     }
 
     /// Runs `f` with a session from the pool, opening one if none is idle and fewer than the
