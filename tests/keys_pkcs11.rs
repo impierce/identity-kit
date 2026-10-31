@@ -619,8 +619,10 @@ async fn the_store_describes_itself() {
         debug.contains(&format!("token_label: {:?}", token.label)),
         "{debug}"
     );
+    // Looks for the PIN as a quoted string, since the token's random slot number can contain its
+    // digits.
     assert!(
-        !debug.contains(&token.pin),
+        !debug.contains(&format!("{:?}", token.pin)) && !debug.contains("pin"),
         "the PIN is not printed: {debug}"
     );
     assert_eq!(store.options(), &Pkcs11KeyStoreOptions::new());
