@@ -645,6 +645,28 @@ fn map_branches_are_described_open_objects() {
     }
 }
 
+/// The VCDM 2.0 `name` and `description` take any language value (§11.1), and say which they are.
+#[cfg(feature = "vc")]
+#[test]
+fn language_values_are_described() {
+    use identity_kit::vc::CredentialV2;
+    use utoipa::PartialSchema;
+
+    let schema = serde_json::to_value(CredentialV2::schema()).unwrap();
+    for (member, description) in [
+        ("name", "A name for the credential (VCDM 2.0 §4.6)."),
+        (
+            "description",
+            "A description of the credential (VCDM 2.0 §4.6).",
+        ),
+    ] {
+        assert_eq!(
+            schema.pointer(&format!("/properties/{member}")),
+            Some(&json!({ "description": description })),
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Claim paths
 // ---------------------------------------------------------------------------------------------
@@ -972,8 +994,9 @@ fn credentials_the_types_reject_are_rejected() {
         // An issuer object without `id`, or not a string or object.
         with("issuer", json!({ "name": "Example University" })),
         with("issuer", json!(42)),
-        // No subject.
+        // No subject, or one whose `id` is not a URI.
         with("credentialSubject", json!([])),
+        with("credentialSubject", json!({ "id": 42 })),
         // A status entry without `type`.
         with(
             "credentialStatus",
