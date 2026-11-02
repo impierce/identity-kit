@@ -831,11 +831,7 @@ const REVOKED: Verdicts = Verdicts {
 
 #[async_trait::async_trait]
 impl StatusCheck for Verdicts {
-    async fn check(
-        &self,
-        status: CredentialStatus<'_>,
-        _now: DateTime<Utc>,
-    ) -> Result<(), StatusError> {
+    async fn check(&self, status: CredentialStatus<'_>, _: TimeOptions) -> Result<(), StatusError> {
         let verdict = match status {
             CredentialStatus::Vcdm(entry) => {
                 assert_eq!(entry.object_type(), "BitstringStatusListEntry");

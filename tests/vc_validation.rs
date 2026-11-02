@@ -481,11 +481,7 @@ struct Checker;
 
 #[async_trait::async_trait]
 impl StatusCheck for Checker {
-    async fn check(
-        &self,
-        status: CredentialStatus<'_>,
-        _: DateTime<Utc>,
-    ) -> Result<(), StatusError> {
+    async fn check(&self, status: CredentialStatus<'_>, _: TimeOptions) -> Result<(), StatusError> {
         let CredentialStatus::Vcdm(status) = status else {
             return Err(StatusError::Unsupported(status.mechanism()));
         };
@@ -1120,7 +1116,7 @@ mod status_claim {
         async fn check(
             &self,
             status: CredentialStatus<'_>,
-            _: DateTime<Utc>,
+            _: TimeOptions,
         ) -> Result<(), StatusError> {
             self.0.lock().unwrap().push(status.mechanism());
             match status {

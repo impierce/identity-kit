@@ -6,12 +6,11 @@ use crate::did::Uri;
 use crate::jose::{CompactJws, DefaultVerifier, Jwk, JwsHeader, JwsVerifier};
 use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party};
 
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
     CredentialStatus, CredentialValidationOptions, KeyReference, KeyResolver, KeyRole, StatusCheck,
-    StatusPolicy, ValidationError, check_statuses, status_claim, status_claim_entry,
+    StatusPolicy, TimeOptions, ValidationError, check_statuses, status_claim, status_claim_entry,
 };
 
 /// A validated or decoded VCDM 1.1 credential JWT: its header, its claims (custom ones
@@ -172,7 +171,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
                 .chain(status.iter().map(status_claim_entry))
                 .collect(),
             options.status,
-            options.time.now(),
+            options.time,
         )
         .await?;
         Ok(decoded)
@@ -210,7 +209,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
                 .chain(status.iter().map(status_claim_entry))
                 .collect(),
             options.status,
-            options.time.now(),
+            options.time,
         )
         .await?;
         Ok(decoded)
@@ -237,14 +236,14 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         Ok((reference, key))
     }
 
-    /// Checks every status entry with this validator's check, per `policy`, at `now`.
+    /// Checks every status entry with this validator's check, per `policy`, at `time`.
     pub(super) async fn check_status(
         &self,
         statuses: Vec<CredentialStatus<'_>>,
         policy: StatusPolicy,
-        now: DateTime<Utc>,
+        time: TimeOptions,
     ) -> Result<(), ValidationError> {
-        check_statuses(self.status.as_deref(), statuses, policy, now).await
+        check_statuses(self.status.as_deref(), statuses, policy, time).await
     }
 }
 

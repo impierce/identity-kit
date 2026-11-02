@@ -1,13 +1,12 @@
 //! [`StatusListCheck`]: the Token Status List as a [`StatusCheck`], over an [`HttpClient`].
 
-use chrono::{DateTime, Utc};
 use url::Url;
 
 use crate::jose::{DefaultVerifier, JwsVerifier};
 use crate::methods::web::{HttpClient, HttpResponse};
 use crate::resolver::{KeyReference, KeyResolver, KeyRole};
 use crate::vc::Jwt;
-use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError};
+use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError, TimeOptions};
 
 use super::{StatusListError, StatusListToken, StatusMechanism};
 
@@ -17,8 +16,9 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// credential or of a JWT credential ([`CredentialStatus::StatusClaim`]), fetches the status
 /// list token from the referenced URI with an [`HttpClient`], verifies it was signed by
 /// the key its header names ([`KeyReference::from_jws`] with the token's `iss`), resolved
-/// for [`KeyRole::Issuer`], and reads the status at the referenced index (Token Status
-/// List §8).
+/// for [`KeyRole::Issuer`], checks it was issued by the validation time and has not expired,
+/// each within the validation's leeway ([`StatusListToken::status_of`]), and reads the status
+/// at the referenced index (Token Status List §8).
 ///
 /// When the token has an `iss`, the key must belong to it ([`KeyReference::binds_to`]);
 /// without one, only a key named by a DID URL is accepted, since a key by value or a key
@@ -179,7 +179,7 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusCheck for StatusListCh
     async fn check(
         &self,
         status: CredentialStatus<'_>,
-        now: DateTime<Utc>,
+        time: TimeOptions,
     ) -> Result<(), StatusError> {
         let CredentialStatus::StatusClaim(status) = status else {
             return Err(StatusError::Unsupported(status.mechanism()));
@@ -196,7 +196,7 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusCheck for StatusListCh
         };
         let uri = &reference.uri;
         let token = self.fetch(uri).await?;
-        let status_type = token.status_of(reference, now).map_err(|e| match e {
+        let status_type = token.status_of(reference, time).map_err(|e| match e {
             StatusListError::Expired { expired_at, now } => StatusError::Expired {
                 uri: uri.clone(),
                 expired_at,
@@ -206,6 +206,11 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusCheck for StatusListCh
                 uri: uri.clone(),
                 idx,
                 len,
+            },
+            not_yet_issued @ StatusListError::NotYetIssued { .. } => StatusError::InvalidList {
+                uri: uri.clone(),
+                reason: "it was issued after the validation time".to_owned(),
+                source: Some(Box::new(not_yet_issued)),
             },
             other => StatusError::InvalidList {
                 uri: uri.clone(),

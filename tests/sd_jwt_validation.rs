@@ -561,11 +561,7 @@ struct FixedStatus(StatusList);
 
 #[async_trait::async_trait]
 impl StatusCheck for FixedStatus {
-    async fn check(
-        &self,
-        status: CredentialStatus<'_>,
-        _: DateTime<Utc>,
-    ) -> Result<(), StatusError> {
+    async fn check(&self, status: CredentialStatus<'_>, _: TimeOptions) -> Result<(), StatusError> {
         let CredentialStatus::StatusClaim(Status {
             status_list: Some(reference),
             ..
@@ -983,6 +979,60 @@ mod status_list_check {
         }
     }
 
+    /// Token Status List §8.3 validates the token's claims as §5.1 has them, so a token
+    /// issued after the validation time is refused, unless the leeway covers it.
+    #[tokio::test]
+    async fn refuses_a_token_issued_after_the_validation_time() {
+        let issuer = issuer();
+        let token = StatusListToken::new(
+            LIST_URI,
+            now() + chrono::TimeDelta::hours(1),
+            StatusList::new(1, 8).unwrap(),
+        )
+        .with_expires_at(expires_at())
+        .sign(&Ed25519Signer::rfc8037().with_kid(issuer.kid.as_str()))
+        .await
+        .unwrap();
+        let validator = validator().with_status_check(StatusListCheck::new(
+            Web::default().serving(LIST_URI, 200, token.as_str()),
+            Resolver::builder().with(DidKey::default()).build(),
+            DefaultVerifier,
+        ));
+        let credential = builder(&issuer)
+            .with_status(Status::status_list(StatusListRef::new(LIST_URI, 0)))
+            .sign(&issuer.signer)
+            .await
+            .unwrap();
+
+        let error = validator
+            .validate(credential.sd_jwt(), &options())
+            .await
+            .unwrap_err();
+        let SdJwtValidationError::Validation(ValidationError::Status(StatusError::InvalidList {
+            uri,
+            reason,
+            ..
+        })) = &error
+        else {
+            panic!("{error:?}");
+        };
+        assert_eq!(uri, LIST_URI);
+        assert_eq!(reason, "it was issued after the validation time");
+        assert!(
+            matches!(
+                error.source().and_then(|e| e.source()).and_then(|e| e.downcast_ref()),
+                Some(StatusListError::NotYetIssued { issued_at, now: at })
+                    if *issued_at == now() + chrono::TimeDelta::hours(1) && *at == now()
+            ),
+            "{error:?}"
+        );
+
+        let lenient = options()
+            .with_time(TimeOptions::at(now()).with_leeway(std::time::Duration::from_secs(3600)));
+        let result = validator.validate(credential.sd_jwt(), &lenient).await;
+        assert!(result.is_ok(), "{result:?}");
+    }
+
     #[tokio::test]
     async fn knows_the_token_status_list_only() {
         let check = StatusListCheck::new(
@@ -990,7 +1040,7 @@ mod status_list_check {
             Resolver::builder().with(DidKey::default()).build(),
             DefaultVerifier,
         );
-        let now = issued_at();
+        let now = TimeOptions::at(issued_at());
         // A `credentialStatus` entry is another check's business, without a request.
         let entry = TypedObject::new("BitstringStatusListEntry");
         assert!(matches!(
@@ -1105,7 +1155,10 @@ mod status_list_check {
             let status =
                 Status::status_list(StatusListRef::new(format!("{base}/statuslists/{n}"), 0));
             let result = check
-                .check(CredentialStatus::StatusClaim(&status), issued_at())
+                .check(
+                    CredentialStatus::StatusClaim(&status),
+                    TimeOptions::at(issued_at()),
+                )
                 .await;
             assert!(result.is_ok(), "{n}: {result:?}");
         }
@@ -1156,7 +1209,10 @@ mod status_list_check {
             async move {
                 let status = Status::status_list(StatusListRef::new(uri, 0));
                 check
-                    .check(CredentialStatus::StatusClaim(&status), issued_at())
+                    .check(
+                        CredentialStatus::StatusClaim(&status),
+                        TimeOptions::at(issued_at()),
+                    )
                     .await
             }
         };

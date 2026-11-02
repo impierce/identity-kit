@@ -117,6 +117,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `StatusType` serializes as its registered name or its number, `FromStr`, `utoipa` schema | ✅ | `status-list`, `utoipa` | [Token Status List][status-list] | [#101](https://github.com/impierce/identity-kit/issues/101) |
 | `StatusListCheck` asks for `application/statuslist+jwt`, reads gzip-encoded tokens and follows up to three redirects, each through the `HttpClient` (`HttpClient::get_accepting`, `HttpResponse::location`) | ✅ | `status-list`, `reqwest` | [Token Status List][status-list] | [#102](https://github.com/impierce/identity-kit/issues/102) |
 | The Token Status List in its own module and feature, out of `sd_jwt_vc`: a `vc` build without `sd-jwt` checks the `status` claim of JWT credentials; deprecated aliases in `sd_jwt_vc` for one release | ✅ | `status-list` | [Token Status List][status-list] | [#132](https://github.com/impierce/identity-kit/issues/132) |
+| Status list token refused when issued (`iat`) after the validation time or expired (`exp`), each within the validation's leeway: `StatusListToken::status_of` and `StatusCheck::check` take `TimeOptions`, `StatusListError::NotYetIssued` | ✅ | `status-list` | [Token Status List §8.3][status-list] | [#131](https://github.com/impierce/identity-kit/issues/131) |
 
 ### `domain_linkage`: DID configuration
 

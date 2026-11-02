@@ -355,7 +355,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
                         .chain(credential.status().map(CredentialStatus::StatusClaim))
                         .collect(),
                     options.credentials.status,
-                    options.credentials.time.now(),
+                    options.credentials.time,
                 )
                 .await?;
             check_subject_holder(

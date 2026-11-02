@@ -566,7 +566,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             self.status.as_deref(),
             statuses,
             options.status,
-            options.time.now(),
+            options.time,
         )
         .await?)
     }
