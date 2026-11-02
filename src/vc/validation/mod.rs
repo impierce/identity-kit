@@ -154,14 +154,13 @@ impl CredentialStatus<'_> {
 /// A check that knows only the Token Status List, and only the list it was given:
 ///
 /// ```
-/// use chrono::{DateTime, Utc};
-/// use identity_kit::vc::validation::{CredentialStatus, StatusCheck, StatusError};
+/// use identity_kit::vc::validation::{CredentialStatus, StatusCheck, StatusError, TimeOptions};
 ///
 /// struct Revoked;
 ///
 /// #[async_trait::async_trait]
 /// impl StatusCheck for Revoked {
-///     async fn check(&self, status: CredentialStatus<'_>, _: DateTime<Utc>) -> Result<(), StatusError> {
+///     async fn check(&self, status: CredentialStatus<'_>, _: TimeOptions) -> Result<(), StatusError> {
 ///         match status {
 ///             #[cfg(feature = "status-list")]
 ///             CredentialStatus::StatusClaim(status) if status.status_list.is_some() => {
@@ -174,8 +173,9 @@ impl CredentialStatus<'_> {
 /// ```
 #[async_trait::async_trait]
 pub trait StatusCheck: Send + Sync {
-    /// Checks `status` at the validation time `now`, against which a check judges what it
-    /// fetched (the expiry of a status list token, for instance).
+    /// Checks `status` at the validation time `time`, against which, with its leeway, a check
+    /// judges what it fetched (when a status list token was issued and expires, for
+    /// instance). The validators pin `time` to a fixed `now`.
     ///
     /// # Errors
     ///
@@ -187,7 +187,7 @@ pub trait StatusCheck: Send + Sync {
     async fn check(
         &self,
         status: CredentialStatus<'_>,
-        now: DateTime<Utc>,
+        time: TimeOptions,
     ) -> Result<(), StatusError>;
 }
 
@@ -204,9 +204,9 @@ macro_rules! forward_status_check {
                 async fn check(
                     &self,
                     status: CredentialStatus<'_>,
-                    now: DateTime<Utc>,
+                    time: TimeOptions,
                 ) -> Result<(), StatusError> {
-                    (**self).check(status, now).await
+                    (**self).check(status, time).await
                 }
             }
         )*
@@ -215,19 +215,21 @@ macro_rules! forward_status_check {
 
 forward_status_check!(&T, Box<T>, Arc<T>);
 
-/// Checks every entry of `statuses` with `check` per `policy`, at `now`.
+/// Checks every entry of `statuses` with `check` per `policy`, at `time`, pinned to one `now`
+/// for all of them.
 pub(crate) async fn check_statuses(
     check: Option<&dyn StatusCheck>,
     statuses: Vec<CredentialStatus<'_>>,
     policy: StatusPolicy,
-    now: DateTime<Utc>,
+    time: TimeOptions,
 ) -> Result<(), ValidationError> {
     if policy == StatusPolicy::SkipAll {
         return Ok(());
     }
+    let time = TimeOptions::at(time.now()).with_leeway(time.leeway);
     for status in statuses {
         let result = match check {
-            Some(check) => check.check(status, now).await,
+            Some(check) => check.check(status, time).await,
             None => Err(StatusError::Unsupported(status.mechanism())),
         };
         match result {
@@ -396,6 +398,20 @@ impl TimeOptions {
         TimeDelta::from_std(self.leeway).unwrap_or(TimeDelta::MAX)
     }
 
+    /// The validation time, and the earliest and latest times the leeway lets pass for it.
+    pub(crate) fn window(&self) -> (DateTime<Utc>, DateTime<Utc>, DateTime<Utc>) {
+        let now = self.now();
+        let delta = self.delta();
+        // A leeway past the range `chrono` represents saturates rather than overflowing.
+        let earliest = now
+            .checked_sub_signed(delta)
+            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        let latest = now
+            .checked_add_signed(delta)
+            .unwrap_or(DateTime::<Utc>::MAX_UTC);
+        (now, earliest, latest)
+    }
+
     /// Checks that `now` is within `[not_before, expires)` with the leeway, and that
     /// `issued_at` is not in the future.
     ///
@@ -409,15 +425,7 @@ impl TimeOptions {
         expires: Option<DateTime<Utc>>,
         issued_at: Option<DateTime<Utc>>,
     ) -> Result<(), ValidationError> {
-        let now = self.now();
-        let delta = self.delta();
-        // A leeway past the range `chrono` represents saturates rather than overflowing.
-        let latest = now
-            .checked_add_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MAX_UTC);
-        let earliest = now
-            .checked_sub_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        let (now, earliest, latest) = self.window();
         if let Some(not_before) = not_before
             && not_before > latest
         {
