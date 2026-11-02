@@ -23,7 +23,8 @@
 //!   [`VerificationMethod`](did::VerificationMethod), [`Service`](did::Service),
 //!   [`Jwk`](jose::Jwk), [`JwsAlgorithm`](jose::JwsAlgorithm), the credentials and
 //!   presentations of `vc` (VCDM 1.1 and 2.0, enveloped forms included),
-//!   `DomainLinkageConfiguration`, `ClaimPath`, `TypeMetadata` and `StatusType`.
+//!   `DomainLinkageConfiguration`, `ClaimPath`, `Jwt`, `SdJwt`, `TypeMetadata` and
+//!   `StatusType`.
 //! - `test-vectors`: [`keys::testsuite`], the behavioural suite every key store must pass, and
 //!   [`vectors`], the specification vectors the tests of this crate run against.
 #![cfg_attr(docsrs, feature(doc_cfg))]

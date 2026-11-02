@@ -31,6 +31,10 @@ fn openapi() -> Value {
     #[cfg(feature = "vc")]
     add::<identity_kit::vc::ClaimPath>(&mut schemas);
     #[cfg(feature = "vc")]
+    add::<identity_kit::vc::Jwt>(&mut schemas);
+    #[cfg(feature = "sd-jwt")]
+    add::<identity_kit::sd_jwt_vc::SdJwt>(&mut schemas);
+    #[cfg(feature = "vc")]
     {
         use identity_kit::vc::{
             Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation, PresentationV2,
@@ -291,6 +295,7 @@ fn every_schema_compiles_with_its_references_resolved() {
     #[cfg(feature = "vc")]
     for name in [
         "ClaimPath",
+        "Jwt",
         "Credential",
         "Presentation",
         "CredentialV2",
@@ -302,6 +307,7 @@ fn every_schema_compiles_with_its_references_resolved() {
     }
     #[cfg(feature = "sd-jwt")]
     for name in [
+        "SdJwt",
         "TypeMetadata",
         "DisplayMetadata",
         "ClaimMetadata",
@@ -363,11 +369,12 @@ fn every_schema_name_belongs_to_one_type() {
     #[cfg(feature = "vc")]
     {
         use identity_kit::vc::{
-            ClaimPath, Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation,
+            ClaimPath, Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, Presentation,
             PresentationV2,
         };
         types.extend([
             entry::<ClaimPath>(),
+            entry::<Jwt>(),
             entry::<Credential>(),
             entry::<Presentation>(),
             entry::<CredentialV2>(),
@@ -378,8 +385,11 @@ fn every_schema_name_belongs_to_one_type() {
     }
     #[cfg(feature = "sd-jwt")]
     {
-        use identity_kit::sd_jwt_vc::{ClaimDisplay, ClaimMetadata, DisplayMetadata, TypeMetadata};
+        use identity_kit::sd_jwt_vc::{
+            ClaimDisplay, ClaimMetadata, DisplayMetadata, SdJwt, TypeMetadata,
+        };
         types.extend([
+            entry::<SdJwt>(),
             entry::<TypeMetadata>(),
             entry::<DisplayMetadata>(),
             entry::<ClaimMetadata>(),
@@ -424,6 +434,10 @@ fn every_schema_names_the_schemas_it_refers_to() {
     alone::<identity_kit::domain_linkage::DomainLinkageConfiguration>();
     #[cfg(feature = "vc")]
     alone::<identity_kit::vc::ClaimPath>();
+    #[cfg(feature = "vc")]
+    alone::<identity_kit::vc::Jwt>();
+    #[cfg(feature = "sd-jwt")]
+    alone::<identity_kit::sd_jwt_vc::SdJwt>();
     #[cfg(feature = "vc")]
     {
         use identity_kit::vc::{
@@ -798,6 +812,74 @@ fn jws_algorithm_schema() {
     }
     // The symmetric and unsecured algorithms the type refuses.
     for invalid in ["HS256", "none", "es256", ""] {
+        validator.rejects(&json!(invalid));
+    }
+}
+
+/// RFC 8037 Appendix A.4: a JWS in compact serialization.
+#[cfg(feature = "vc")]
+const RFC_8037_A4: &str = "eyJhbGciOiJFZERTQSJ9.RXhhbXBsZSBvZiBFZDI1NTE5IHNpZ25pbmc.\
+    hgyY0il_MGCjP0JzlnLWG1PPOt7-09PGcvMg3AIbQR6dWbhijcNR4ki4iylGjg5BhVsPt9g7sVvpAr_MuM0KAg";
+
+#[cfg(feature = "vc")]
+#[test]
+fn jwt_schema() {
+    use identity_kit::vc::Jwt;
+
+    let schema = &openapi()["components"]["schemas"]["Jwt"];
+    assert_eq!(schema["type"], json!("string"));
+    assert!(schema["description"].as_str().unwrap().contains("JWT"));
+
+    // The schema takes what `Jwt` serializes to.
+    let validator = Validator::of("Jwt");
+    let jwt: Jwt = RFC_8037_A4.parse().unwrap();
+    validator.accepts(&serde_json::to_string(&jwt).unwrap());
+    // Strings that are not a compact JWS, which `Jwt` refuses too.
+    for invalid in [
+        "",
+        "eyJhbGciOiJFZERTQSJ9.e30",
+        "eyJhbGciOiJFZERTQSJ9.e30.c2ln.c2ln",
+        ".e30.c2ln",
+        "eyJhbGciOiJFZERTQSJ9=.e30.c2ln",
+        "eyJhbGciOiJFZERTQSJ9.e30.c2ln~",
+    ] {
+        assert!(invalid.parse::<Jwt>().is_err(), "{invalid}");
+        validator.rejects(&json!(invalid));
+    }
+    validator.rejects(&json!(42));
+}
+
+#[cfg(feature = "sd-jwt")]
+#[test]
+fn sd_jwt_schema() {
+    use identity_kit::sd_jwt_vc::SdJwt;
+
+    let schema = &openapi()["components"]["schemas"]["SdJwt"];
+    assert_eq!(schema["type"], json!("string"));
+    assert!(schema["description"].as_str().unwrap().contains("SD-JWT"));
+
+    // RFC 9901's examples: an issued SD-JWT, and presentations with a key binding JWT.
+    let validator = Validator::of("SdJwt");
+    for vector in [
+        include_str!("vectors/sd_jwt/simple/issuance.txt"),
+        include_str!("vectors/sd_jwt/simple/presentation.txt"),
+        include_str!("vectors/sd_jwt/sd_jwt_vc/presentation.txt"),
+    ] {
+        let sd_jwt: SdJwt = vector.trim().parse().unwrap();
+        validator.accepts(&serde_json::to_string(&sd_jwt).unwrap());
+    }
+    // An issuer-signed JWT alone, without disclosures.
+    let bare = format!("{RFC_8037_A4}~");
+    assert!(bare.parse::<SdJwt>().is_ok());
+    validator.accepts(&json!(bare).to_string());
+    // Strings `SdJwt` refuses too: no `~`, an empty disclosure, a JWT as a disclosure.
+    for invalid in [
+        RFC_8037_A4.to_owned(),
+        format!("{RFC_8037_A4}~~"),
+        format!("{RFC_8037_A4}~{RFC_8037_A4}~"),
+        format!("~{RFC_8037_A4}"),
+    ] {
+        assert!(invalid.parse::<SdJwt>().is_err(), "{invalid}");
         validator.rejects(&json!(invalid));
     }
 }
