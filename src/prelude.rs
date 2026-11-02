@@ -46,8 +46,9 @@ pub use crate::methods::DidWeb;
 pub use crate::resolver::JwksResolver;
 pub use crate::resolver::{
     CompositeKeyResolver, DereferenceError, Dereferenced, DidProducer, DidResolver, DocumentCache,
-    Hosting, JwkResolver, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
-    KeyRole, MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
+    DocumentKeyResolver, Hosting, JwkResolver, JwtValidationError, JwtValidationOptions,
+    JwtValidator, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
+    MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
 };
 
 /// The upper layer's prelude: credentials and presentations as JWTs (feature `vc`), SD-JWT
@@ -73,7 +74,7 @@ pub mod credentials {
     pub use crate::domain_linkage::{
         DomainLinkageClient, DomainLinkageConfiguration, DomainLinkageCredentialBuilder,
         DomainLinkageError, DomainLinkageReport, DomainLinkageValidator, LinkedDid,
-        LinkedDomainReport, LinkedDomainsService,
+        LinkedDomainReport, LinkedDomainsService, UnverifiedLinkage,
     };
     #[cfg(feature = "linked-vp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "linked-vp")))]
@@ -87,9 +88,12 @@ pub mod credentials {
         Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, Processed, SdJwt, SdJwtBuilder,
         SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
         SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtValidationOptions,
-        SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, Status, StatusList, StatusListToken,
-        TypeMetadata, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
+        SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, TypeMetadata,
+        ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
     };
+    #[cfg(feature = "status-list")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "status-list")))]
+    pub use crate::status_list::{Status, StatusList, StatusListToken};
     pub use crate::vc::validation::{
         CredentialStatus, CredentialValidationOptions, DecodedCredential, DecodedCredentialV2,
         DecodedPresentation, DecodedPresentationV2, FailFast, JwtCredentialValidator,

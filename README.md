@@ -25,7 +25,8 @@ Add it to a project with `cargo add identity-kit`. The API reference is on [docs
 - ✅ `KeyReference` and `KeyResolver`: a token's key found from a DID URL `kid`, a `#fragment` relative to a DID `iss`, a `jwk` header, `cnf`, or the JWT VC issuer metadata of an HTTPS `iss`
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
 - ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
-- ✅ SD-JWT (RFC 9901), SD-JWT VC and VCDM 2.0 credentials secured with SD-JWT (`vc+sd-jwt`): issuing with selective disclosure, presenting with key binding, validating over any DID method, the Token Status List and type metadata
+- ✅ SD-JWT (RFC 9901), SD-JWT VC and VCDM 2.0 credentials secured with SD-JWT (`vc+sd-jwt`): issuing with selective disclosure, presenting with key binding, validating over any DID method, and type metadata
+- ✅ The IETF Token Status List for JWT and SD-JWT credentials alike: issuing and signing status lists, and checking the `status` claim
 - ✅ DIF Well Known DID Configuration: the DID configuration resource, its domain linkage credentials and their validation against an origin
 - ✅ DIF Linked Verifiable Presentation: `LinkedVerifiablePresentation` services, presentations signed for publishing, and fetching and validating what a DID document links
 
@@ -49,11 +50,12 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `in-memory`      |         | `InMemoryKeyStore`: keys in memory, optionally derived from a seed                       |
 | `pkcs11`         |         | `Pkcs11KeyStore`: keys in a PKCS#11 module (an HSM, SoftHSM2), via `cryptoki` and `tokio`'s blocking pool |
 | `vc`             |   ✅    | Verifiable credentials and presentations as JWTs (`vc`); pulls in `chrono`               |
-| `sd-jwt`         |   ✅    | SD-JWT, SD-JWT VC and `vc+sd-jwt` credentials (`sd_jwt_vc`); implies `vc`, pulls in `miniz_oxide` |
+| `status-list`    |   ✅    | The IETF Token Status List for JWT and SD-JWT credentials (`status_list`); implies `vc`, pulls in `miniz_oxide` |
+| `sd-jwt`         |   ✅    | SD-JWT, SD-JWT VC and `vc+sd-jwt` credentials (`sd_jwt_vc`); implies `vc` and `status-list` |
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
 | `jwks`           |         | `resolver::JwksResolver`: the keys of an HTTPS issuer from its JWT VC issuer metadata; implies `did-web` |
-| `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
+| `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `JwsAlgorithm`, `Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp`, `DomainLinkageConfiguration`, `ClaimPath`, `TypeMetadata` and `StatusType` |
 | `test-vectors`   |         | `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the specification vectors |
 
 `identity_kit::prelude` gathers the common types of the lower layer and `identity_kit::prelude::credentials` those of the upper layer, for glob import.

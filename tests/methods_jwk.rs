@@ -228,10 +228,15 @@ async fn create_operation() {
     let error = DidJwk::document(&did(at_limit)).unwrap_err();
     assert_eq!(error.kind(), &ResolutionErrorKind::InvalidDid);
     assert!(!error.to_string().contains("longer than"), "{error}");
+    let error = DidJwk
+        .produce(std::slice::from_ref(&huge), ())
+        .await
+        .unwrap_err();
     assert!(matches!(
-        DidJwk.produce(std::slice::from_ref(&huge), ()).await,
-        Err(ProduceError::UnsupportedKey { index: 0, .. })
+        error,
+        ProduceError::UnsupportedKey { index: 0, .. }
     ));
+    assert!(error.source().unwrap().is::<DidError>(), "{error}");
     let document = DidJwk
         .produce(std::slice::from_ref(&private), ())
         .await

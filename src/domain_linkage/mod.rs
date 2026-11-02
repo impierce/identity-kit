@@ -22,6 +22,18 @@
 //! in one call, for an origin, for one DID at an origin, or for every origin a DID document
 //! lists in its `LinkedDomains` services ([`services`]), reporting per origin.
 //!
+//! # Maintaining a configuration
+//!
+//! The controller of an origin reads back the credentials it published with
+//! [`DomainLinkageConfiguration::entries`]: the DID, origin and validity period of each JWT
+//! entry ([`UnverifiedLinkage`]), read **without verifying it**, since it signed them itself.
+//! [`earliest_expiry`](DomainLinkageConfiguration::earliest_expiry) says when to renew,
+//! [`remove_origin`](DomainLinkageConfiguration::remove_origin) unlinks an origin, and
+//! [`linked_dids`](DomainLinkageConfiguration::linked_dids) is a public `Vec` for anything
+//! else, `retain` included. A configuration left without entries does not read back
+//! ([`check`](DomainLinkageConfiguration::check)): an origin that links no DID publishes no
+//! configuration.
+//!
 //! # Examples
 //!
 //! Verifying a domain: the specification's example resource, served for
@@ -84,12 +96,14 @@
 
 use core::fmt;
 use std::collections::BTreeMap;
+use std::error::Error;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use url::Url;
 
+use crate::cause::cause;
 use crate::did::{Did, DidDocument, DidUrl, ResolutionError, Service, ServiceEndpoint, Uri};
 use crate::jose::{DefaultVerifier, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError};
@@ -133,8 +147,13 @@ const ORIGINS: &str = "origins";
 /// ```
 pub fn configuration_url(origin: &Url) -> Result<Url, DomainLinkageError> {
     let origin = normalize_origin(origin.as_str())?;
-    Url::parse(&format!("{origin}{WELL_KNOWN_PATH}"))
-        .map_err(|e| DomainLinkageError::InvalidOrigin(format!("{origin}: {e}")))
+    Url::parse(&format!("{origin}{WELL_KNOWN_PATH}")).map_err(|e| {
+        invalid_origin(
+            &origin,
+            "its well-known URL does not parse",
+            Some(Box::new(e)),
+        )
+    })
 }
 
 /// `origin` as `scheme://host[:port]`, lowercased, with `https` assumed when no scheme is
@@ -151,23 +170,32 @@ pub fn normalize_origin(origin: &str) -> Result<String, DomainLinkageError> {
         format!("https://{origin}")
     };
     let url = Url::parse(&with_scheme)
-        .map_err(|e| DomainLinkageError::InvalidOrigin(format!("{origin:?}: {e}")))?;
+        .map_err(|e| invalid_origin(origin, "not a URL", Some(Box::new(e))))?;
     if url.host_str().is_none() {
-        return Err(DomainLinkageError::InvalidOrigin(format!(
-            "{origin:?} has no host"
-        )));
+        return Err(invalid_origin(origin, "no host", None));
     }
     let normalized = url.origin();
     if !normalized.is_tuple() {
-        return Err(DomainLinkageError::InvalidOrigin(format!(
-            "{origin:?} is not a domain origin"
-        )));
+        return Err(invalid_origin(origin, "not a domain origin", None));
     }
     let normalized = normalized.ascii_serialization();
     // The WHATWG URL parser accepts host characters RFC 3986 does not, such as `` ` ``.
     Uri::parse(&normalized)
-        .map_err(|e| DomainLinkageError::InvalidOrigin(format!("{origin:?}: {e}")))?;
+        .map_err(|e| invalid_origin(origin, "not an RFC 3986 URI", Some(Box::new(e))))?;
     Ok(normalized)
+}
+
+/// A [`DomainLinkageError::InvalidOrigin`] for `origin`.
+fn invalid_origin(
+    origin: &str,
+    reason: &str,
+    source: Option<Box<dyn Error + Send + Sync>>,
+) -> DomainLinkageError {
+    DomainLinkageError::InvalidOrigin {
+        origin: origin.to_owned(),
+        reason: reason.to_owned(),
+        source,
+    }
 }
 
 /// Whether `s` starts with a URI scheme (RFC 3986 §3.1) rather than a `host:port`.
@@ -210,18 +238,25 @@ pub fn service(
     id: DidUrl,
     origins: impl IntoIterator<Item = Url>,
 ) -> Result<Service, DomainLinkageError> {
-    let invalid = |reason: String| DomainLinkageError::InvalidService {
-        id: id.clone(),
-        reason,
+    let invalid = |reason: String, source: Option<Box<dyn Error + Send + Sync>>| {
+        DomainLinkageError::InvalidService {
+            id: id.clone(),
+            reason,
+            source,
+        }
     };
     let origins = origins
         .into_iter()
-        .map(|origin| normalize_origin(origin.as_str()).map_err(|e| invalid(e.to_string())))
+        .map(|origin| {
+            normalize_origin(origin.as_str())
+                .map_err(|e| invalid(format!("origin `{origin}` is invalid"), Some(Box::new(e))))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let endpoint = match origins.as_slice() {
-        [] => return Err(invalid("no origin".to_owned())),
+        [] => return Err(invalid("no origin".to_owned(), None)),
         [origin] => ServiceEndpoint::Uri(
-            Uri::parse(origin).map_err(|e| invalid(format!("`{origin}` is not a URI: {e}")))?,
+            Uri::parse(origin)
+                .map_err(|e| invalid(format!("`{origin}` is not a URI"), Some(Box::new(e))))?,
         ),
         _ => ServiceEndpoint::Map([(ORIGINS.to_owned(), Value::from(origins))].into()),
     };
@@ -296,36 +331,42 @@ pub fn services(
 fn linked_domains_service(
     service: &Service,
 ) -> Result<LinkedDomainsService<'_>, DomainLinkageError> {
-    let invalid = |reason: String| DomainLinkageError::InvalidService {
-        id: service.id.clone(),
-        reason,
+    let invalid = |reason: String, source: Option<Box<dyn Error + Send + Sync>>| {
+        DomainLinkageError::InvalidService {
+            id: service.id.clone(),
+            reason,
+            source,
+        }
     };
     let origins: Vec<&str> = match &service.service_endpoint {
         ServiceEndpoint::Map(map) => {
             let Some(Value::Array(origins)) = map.get(ORIGINS) else {
-                return Err(invalid(format!(
-                    "`serviceEndpoint` is a map without an `{ORIGINS}` array"
-                )));
+                return Err(invalid(
+                    format!("`serviceEndpoint` is a map without an `{ORIGINS}` array"),
+                    None,
+                ));
             };
             origins
                 .iter()
                 .map(|origin| {
                     origin
                         .as_str()
-                        .ok_or_else(|| invalid(format!("origin {origin} is not a string")))
+                        .ok_or_else(|| invalid(format!("origin {origin} is not a string"), None))
                 })
                 .collect::<Result<_, _>>()?
         }
         endpoint => endpoint.uris().map(Uri::as_str).collect(),
     };
     if origins.is_empty() {
-        return Err(invalid("no origin".to_owned()));
+        return Err(invalid("no origin".to_owned(), None));
     }
     let origins = origins
         .into_iter()
         .map(|origin| {
-            let normalized = normalize_origin(origin).map_err(|e| invalid(e.to_string()))?;
-            Url::parse(&normalized).map_err(|e| invalid(format!("{origin:?}: {e}")))
+            let normalized = normalize_origin(origin)
+                .map_err(|e| invalid(format!("origin {origin:?} is invalid"), Some(Box::new(e))))?;
+            Url::parse(&normalized)
+                .map_err(|e| invalid(format!("origin {origin:?} is not a URL"), Some(Box::new(e))))
         })
         .collect::<Result<_, _>>()?;
     Ok(LinkedDomainsService { service, origins })
@@ -346,6 +387,9 @@ pub enum LinkedDid {
 
 /// The DID configuration resource: `@context` and the domain linkage credentials.
 ///
+/// Deserializing [checks](Self::check) it: a resource of another `@context`, or with an
+/// empty `linked_dids`, does not read.
+///
 /// # Examples
 ///
 /// ```
@@ -361,6 +405,10 @@ pub enum LinkedDid {
 /// assert_eq!(configuration.jwts().count(), 1);
 /// assert!(serde_json::from_value::<DomainLinkageConfiguration>(json!({
 ///   "@context": "https://example.com/other", "linked_dids": []
+/// })).is_err());
+/// assert!(serde_json::from_value::<DomainLinkageConfiguration>(json!({
+///   "@context": "https://identity.foundation/.well-known/did-configuration/v1",
+///   "linked_dids": []
 /// })).is_err());
 /// # Ok::<(), serde_json::Error>(())
 /// ```
@@ -381,7 +429,8 @@ impl Default for DomainLinkageConfiguration {
 }
 
 impl DomainLinkageConfiguration {
-    /// An empty configuration.
+    /// An empty configuration, to add credentials to. It does not pass
+    /// [`check`](Self::check) until it holds one.
     pub fn new() -> Self {
         Self {
             context: CONTEXT.to_owned(),
@@ -407,14 +456,61 @@ impl DomainLinkageConfiguration {
             })
     }
 
-    /// Checks that `@context` is [`CONTEXT`].
+    /// The credentials in the JSON Web Token proof format, with their positions, each read
+    /// **without verifying it** ([`UnverifiedLinkage::from_jwt`]), or why it does not read.
+    /// Linked Data Proof entries are not among them.
+    ///
+    /// For the controller of the origin, maintaining the configuration it publishes; a
+    /// verifier validates with [`DomainLinkageValidator`].
+    pub fn entries(
+        &self,
+    ) -> impl Iterator<Item = (usize, Result<UnverifiedLinkage, DomainLinkageError>)> + '_ {
+        self.jwts()
+            .map(|(index, jwt)| (index, UnverifiedLinkage::from_jwt(jwt)))
+    }
+
+    /// The earliest expiry among the JWT credentials that read ([`entries`](Self::entries)),
+    /// or `None` when none reads or none expires: when the configuration needs renewing at
+    /// the latest.
+    pub fn earliest_expiry(&self) -> Option<DateTime<Utc>> {
+        self.entries()
+            .filter_map(|(_, entry)| entry.ok()?.expires)
+            .min()
+    }
+
+    /// Removes the JWT credentials linking `origin`, compared normalized
+    /// ([`normalize_origin`]), and returns how many it removed. Credentials that do not
+    /// read ([`entries`](Self::entries)) and Linked Data Proof entries are kept; remove them
+    /// from [`linked_dids`](Self::linked_dids) directly.
     ///
     /// # Errors
     ///
-    /// [`DomainLinkageError::InvalidContext`].
+    /// [`DomainLinkageError::InvalidOrigin`] when `origin` has no host.
+    pub fn remove_origin(&mut self, origin: &Url) -> Result<usize, DomainLinkageError> {
+        let origin = normalize_origin(origin.as_str())?;
+        let before = self.linked_dids.len();
+        self.linked_dids.retain(|entry| match entry {
+            LinkedDid::Jwt(jwt) => {
+                UnverifiedLinkage::from_jwt(jwt).map_or(true, |linkage| linkage.origin != origin)
+            }
+            LinkedDid::LinkedDataProof(_) => true,
+        });
+        Ok(before - self.linked_dids.len())
+    }
+
+    /// Checks that `@context` is [`CONTEXT`] and that [`linked_dids`](Self::linked_dids) holds
+    /// at least one entry. Deserializing and the validators apply it, so a resource without
+    /// entries is malformed rather than an origin that links no DID.
+    ///
+    /// # Errors
+    ///
+    /// [`DomainLinkageError::InvalidContext`] or [`DomainLinkageError::NoEntries`].
     pub fn check(&self) -> Result<(), DomainLinkageError> {
         if self.context != CONTEXT {
             return Err(DomainLinkageError::InvalidContext(self.context.clone()));
+        }
+        if self.linked_dids.is_empty() {
+            return Err(DomainLinkageError::NoEntries);
         }
         Ok(())
     }
@@ -436,6 +532,69 @@ impl<'de> Deserialize<'de> for DomainLinkageConfiguration {
         };
         configuration.check().map_err(serde::de::Error::custom)?;
         Ok(configuration)
+    }
+}
+
+/// A domain linkage credential in the JSON Web Token proof format as its JWT says, read
+/// **without verifying it**: neither the signature nor the format rules
+/// [`DomainLinkageValidator`] enforces are checked, only what these fields need.
+///
+/// For the controller of an origin reading back credentials it signed itself, to renew them
+/// before they expire or to drop an origin's; never for deciding whether a DID and an origin
+/// are linked.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::domain_linkage::UnverifiedLinkage;
+/// use identity_kit::vc::Jwt;
+///
+/// // The example JWT of the specification, whose `origin` has no scheme.
+/// # let jwt: Jwt = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/vectors/did_configuration/jwt.txt")).trim().parse()?;
+/// let linkage = UnverifiedLinkage::from_jwt(&jwt)?;
+/// assert_eq!(linkage.did.as_str(), "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM");
+/// assert_eq!(linkage.origin, "https://identity.foundation");
+/// assert_eq!(linkage.expires, Some(Utc.with_ymd_and_hms(2025, 12, 4, 20, 12, 19).unwrap()));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UnverifiedLinkage {
+    /// The DID the credential links: its `credentialSubject.id`.
+    pub did: Did,
+    /// The origin it links: its `credentialSubject.origin`, normalized
+    /// ([`normalize_origin`]).
+    pub origin: String,
+    /// The issuer it names, which the format requires to be [`did`](Self::did).
+    pub issuer: Uri,
+    /// When it becomes valid: `nbf`, or `issuanceDate` without one.
+    pub not_before: DateTime<Utc>,
+    /// When it expires: `exp`, or `expirationDate` without one, when either is present.
+    pub expires: Option<DateTime<Utc>>,
+}
+
+impl UnverifiedLinkage {
+    /// Reads `jwt` without verifying it.
+    ///
+    /// # Errors
+    ///
+    /// [`DomainLinkageError::Validation`] when `jwt` does not decode as a credential JWT,
+    /// [`DomainLinkageError::SubjectNotDid`] when its one subject is not a DID, and
+    /// [`DomainLinkageError::InvalidOriginProperty`] or [`DomainLinkageError::InvalidOrigin`]
+    /// when its `origin` is not one origin.
+    pub fn from_jwt(jwt: &Jwt) -> Result<Self, DomainLinkageError> {
+        let credential = decode_credential(jwt)?.credential;
+        let subject = credential
+            .subject()
+            .ok_or(DomainLinkageError::SubjectNotDid(None))?;
+        Ok(Self {
+            did: subject_did(subject)?,
+            origin: subject_origin(subject)?,
+            issuer: credential.issuer.id().clone(),
+            not_before: credential.issuance_date,
+            expires: credential.expiration_date,
+        })
     }
 }
 
@@ -548,12 +707,23 @@ impl DomainLinkageCredentialBuilder {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DomainLinkageError {
-    /// An origin is not `scheme://host[:port]`.
-    #[error("invalid origin: {0}")]
-    InvalidOrigin(String),
+    /// An origin is not `scheme://host[:port]`. The source is the URL or URI error, when
+    /// there is one.
+    #[error("invalid origin {origin:?}: {reason}{}", cause(.source.as_ref()))]
+    InvalidOrigin {
+        /// The origin, as given.
+        origin: String,
+        /// What is wrong with it.
+        reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
+    },
     /// The configuration's `@context` is not [`CONTEXT`].
     #[error("`@context` is {0:?}, not `{CONTEXT}`")]
     InvalidContext(String),
+    /// The configuration's `linked_dids` is empty.
+    #[error("`linked_dids` is empty")]
+    NoEntries,
     /// The JWT header has a `typ`, which the format forbids.
     #[error("header `typ` {0:?} must not be present")]
     TypPresent(String),
@@ -612,13 +782,17 @@ pub enum DomainLinkageError {
     /// position.
     #[error("no domain linkage credential validated: {}", format_errors(.0))]
     NoValidCredential(BTreeMap<usize, DomainLinkageError>),
-    /// A `LinkedDomains` service does not list one or more origins.
-    #[error("service `{id}`: {reason}")]
+    /// A `LinkedDomains` service does not list one or more origins. The source is the
+    /// [`InvalidOrigin`](Self::InvalidOrigin) error of an origin, or the URI or URL error, when
+    /// there is one.
+    #[error("service `{id}`: {reason}{}", cause(.source.as_ref()))]
     InvalidService {
         /// The id of the service.
         id: DidUrl,
         /// What is wrong with it.
         reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
     },
     /// The origin is not `https`, the only scheme the resource is fetched over.
     #[error("`{0}` is not an HTTPS origin")]
@@ -810,6 +984,8 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     ///
     /// # Errors
     ///
+    /// [`DomainLinkageError::InvalidContext`] or [`DomainLinkageError::NoEntries`] when the
+    /// configuration does not [`check`](DomainLinkageConfiguration::check),
     /// [`DomainLinkageError::NoCredentialFor`] when no JWT entry names `did` as issuer,
     /// [`DomainLinkageError::NoValidCredential`] with the error of each such entry otherwise,
     /// [`DomainLinkageError::TooManyCredentials`] for those past the limit.
@@ -855,8 +1031,9 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
     ///
     /// # Errors
     ///
-    /// [`DomainLinkageError::InvalidContext`], or [`DomainLinkageError::NoValidCredential`]
-    /// with the error of every JWT entry.
+    /// [`DomainLinkageError::InvalidContext`] or [`DomainLinkageError::NoEntries`] when the
+    /// configuration does not [`check`](DomainLinkageConfiguration::check), or
+    /// [`DomainLinkageError::NoValidCredential`] with the error of every JWT entry.
     ///
     /// # Panics
     ///
@@ -898,8 +1075,8 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
 
 /// Fetches the DID configuration resource of `origin` with `http`: a `GET` of
 /// [`configuration_url`] over HTTPS, the body deserialized as a
-/// [`DomainLinkageConfiguration`], so its `@context` is checked and Linked Data Proof entries
-/// are carried as data. Nothing is validated.
+/// [`DomainLinkageConfiguration`], so it is [checked](DomainLinkageConfiguration::check) and
+/// Linked Data Proof entries are carried as data. Nothing is validated.
 ///
 /// # Errors
 ///
@@ -909,7 +1086,8 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
 ///   configuration;
 /// - [`DomainLinkageError::Http`] when there is no response, and
 ///   [`DomainLinkageError::HttpStatus`] for any other status that is not `2xx`;
-/// - [`DomainLinkageError::InvalidConfiguration`] when the body is not a configuration.
+/// - [`DomainLinkageError::InvalidConfiguration`] when the body is not a configuration, one
+///   without entries included.
 pub async fn fetch_configuration<C: HttpClient + ?Sized>(
     http: &C,
     origin: &Url,
@@ -1129,10 +1307,6 @@ fn issuer_of(jwt: &Jwt) -> Option<Did> {
 
 /// The checks of the JSON Web Token proof format and of DID Configuration Resource
 /// Verification that need no key.
-#[expect(
-    clippy::similar_names,
-    reason = "the subject's `id` and the DID it names"
-)]
 fn check_format(
     decoded: &DecodedCredential,
     expected_origin: &str,
@@ -1205,10 +1379,7 @@ fn check_format(
     let subject = credential
         .subject()
         .ok_or(DomainLinkageError::SubjectNotDid(None))?;
-    let subject_id = subject.id.as_ref().map(Uri::as_str);
-    let subject_did = subject_id
-        .and_then(|id| Did::parse(id).ok())
-        .ok_or_else(|| DomainLinkageError::SubjectNotDid(subject_id.map(str::to_owned)))?;
+    let subject_did = subject_did(subject)?;
     for (role, found) in [
         ("issuer", credential.issuer.id().as_str()),
         ("iss", iss),
@@ -1222,11 +1393,7 @@ fn check_format(
             });
         }
     }
-    let origin = subject.properties.get("origin");
-    let Some(Value::String(origin)) = origin else {
-        return Err(DomainLinkageError::InvalidOriginProperty(origin.cloned()));
-    };
-    let found = normalize_origin(origin)?;
+    let found = subject_origin(subject)?;
     if found != expected_origin {
         return Err(DomainLinkageError::OriginMismatch {
             expected: expected_origin.to_owned(),
@@ -1234,6 +1401,22 @@ fn check_format(
         });
     }
     Ok(())
+}
+
+/// The DID `credentialSubject.id` names.
+fn subject_did(subject: &Subject) -> Result<Did, DomainLinkageError> {
+    let id = subject.id.as_ref().map(Uri::as_str);
+    id.and_then(|id| Did::parse(id).ok())
+        .ok_or_else(|| DomainLinkageError::SubjectNotDid(id.map(str::to_owned)))
+}
+
+/// `credentialSubject.origin`, normalized.
+fn subject_origin(subject: &Subject) -> Result<String, DomainLinkageError> {
+    let origin = subject.properties.get("origin");
+    let Some(Value::String(origin)) = origin else {
+        return Err(DomainLinkageError::InvalidOriginProperty(origin.cloned()));
+    };
+    normalize_origin(origin)
 }
 
 impl fmt::Display for DomainLinkageConfiguration {

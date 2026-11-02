@@ -233,10 +233,15 @@ pub trait Identity: Send + Sync {
     ) -> Result<Box<dyn Signer + '_>, IdentityError>;
 }
 
+// Implements `Identity` for `&T`, `Box<T>` and `Arc<T>` by forwarding every method to `T`.
+// A method added to the trait is added here too: one with a default body would still compile
+// if left out, and calls through these wrappers would then run the default, not `T`'s
+// override. `clippy::missing_trait_methods` turns that omission into an error.
 macro_rules! forward_identity {
     ($($ty:ty),* $(,)?) => {
         $(
             #[async_trait::async_trait]
+            #[deny(clippy::missing_trait_methods)]
             impl<T: Identity + ?Sized> Identity for $ty {
                 fn capabilities(&self) -> Vec<(IdentityKind, JwsAlgorithm)> {
                     (**self).capabilities()

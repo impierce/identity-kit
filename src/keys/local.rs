@@ -5,6 +5,9 @@
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
+#[cfg(feature = "software")]
+use std::error::Error;
+
 use super::{KeyId, KeySpec, KeyStoreError};
 use crate::jose::{Jwk, JwsAlgorithm, KeyType, base64url};
 
@@ -64,7 +67,7 @@ impl LocalKey {
     /// The public members must be present and match the private scalar, so that a corrupted or
     /// hand-edited file is caught when it is loaded rather than when a signature fails to verify.
     #[cfg(feature = "software")]
-    pub(super) fn from_jwk(jwk: &Jwk) -> Result<Self, String> {
+    pub(super) fn from_jwk(jwk: &Jwk) -> Result<Self, Unusable> {
         let d = jwk
             .private
             .d
@@ -73,39 +76,40 @@ impl LocalKey {
         let d = Zeroizing::new(base64url::decode(d).map_err(|_| "`d` is not valid base64url")?);
         let key = match (jwk.kty(), jwk.crv()) {
             ("OKP", Some("Ed25519")) => {
-                let bytes: &[u8; 32] = d
-                    .as_slice()
-                    .try_into()
-                    .map_err(|_| format!("expected a 32-byte `d`, found {} bytes", d.len()))?;
+                let bytes: &[u8; 32] = d.as_slice().try_into().map_err(|_| {
+                    Unusable::new(format!("expected a 32-byte `d`, found {} bytes", d.len()))
+                })?;
                 Self::Ed25519(ed25519_dalek::SigningKey::from_bytes(bytes))
             }
             ("EC", Some("P-256")) => Self::P256(
-                p256::ecdsa::SigningKey::from_slice(&d).map_err(|e| format!("invalid `d`: {e}"))?,
+                p256::ecdsa::SigningKey::from_slice(&d)
+                    .map_err(|e| Unusable::caused("invalid `d`", e))?,
             ),
             #[cfg(feature = "secp256k1")]
             ("EC", Some("secp256k1")) => Self::Secp256k1(
-                k256::ecdsa::SigningKey::from_slice(&d).map_err(|e| format!("invalid `d`: {e}"))?,
+                k256::ecdsa::SigningKey::from_slice(&d)
+                    .map_err(|e| Unusable::caused("invalid `d`", e))?,
             ),
             #[cfg(not(feature = "secp256k1"))]
             ("EC", Some("secp256k1")) => {
-                return Err("secp256k1 keys need the `secp256k1` feature".to_owned());
+                return Err("secp256k1 keys need the `secp256k1` feature".into());
             }
             ("RSA", _) => {
                 return Err(
                     "RSA keys are not signed with by this crate (verification only, see ADR 0001)"
-                        .to_owned(),
+                        .into(),
                 );
             }
             (kty, crv) => {
-                return Err(format!(
+                return Err(Unusable::new(format!(
                     "unsupported key type: `kty` {kty:?} with `crv` {crv:?}"
-                ));
+                )));
             }
         };
         let expected = key.public_jwk();
         let same_public = jwk.x() == expected.x() && jwk.y() == expected.y();
         if !same_public {
-            return Err("public members `x`/`y` do not match the private key".to_owned());
+            return Err("public members `x`/`y` do not match the private key".into());
         }
         Ok(key)
     }
@@ -203,35 +207,38 @@ impl Entry {
     /// `alg` member, which must fit the key, or the key type's algorithm when absent. A key whose
     /// `use` is not `sig` or whose `key_ops` lacks `sign` is refused, since it could not be used.
     #[cfg(feature = "software")]
-    pub(super) fn from_jwk(jwk: Jwk) -> Result<(KeyId, Self), String> {
+    pub(super) fn from_jwk(jwk: Jwk) -> Result<(KeyId, Self), Unusable> {
         let key = LocalKey::from_jwk(&jwk)?;
         let alg = match jwk.alg() {
             Some(alg) => {
                 let alg: JwsAlgorithm = alg
                     .parse()
-                    .map_err(|_| format!("unknown algorithm `{alg}`"))?;
+                    .map_err(|_| Unusable::new(format!("unknown algorithm `{alg}`")))?;
                 if alg != key.alg() {
-                    return Err(format!("`alg` {alg} does not fit a {} key", key.alg()));
+                    return Err(Unusable::new(format!(
+                        "`alg` {alg} does not fit a {} key",
+                        key.alg()
+                    )));
                 }
                 alg
             }
             None => key.alg(),
         };
         if jwk.key_use().is_some_and(|key_use| key_use != "sig") {
-            return Err("`use` is not `sig`".to_owned());
+            return Err("`use` is not `sig`".into());
         }
         if jwk
             .key_ops()
             .is_some_and(|ops| !ops.iter().any(|op| op == "sign"))
         {
-            return Err("`key_ops` lacks `sign`".to_owned());
+            return Err("`key_ops` lacks `sign`".into());
         }
         let id = match jwk.kid() {
             Some(kid) => KeyId::new(kid),
             None => KeyId::new(
                 key.public_jwk()
                     .thumbprint_sha256()
-                    .map_err(|e| e.to_string())?,
+                    .map_err(|e| Unusable::caused("no RFC 7638 thumbprint", e))?,
             ),
         };
         let jwk = jwk.with_kid(id.as_str()).with_alg(alg.as_str());
@@ -278,11 +285,64 @@ pub(super) fn generate(
         None => KeyId::new(key.public_jwk().thumbprint_sha256().map_err(|e| {
             KeyStoreError::InvalidKey {
                 key: KeyId::new(""),
-                reason: e.to_string(),
+                reason: "no RFC 7638 thumbprint".to_owned(),
+                source: Some(Box::new(e)),
             }
         })?),
     };
     Ok((id, key))
+}
+
+/// Why a private JWK is not a usable key: what is wrong with it, and the error that says so,
+/// when there is one. [`SoftwareKeyStore`](super::SoftwareKeyStore) reports it as
+/// [`KeyStoreError::InvalidKey`] or [`KeyStoreError::InvalidKeySet`].
+#[cfg(feature = "software")]
+#[derive(Debug)]
+pub(super) struct Unusable {
+    pub(super) reason: String,
+    pub(super) source: Option<Box<dyn Error + Send + Sync + 'static>>,
+}
+
+#[cfg(feature = "software")]
+impl Unusable {
+    fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            source: None,
+        }
+    }
+
+    fn caused(reason: &str, source: impl Error + Send + Sync + 'static) -> Self {
+        Self {
+            reason: reason.to_owned(),
+            source: Some(Box::new(source)),
+        }
+    }
+
+    /// [`KeyStoreError::InvalidKey`] of `key`.
+    pub(super) fn for_key(self, key: KeyId) -> KeyStoreError {
+        KeyStoreError::InvalidKey {
+            key,
+            reason: self.reason,
+            source: self.source,
+        }
+    }
+
+    /// [`KeyStoreError::InvalidKeySet`] of the file at `path`.
+    pub(super) fn for_key_set(self, path: std::path::PathBuf) -> KeyStoreError {
+        KeyStoreError::InvalidKeySet {
+            path,
+            reason: self.reason,
+            source: self.source,
+        }
+    }
+}
+
+#[cfg(feature = "software")]
+impl From<&str> for Unusable {
+    fn from(reason: &str) -> Self {
+        Self::new(reason)
+    }
 }
 
 /// Fills `buf` from the operating system's random number generator.

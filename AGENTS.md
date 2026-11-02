@@ -8,10 +8,12 @@
 - The work breakdown is tracked as GitHub Issues labelled `ready-for-agent`, linked by native issue dependencies. Pick the lowest-numbered open issue with no open blockers, one pull request per issue, each with its tests.
 - `CONTRIBUTING.md` lists the checks CI runs and the pull request conventions. Read it before writing a pull request title.
 - `docs/FEATURES.md` is the feature checklist. When a pull request implements a row, flip its status to ✅ in that pull request.
+- `GLOSSARY.md` is the domain language, in the specifications' terms. Use its terms in code, tests, issues and pull requests.
+- The agent skills from [mattpocock/skills](https://github.com/mattpocock/skills) live in `.agents/skills/`, with a link per skill in `.claude/skills/`, installed by the [`skills`](https://github.com/vercel-labs/skills) CLI and tracked in `skills-lock.json`. They are upstream files: don't edit them. A scheduled workflow opens a pull request when upstream changes them (`CONTRIBUTING.md`).
 
 ## Ground rules
 
-- One crate, two layers. `did`, `jose`, `keys`, `identity`, `resolver` and `methods` never import `vc`, `sd_jwt_vc`, `domain_linkage` or `linked_vp`. CI enforces it; keep it green.
+- One crate, two layers. `did`, `jose`, `keys`, `identity`, `resolver` and `methods` never import `vc`, `sd_jwt_vc`, `status_list`, `domain_linkage` or `linked_vp`. CI enforces it; keep it green.
 - Extension points are traits (`DidResolver`, `DidProducer`, `KeyStore`). Never add a closed enum of methods or backends to the library.
 - JWT/JWS and SD-JWT only. No JSON-LD processing.
 - Tests are specification vectors (W3C, RFCs, DIF, method specs), never another library's output.
@@ -30,4 +32,4 @@ Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-
 
 ### Domain docs
 
-Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

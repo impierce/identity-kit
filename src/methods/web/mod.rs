@@ -92,9 +92,14 @@ pub trait HttpClient: Send + Sync {
     }
 }
 
+// Implements `HttpClient` for `&T`, `Box<T>` and `Arc<T>` by forwarding every method to `T`.
+// A method added to the trait is added here too: one with a default body would still compile
+// if left out, and calls through these wrappers would then run the default, not `T`'s
+// override. `clippy::missing_trait_methods` turns that omission into an error.
 macro_rules! forward_http_client {
     ($($t:ty),* $(,)?) => {$(
         #[async_trait::async_trait]
+        #[deny(clippy::missing_trait_methods)]
         impl<T: HttpClient + ?Sized> HttpClient for $t {
             async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
                 (**self).get(url).await
@@ -603,16 +608,19 @@ impl<C: HttpClient> DidProducer for DidWeb<C> {
         if keys.is_empty() {
             return Err(ProduceError::NoKeys);
         }
-        let did =
-            did_from_url(&url).map_err(|error| ProduceError::InvalidParams(error.to_string()))?;
+        let did = did_from_url(&url).map_err(|error| ProduceError::InvalidParams {
+            reason: "the URL is not a `did:web` location".to_owned(),
+            source: Some(Box::new(error)),
+        })?;
         let mut builder = DidDocument::builder(did.clone()).context(Context::uris(CONTEXT));
         for (index, key) in keys.iter().enumerate() {
             let id = match key.kid() {
                 Some(kid) => {
                     did.join(&format!("#{kid}"))
-                        .map_err(|_| ProduceError::UnsupportedKey {
+                        .map_err(|error| ProduceError::UnsupportedKey {
                             index,
                             reason: format!("`kid` {kid:?} is not a valid DID URL fragment"),
+                            source: Some(Box::new(error)),
                         })?
                 }
                 None => did.to_url().with_fragment(&format!("key-{index}")),

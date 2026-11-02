@@ -1,5 +1,30 @@
-//! The Token Status List: the `status` claim of a referenced token, the status list and the
-//! status list token.
+//! The IETF Token Status List ([draft-ietf-oauth-status-list-21]): the `status` claim of a
+//! referenced token, the status list and the status list token.
+//!
+//! Section numbers below are those of draft 21. The module implements its JSON and JWT
+//! formats. It does not implement the CBOR and CWT formats (§4.3, §5.2, §6.3), historical
+//! resolution (§8.4), following an `aggregation_uri` (§9, though [`StatusList`] carries
+//! one), caching by `ttl` (§13.7, though [`StatusListToken`] carries it) or the X.509
+//! extended key usage (§10).
+//!
+//! The draft defines the `status` claim for any JWT (§6.1), so the module serves every
+//! credential format of the crate: SD-JWT VCs and VCDM 2.0 credentials secured with SD-JWT
+//! ([`sd_jwt_vc`](crate::sd_jwt_vc), feature `sd-jwt`) as much as JWT credentials of either
+//! profile ([`vc`](crate::vc)). The validators of both hand the claim to a
+//! [`StatusCheck`](crate::vc::validation::StatusCheck) as
+//! [`CredentialStatus::StatusClaim`](crate::vc::validation::CredentialStatus::StatusClaim).
+//!
+//! - [`Status`] is the claim, [`StatusListRef`] its `status_list` mechanism and
+//!   [`StatusMechanism`] one mechanism of it.
+//! - [`StatusList`] is the list (§4): one [`StatusType`] of 1, 2, 4 or 8 bits per referenced
+//!   token, ZLIB-compressed in its `lst` member.
+//! - [`StatusListToken`] is the signed list (§5.1), issued with
+//!   [`sign`](StatusListToken::sign) and read with [`status_of`](StatusListToken::status_of).
+//! - `StatusListCheck` (feature `did-web` as well) is the [`StatusCheck`] that fetches the
+//!   token a reference names over an `HttpClient` and verifies it (§8).
+//!
+//! [`StatusCheck`]: crate::vc::validation::StatusCheck
+//! [draft-ietf-oauth-status-list-21]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-21
 
 use core::fmt;
 use core::str::FromStr;
@@ -11,7 +36,15 @@ use serde_json::Value;
 
 use crate::cause::cause;
 use crate::jose::{JwsError, JwsHeader, Signer, base64url};
+use crate::vc::validation::TimeOptions;
 use crate::vc::{Jwt, JwtClaims};
+
+#[cfg(feature = "did-web")]
+mod check;
+
+#[cfg(feature = "did-web")]
+#[cfg_attr(docsrs, doc(cfg(feature = "did-web")))]
+pub use check::StatusListCheck;
 
 /// The `status` claim of a referenced token: at least one status mechanism, `status_list`
 /// being the one this crate implements.
@@ -19,7 +52,7 @@ use crate::vc::{Jwt, JwtClaims};
 /// # Examples
 ///
 /// ```
-/// use identity_kit::sd_jwt_vc::{Status, StatusListRef};
+/// use identity_kit::status_list::{Status, StatusListRef};
 /// use serde_json::json;
 ///
 /// // Token Status List §6.2.
@@ -131,7 +164,7 @@ impl StatusListRef {
 /// # Examples
 ///
 /// ```
-/// use identity_kit::sd_jwt_vc::StatusType;
+/// use identity_kit::status_list::StatusType;
 /// use serde_json::json;
 ///
 /// assert_eq!(serde_json::to_value(StatusType::SUSPENDED)?, json!("SUSPENDED"));
@@ -326,6 +359,14 @@ pub enum StatusListError {
         /// The validation time.
         now: DateTime<Utc>,
     },
+    /// The status list token was issued after the validation time, beyond the leeway.
+    #[error("status list token issued at {}, after now ({})", issued_at.to_rfc3339(), now.to_rfc3339())]
+    NotYetIssued {
+        /// Its `iat`.
+        issued_at: DateTime<Utc>,
+        /// The validation time.
+        now: DateTime<Utc>,
+    },
 }
 
 /// A status list (Token Status List §4): one status of `bits` bits per referenced token,
@@ -335,7 +376,7 @@ pub enum StatusListError {
 /// # Examples
 ///
 /// ```
-/// use identity_kit::sd_jwt_vc::{StatusList, StatusType};
+/// use identity_kit::status_list::{StatusList, StatusType};
 /// use serde_json::json;
 ///
 /// // Token Status List §4.1: 16 statuses of 1 bit.
@@ -554,8 +595,9 @@ impl<'de> Deserialize<'de> for StatusList {
 ///
 /// ```
 /// use chrono::{TimeZone as _, Utc};
-/// use identity_kit::sd_jwt_vc::{StatusListRef, StatusListToken, StatusType};
+/// use identity_kit::status_list::{StatusListRef, StatusListToken, StatusType};
 /// use identity_kit::vc::Jwt;
+/// use identity_kit::vc::validation::TimeOptions;
 ///
 /// // Token Status List §8.2.
 /// let jwt: Jwt = "eyJhbGciOiJFUzI1NiIsImtpZCI6IjEyIiwidHlwIjoic3RhdHVzbGlzdCtqd3QifQ.e\
@@ -568,7 +610,7 @@ impl<'de> Deserialize<'de> for StatusList {
 /// assert_eq!(token.sub, "https://example.com/statuslists/1");
 /// assert_eq!(token.ttl, Some(43200));
 ///
-/// let now = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+/// let now = TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
 /// let reference = StatusListRef::new("https://example.com/statuslists/1", 0);
 /// assert_eq!(token.status_of(&reference, now)?, StatusType::INVALID);
 /// assert_eq!(token.status_of(&StatusListRef::new(&reference.uri, 1), now)?, StatusType::VALID);
@@ -675,17 +717,17 @@ impl StatusListToken {
     }
 
     /// The status of the token `reference` points at (Token Status List §8.3, steps 4 to 6):
-    /// `sub` must be the referenced URI, the token must not have expired at `now`, the index
-    /// must be in range.
+    /// `sub` must be the referenced URI, the token must not have been issued after `time` nor
+    /// have expired at it, each with its leeway, and the index must be in range.
     ///
     /// # Errors
     ///
-    /// [`StatusListError::SubjectMismatch`], [`StatusListError::Expired`] or
-    /// [`StatusListError::IndexOutOfRange`].
+    /// [`StatusListError::SubjectMismatch`], [`StatusListError::NotYetIssued`],
+    /// [`StatusListError::Expired`] or [`StatusListError::IndexOutOfRange`].
     pub fn status_of(
         &self,
         reference: &StatusListRef,
-        now: DateTime<Utc>,
+        time: TimeOptions,
     ) -> Result<StatusType, StatusListError> {
         if self.sub != reference.uri {
             return Err(StatusListError::SubjectMismatch {
@@ -693,9 +735,19 @@ impl StatusListToken {
                 uri: reference.uri.clone(),
             });
         }
+        let (now, earliest, latest) = time.window();
+        // An `iat` past the range `chrono` represents is as far in the future or past as its sign.
+        let issued_at = JwtClaims::timestamp(self.iat).unwrap_or(if self.iat > 0 {
+            DateTime::<Utc>::MAX_UTC
+        } else {
+            DateTime::<Utc>::MIN_UTC
+        });
+        if issued_at > latest {
+            return Err(StatusListError::NotYetIssued { issued_at, now });
+        }
         if let Some(exp) = self.exp {
             let expired_at = JwtClaims::timestamp(exp).unwrap_or(DateTime::<Utc>::MIN_UTC);
-            if expired_at <= now {
+            if expired_at <= earliest {
                 return Err(StatusListError::Expired { expired_at, now });
             }
         }

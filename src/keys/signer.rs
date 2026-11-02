@@ -139,20 +139,20 @@ impl<S: KeyStore> KeySigner<S> {
             return Err(KeyStoreError::UnsupportedAlgorithm(alg));
         }
         if public.is_private() {
-            return Err(KeyStoreError::InvalidKey {
+            return Err(KeyStoreError::invalid_key(
                 key,
-                reason: "the given public JWK carries private parameters".to_owned(),
-            });
+                "the given public JWK carries private parameters",
+            ));
         }
         if !fits(&public, alg) {
-            return Err(KeyStoreError::InvalidKey {
-                reason: format!(
+            return Err(KeyStoreError::invalid_key(
+                key,
+                format!(
                     "the given public JWK (`kty` {}, `crv` {}) is not a key for {alg}",
                     public.kty(),
                     public.crv().unwrap_or("absent"),
                 ),
-                key,
-            });
+            ));
         }
         check_alg(&key, &public, alg)?;
         Ok(Self {
@@ -193,9 +193,11 @@ fn check_alg(key: &KeyId, public: &Jwk, alg: JwsAlgorithm) -> Result<(), KeyStor
     let Some(key_alg) = public.alg() else {
         return Ok(());
     };
-    let key_alg: JwsAlgorithm = key_alg.parse().map_err(|_| KeyStoreError::InvalidKey {
-        key: key.clone(),
-        reason: format!("unknown algorithm `{key_alg}` in its public JWK"),
+    let key_alg: JwsAlgorithm = key_alg.parse().map_err(|_| {
+        KeyStoreError::invalid_key(
+            key.clone(),
+            format!("unknown algorithm `{key_alg}` in its public JWK"),
+        )
     })?;
     if key_alg == alg {
         Ok(())

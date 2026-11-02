@@ -230,10 +230,17 @@ impl DidProducer for DidJwk {
     /// its canonical form.
     async fn produce(&self, keys: &[Jwk], _: ()) -> Result<DidDocument, ProduceError> {
         let jwk = super::single_key(keys)?;
-        let unsupported = |reason: String| ProduceError::UnsupportedKey { index: 0, reason };
-        let did = Self::did(jwk).map_err(|error| unsupported(error.to_string()))?;
+        let did = Self::did(jwk).map_err(|error| ProduceError::UnsupportedKey {
+            index: 0,
+            reason: "it has no `did:jwk`".to_owned(),
+            source: Some(Box::new(error)),
+        })?;
         // The document of the key as the DID encodes it, so that it is the document the DID
         // resolves to: JCS writes `1.0` as `1`, which reads back as an integer.
-        Self::document(&did).map_err(|error| unsupported(error.to_string()))
+        Self::document(&did).map_err(|error| ProduceError::UnsupportedKey {
+            index: 0,
+            reason: "its `did:jwk` does not resolve".to_owned(),
+            source: Some(Box::new(error)),
+        })
     }
 }

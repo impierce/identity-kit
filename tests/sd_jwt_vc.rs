@@ -18,16 +18,21 @@
 mod common;
 
 use std::error::Error as _;
+use std::time::Duration;
 
 use chrono::{TimeZone as _, Utc};
 use identity_kit::claim_path;
 use identity_kit::jose::{DefaultVerifier, Jwk};
 use identity_kit::sd_jwt_vc::{
     ClaimMetadata, ClaimPath, Integrity, IntegrityAlgorithm, IntegrityError, LEGACY_TYP,
-    NON_DISCLOSABLE_CLAIMS, SdJwt, SdJwtError, SdJwtVc, SdJwtVcClaims, SdJwtVcError, SdPolicy,
-    Status, StatusList, StatusListError, StatusListRef, StatusListToken, StatusMechanism,
-    StatusType, TYP, TypeMetadata, TypeMetadataError,
+    NON_DISCLOSABLE_CLAIMS, SdJwt, SdJwtError, SdJwtVc, SdJwtVcClaims, SdJwtVcError, SdPolicy, TYP,
+    TypeMetadata, TypeMetadataError,
 };
+use identity_kit::status_list::{
+    Status, StatusList, StatusListError, StatusListRef, StatusListToken, StatusMechanism,
+    StatusType,
+};
+use identity_kit::vc::validation::TimeOptions;
 use identity_kit::vc::{Jwt, JwtClaims};
 use serde_json::{Map, Value, json};
 
@@ -424,6 +429,53 @@ fn status_claim_of_a_referenced_token() {
     assert_eq!(processed.payload["address"]["locality"], "Schulpforta");
 }
 
+/// The Token Status List moved to `status_list`; its old paths in `sd_jwt_vc` stay for one
+/// release, deprecated, and name the same types.
+#[test]
+#[expect(deprecated, reason = "the old paths are what this test exercises")]
+fn deprecated_sd_jwt_vc_paths_still_work() {
+    use identity_kit::{sd_jwt_vc, status_list};
+
+    let reference = sd_jwt_vc::StatusListRef::new("https://example.com/statuslists/1", 1);
+    let status: status_list::Status = sd_jwt_vc::Status::status_list(reference.clone());
+    assert!(matches!(
+        status.mechanisms().next(),
+        Some(sd_jwt_vc::StatusMechanism::StatusList(r)) if *r == reference
+    ));
+
+    let mut list: status_list::StatusList = sd_jwt_vc::StatusList::new(1, 8).unwrap();
+    list.set(1, sd_jwt_vc::StatusType::INVALID).unwrap();
+    let error: sd_jwt_vc::StatusListError = list.set(8, StatusType::VALID).unwrap_err();
+    assert!(matches!(
+        error,
+        StatusListError::IndexOutOfRange { idx: 8, len: 8 }
+    ));
+    let token: sd_jwt_vc::StatusListToken = StatusListToken::new(
+        reference.uri.clone(),
+        Utc.timestamp_opt(0, 0).unwrap(),
+        list,
+    );
+    assert_eq!(
+        token
+            .status_of(
+                &reference,
+                TimeOptions::at(Utc.timestamp_opt(1, 0).unwrap())
+            )
+            .unwrap(),
+        StatusType::INVALID
+    );
+
+    #[cfg(feature = "did-web")]
+    {
+        fn same<C, R>(
+            check: sd_jwt_vc::validation::StatusListCheck<C, R>,
+        ) -> status_list::StatusListCheck<C, R> {
+            check
+        }
+        let _ = same::<(), ()>;
+    }
+}
+
 #[test]
 fn status_type_names_and_numbers() {
     // Token Status List, "OAuth Status Types" registry: the names of their own serialize as
@@ -466,6 +518,13 @@ fn status_type_names_and_numbers() {
             "{rejected}"
         );
     }
+    // A number out of range is refused with the values that are accepted.
+    assert_eq!(
+        serde_json::from_value::<StatusType>(json!(256))
+            .unwrap_err()
+            .to_string(),
+        "invalid value: integer `256`, expected VALID, INVALID, SUSPENDED or a number in 0..=255"
+    );
 
     // `FromStr` accepts the same strings as `Deserialize`.
     for (text, status) in [
@@ -682,7 +741,7 @@ fn status_list_token_of_section_5_and_8() {
         payload["status_list"]
     );
 
-    let now = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+    let now = TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
     let uri = "https://example.com/statuslists/1";
     assert_eq!(
         token.status_of(&StatusListRef::new(uri, 0), now).unwrap(),
@@ -707,7 +766,7 @@ fn status_list_token_of_section_5_and_8() {
         ),
         Err(StatusListError::SubjectMismatch { .. })
     ));
-    let later = Utc.timestamp_opt(2291720170, 0).unwrap();
+    let later = TimeOptions::at(Utc.timestamp_opt(2291720170, 0).unwrap());
     assert!(matches!(
         token.status_of(&StatusListRef::new(uri, 0), later),
         Err(StatusListError::Expired { .. })
@@ -765,6 +824,72 @@ fn status_list_token_of_section_5_and_8() {
 // ---------------------------------------------------------------------------------------------
 // Type metadata
 // ---------------------------------------------------------------------------------------------
+
+/// `status_of` against the token's `iat` and `exp` (Token Status List §8.3, validating the
+/// token's claims as §5.1 has them), with and without a leeway.
+#[test]
+fn status_list_token_times() {
+    let jwt: Jwt = vector!("status_list", "token.txt").parse().unwrap();
+    let (_, token) = StatusListToken::decode(&jwt).unwrap();
+    let uri = "https://example.com/statuslists/1";
+    let now = TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
+    // Expired at `exp`, but not within a leeway.
+    let expiry = TimeOptions::at(Utc.timestamp_opt(2291720170, 0).unwrap());
+    assert!(matches!(
+        token.status_of(&StatusListRef::new(uri, 0), expiry),
+        Err(StatusListError::Expired { .. })
+    ));
+    assert_eq!(
+        token
+            .status_of(
+                &StatusListRef::new(uri, 0),
+                expiry.with_leeway(Duration::from_secs(1))
+            )
+            .unwrap(),
+        StatusType::INVALID
+    );
+    // Issued an hour after the validation time (Token Status List §8.3 and §5.1): refused,
+    // unless the leeway covers the hour.
+    let hour_before_issue = TimeOptions::at(Utc.timestamp_opt(1686920170 - 3600, 0).unwrap());
+    let error = token
+        .status_of(&StatusListRef::new(uri, 0), hour_before_issue)
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            StatusListError::NotYetIssued { issued_at, now }
+                if issued_at.timestamp() == 1686920170 && now.timestamp() == 1686920170 - 3600
+        ),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "status list token issued at 2023-06-16T12:56:10+00:00, after now (2023-06-16T11:56:10+00:00)"
+    );
+    assert_eq!(
+        token
+            .status_of(
+                &StatusListRef::new(uri, 0),
+                hour_before_issue.with_leeway(Duration::from_secs(3600))
+            )
+            .unwrap(),
+        StatusType::INVALID
+    );
+    assert!(matches!(
+        token.status_of(
+            &StatusListRef::new(uri, 0),
+            hour_before_issue.with_leeway(Duration::from_secs(3599))
+        ),
+        Err(StatusListError::NotYetIssued { .. })
+    ));
+    // An `iat` past `chrono`'s range is as far in the future, or the past, as its sign.
+    for (iat, issued) in [(i64::MAX, false), (i64::MIN, true)] {
+        let mut token = token.clone();
+        token.iat = iat;
+        let result = token.status_of(&StatusListRef::new(uri, 0), now);
+        assert_eq!(result.is_ok(), issued, "{iat}: {result:?}");
+    }
+}
 
 #[test]
 fn type_metadata_documents() {

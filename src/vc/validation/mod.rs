@@ -40,10 +40,10 @@
 //!    time, within the leeway.
 //! 6. `credentialStatus` passes the [`StatusCheck`], per the [`StatusPolicy`], and so does a
 //!    `status` claim, which the Token Status List defines for any JWT (§6.1), as
-//!    `CredentialStatus::SdJwt` after the `credentialStatus` entries. With the `sd-jwt`
-//!    feature a `status` claim that does not parse, or names no status mechanism, is
-//!    refused; without it the claim cannot be checked, so it fails under
-//!    [`StatusPolicy::Strict`] and is ignored otherwise.
+//!    `CredentialStatus::StatusClaim` after the `credentialStatus` entries. With the
+//!    `status-list` feature (which `sd-jwt` implies) a `status` claim that does not parse, or
+//!    names no status mechanism, is refused; without it the claim cannot be checked, so it
+//!    fails under [`StatusPolicy::Strict`] and is ignored otherwise.
 //!
 //! For a presentation ([`JwtPresentationValidator`]): the same for the presentation JWT, with
 //! the key resolved for [`KeyRole::Subject`] (`authentication`) and bound to the holder, plus the expected
@@ -85,7 +85,7 @@ pub use credential::{
 };
 pub use error::{PresentationValidationError, StatusError, ValidationError};
 #[cfg(feature = "linked-vp")]
-pub(crate) use presentation::decode_presentation_with;
+pub(crate) use presentation::decode_presentation_entries;
 pub use presentation::{
     DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, PresentedCredentialV2,
     decode_presentation, decode_presentation_v2,
@@ -111,11 +111,11 @@ pub use presentation::{
 pub enum CredentialStatus<'a> {
     /// A `credentialStatus` entry of a VCDM credential.
     Vcdm(&'a TypedObject),
-    /// The `status` claim of an SD-JWT VC, of a VCDM 2.0 credential secured with SD-JWT, or of
-    /// a JWT credential of either profile (IETF Token Status List §6.1 and other mechanisms).
-    #[cfg(feature = "sd-jwt")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
-    SdJwt(&'a crate::sd_jwt_vc::Status),
+    /// The `status` claim of a JWT credential of either profile, of an SD-JWT VC or of a VCDM
+    /// 2.0 credential secured with SD-JWT (IETF Token Status List §6.1 and other mechanisms).
+    #[cfg(feature = "status-list")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "status-list")))]
+    StatusClaim(&'a crate::status_list::Status),
 }
 
 impl CredentialStatus<'_> {
@@ -125,12 +125,12 @@ impl CredentialStatus<'_> {
     pub fn mechanism(&self) -> String {
         match self {
             Self::Vcdm(entry) => entry.object_type().to_owned(),
-            #[cfg(feature = "sd-jwt")]
-            Self::SdJwt(status) => status
+            #[cfg(feature = "status-list")]
+            Self::StatusClaim(status) => status
                 .mechanisms()
                 .map(|mechanism| match mechanism {
-                    crate::sd_jwt_vc::StatusMechanism::StatusList(_) => "status_list",
-                    crate::sd_jwt_vc::StatusMechanism::Other { name, .. } => name,
+                    crate::status_list::StatusMechanism::StatusList(_) => "status_list",
+                    crate::status_list::StatusMechanism::Other { name, .. } => name,
                 })
                 .collect::<Vec<_>>()
                 .join(", "),
@@ -142,29 +142,28 @@ impl CredentialStatus<'_> {
 /// points to and reports whether the credential is still good.
 ///
 /// One check serves both credential formats: the validators hand it every `credentialStatus`
-/// entry of a VCDM credential as [`CredentialStatus::Vcdm`] and the `status` claim of an
-/// SD-JWT credential, or of a JWT credential, as `CredentialStatus::SdJwt` (feature
-/// `sd-jwt`), so an application implements status checking once. A check that does not
-/// understand an entry reports [`StatusError::Unsupported`], which the [`StatusPolicy`]
-/// decides about. `StatusListCheck` of `sd_jwt_vc::validation` (features `sd-jwt` and
-/// `did-web`) checks the Token Status List and reports every VCDM entry as unsupported.
+/// entry of a VCDM credential as [`CredentialStatus::Vcdm`] and the `status` claim of a JWT
+/// or SD-JWT credential as `CredentialStatus::StatusClaim` (feature `status-list`), so an
+/// application implements status checking once. A check that does not understand an entry
+/// reports [`StatusError::Unsupported`], which the [`StatusPolicy`] decides about.
+/// `StatusListCheck` of `status_list` (features `status-list` and `did-web`) checks the Token
+/// Status List and reports every VCDM entry as unsupported.
 ///
 /// # Examples
 ///
 /// A check that knows only the Token Status List, and only the list it was given:
 ///
 /// ```
-/// use chrono::{DateTime, Utc};
-/// use identity_kit::vc::validation::{CredentialStatus, StatusCheck, StatusError};
+/// use identity_kit::vc::validation::{CredentialStatus, StatusCheck, StatusError, TimeOptions};
 ///
 /// struct Revoked;
 ///
 /// #[async_trait::async_trait]
 /// impl StatusCheck for Revoked {
-///     async fn check(&self, status: CredentialStatus<'_>, _: DateTime<Utc>) -> Result<(), StatusError> {
+///     async fn check(&self, status: CredentialStatus<'_>, _: TimeOptions) -> Result<(), StatusError> {
 ///         match status {
-///             #[cfg(feature = "sd-jwt")]
-///             CredentialStatus::SdJwt(status) if status.status_list.is_some() => {
+///             #[cfg(feature = "status-list")]
+///             CredentialStatus::StatusClaim(status) if status.status_list.is_some() => {
 ///                 Err(StatusError::Invalid("revoked".to_owned()))
 ///             }
 ///             other => Err(StatusError::Unsupported(other.mechanism())),
@@ -174,8 +173,9 @@ impl CredentialStatus<'_> {
 /// ```
 #[async_trait::async_trait]
 pub trait StatusCheck: Send + Sync {
-    /// Checks `status` at the validation time `now`, against which a check judges what it
-    /// fetched (the expiry of a status list token, for instance).
+    /// Checks `status` at the validation time `time`, against which, with its leeway, a check
+    /// judges what it fetched (when a status list token was issued and expires, for
+    /// instance). The validators pin `time` to a fixed `now`.
     ///
     /// # Errors
     ///
@@ -187,21 +187,26 @@ pub trait StatusCheck: Send + Sync {
     async fn check(
         &self,
         status: CredentialStatus<'_>,
-        now: DateTime<Utc>,
+        time: TimeOptions,
     ) -> Result<(), StatusError>;
 }
 
+// Implements `StatusCheck` for `&T`, `Box<T>` and `Arc<T>` by forwarding every method to `T`.
+// A method added to the trait is added here too: one with a default body would still compile
+// if left out, and calls through these wrappers would then run the default, not `T`'s
+// override. `clippy::missing_trait_methods` turns that omission into an error.
 macro_rules! forward_status_check {
     ($($ty:ty),* $(,)?) => {
         $(
             #[async_trait::async_trait]
+            #[deny(clippy::missing_trait_methods)]
             impl<T: StatusCheck + ?Sized> StatusCheck for $ty {
                 async fn check(
                     &self,
                     status: CredentialStatus<'_>,
-                    now: DateTime<Utc>,
+                    time: TimeOptions,
                 ) -> Result<(), StatusError> {
-                    (**self).check(status, now).await
+                    (**self).check(status, time).await
                 }
             }
         )*
@@ -210,19 +215,21 @@ macro_rules! forward_status_check {
 
 forward_status_check!(&T, Box<T>, Arc<T>);
 
-/// Checks every entry of `statuses` with `check` per `policy`, at `now`.
-pub(crate) async fn check_statuses<'a>(
+/// Checks every entry of `statuses` with `check` per `policy`, at `time`, pinned to one `now`
+/// for all of them.
+pub(crate) async fn check_statuses(
     check: Option<&dyn StatusCheck>,
-    statuses: impl IntoIterator<Item = CredentialStatus<'a>>,
+    statuses: Vec<CredentialStatus<'_>>,
     policy: StatusPolicy,
-    now: DateTime<Utc>,
+    time: TimeOptions,
 ) -> Result<(), ValidationError> {
     if policy == StatusPolicy::SkipAll {
         return Ok(());
     }
+    let time = TimeOptions::at(time.now()).with_leeway(time.leeway);
     for status in statuses {
         let result = match check {
-            Some(check) => check.check(status, now).await,
+            Some(check) => check.check(status, time).await,
             None => Err(StatusError::Unsupported(status.mechanism())),
         };
         match result {
@@ -238,19 +245,19 @@ pub(crate) async fn check_statuses<'a>(
 }
 
 /// The `status` claim of a JWT credential, which the Token Status List defines for any JWT
-/// (§6.1): a `sd_jwt_vc::Status` with the `sd-jwt` feature, uninhabited without it.
-#[cfg(feature = "sd-jwt")]
-pub(super) type StatusClaim = crate::sd_jwt_vc::Status;
+/// (§6.1): a `status_list::Status` with the `status-list` feature, uninhabited without it.
+#[cfg(feature = "status-list")]
+pub(super) type StatusClaim = crate::status_list::Status;
 
 /// The `status` claim of a JWT credential, which the Token Status List defines for any JWT
-/// (§6.1): a `sd_jwt_vc::Status` with the `sd-jwt` feature, uninhabited without it.
-#[cfg(not(feature = "sd-jwt"))]
+/// (§6.1): a `status_list::Status` with the `status-list` feature, uninhabited without it.
+#[cfg(not(feature = "status-list"))]
 pub(super) enum StatusClaim {}
 
 /// The `status` claim of `claims`, for the [`StatusCheck`] beside the `credentialStatus`
 /// entries.
 ///
-/// With the `sd-jwt` feature the claim is parsed, and one that does not parse, or names no
+/// With the `status-list` feature the claim is parsed, and one that does not parse, or names no
 /// status mechanism, is an [`InvalidClaim`](crate::vc::CredentialError::InvalidClaim)
 /// whatever the `policy`. Without it the claim cannot be handed to a check, so it fails under
 /// [`StatusPolicy::Strict`] as an unchecked entry and is ignored otherwise.
@@ -261,7 +268,7 @@ pub(super) fn status_claim(
     let Some(status) = claims.additional.get("status") else {
         return Ok(None);
     };
-    #[cfg(feature = "sd-jwt")]
+    #[cfg(feature = "status-list")]
     {
         let _ = policy;
         let invalid = |reason: String| crate::vc::CredentialError::InvalidClaim {
@@ -276,7 +283,7 @@ pub(super) fn status_claim(
         }
         Ok(Some(status))
     }
-    #[cfg(not(feature = "sd-jwt"))]
+    #[cfg(not(feature = "status-list"))]
     {
         let _ = status;
         match policy {
@@ -288,11 +295,11 @@ pub(super) fn status_claim(
 
 /// `status` as the entry a [`StatusCheck`] is handed.
 pub(super) fn status_claim_entry(status: &StatusClaim) -> CredentialStatus<'_> {
-    #[cfg(feature = "sd-jwt")]
+    #[cfg(feature = "status-list")]
     {
-        CredentialStatus::SdJwt(status)
+        CredentialStatus::StatusClaim(status)
     }
-    #[cfg(not(feature = "sd-jwt"))]
+    #[cfg(not(feature = "status-list"))]
     {
         match *status {}
     }
@@ -391,6 +398,20 @@ impl TimeOptions {
         TimeDelta::from_std(self.leeway).unwrap_or(TimeDelta::MAX)
     }
 
+    /// The validation time, and the earliest and latest times the leeway lets pass for it.
+    pub(crate) fn window(&self) -> (DateTime<Utc>, DateTime<Utc>, DateTime<Utc>) {
+        let now = self.now();
+        let delta = self.delta();
+        // A leeway past the range `chrono` represents saturates rather than overflowing.
+        let earliest = now
+            .checked_sub_signed(delta)
+            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        let latest = now
+            .checked_add_signed(delta)
+            .unwrap_or(DateTime::<Utc>::MAX_UTC);
+        (now, earliest, latest)
+    }
+
     /// Checks that `now` is within `[not_before, expires)` with the leeway, and that
     /// `issued_at` is not in the future.
     ///
@@ -404,15 +425,7 @@ impl TimeOptions {
         expires: Option<DateTime<Utc>>,
         issued_at: Option<DateTime<Utc>>,
     ) -> Result<(), ValidationError> {
-        let now = self.now();
-        let delta = self.delta();
-        // A leeway past the range `chrono` represents saturates rather than overflowing.
-        let latest = now
-            .checked_add_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MAX_UTC);
-        let earliest = now
-            .checked_sub_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MIN_UTC);
+        let (now, earliest, latest) = self.window();
         if let Some(not_before) = not_before
             && not_before > latest
         {

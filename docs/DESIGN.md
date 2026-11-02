@@ -11,8 +11,8 @@ implemented; [`FEATURES.md`](FEATURES.md) tracks the status of each feature and 
 ## Principles
 
 1. **One crate, two layers, hard boundary.** Lower layer: `did`, `jose`, `keys`, `identity`,
-   `resolver`, `methods`. Upper layer: `vc`, `sd_jwt_vc`, `domain_linkage`, `linked_vp`. Lower modules
-   never import upper ones. The upper modules are feature-gated so CI can prove the boundary
+   `resolver`, `methods`. Upper layer: `vc`, `sd_jwt_vc`, `status_list`, `domain_linkage`,
+   `linked_vp`. Lower modules never import upper ones. The upper modules are feature-gated so CI can prove the boundary
    (see Conformance).
 2. **Traits, not enums, for extension points.** A DID method implements `DidResolver` and/or
    `DidProducer` and declares `MethodCapabilities`. A key backend implements `KeyStore` and declares
@@ -56,7 +56,8 @@ identity-kit/
 │       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing, KeyReference, KeyResolver
 │       ├── methods/           # key, jwk, web
 │       ├── vc/                # [vc] Jwt, Credential, Presentation, CredentialV2, EnvelopedVc, ClaimPath, validation
-│       ├── sd_jwt_vc/         # [sd-jwt] SD-JWT (RFC 9901), SD-JWT VC, status list, type metadata, validator
+│       ├── sd_jwt_vc/         # [sd-jwt] SD-JWT (RFC 9901), SD-JWT VC, type metadata, validator
+│       ├── status_list/       # [status-list] Token Status List: status claim, list, token, StatusListCheck
 │       ├── domain_linkage/    # [domain-linkage] DID configuration resource builder and validator
 │       └── linked_vp/         # [linked-vp] linked presentation services, builder, fetcher and validator
 ├── xtask/                     # publish = false: release checks, vector regeneration, key CLI
@@ -79,11 +80,12 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
 | `pkcs11`             | off     | `cryptoki`; `tokio` (`rt`) for the blocking pool; PKCS#11 key store |
 | `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
-| `sd-jwt`             | on      | `getrandom` (salts) and `miniz_oxide` (status lists); implies `vc` |
+| `status-list`        | on      | `miniz_oxide` (the compressed list); the Token Status List for JWT and SD-JWT credentials; implies `vc` |
+| `sd-jwt`             | on      | `getrandom` (salts); implies `vc` and `status-list`           |
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
 | `linked-vp`          | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
 | `jwks`               | off     | implies `did-web` (for `HttpClient`); `JwksResolver` over JWT VC issuer metadata |
-| `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `DomainLinkageConfiguration`, `ClaimPath` and `TypeMetadata` |
+| `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `JwsAlgorithm`, the VCDM 1.1 and 2.0 credentials and presentations (`Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp`), `DomainLinkageConfiguration`, `ClaimPath`, `TypeMetadata` and `StatusType` |
 | `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |
 
 ## `did` module
@@ -145,7 +147,10 @@ The other error types follow the same rule: an error caused by another error kee
 `source()`, typed where the type is already part of the API (`serde_json::Error`,
 `jsonwebtoken::errors::Error`, this crate's own errors) and boxed otherwise, instead of
 formatting it into a string. The message still ends with the cause's, so nothing is lost for
-logs, and a caller can walk the chain or downcast instead of matching on text.
+logs, and a caller can walk the chain or downcast instead of matching on text. A variant that
+an extension point's implementor builds (`ProduceError::UnsupportedKey` and `InvalidParams`,
+`KeyStoreError::InvalidKey`) has a constructor for the case without a cause, so a `DidProducer`
+or `KeyStore` outside the crate need not spell out `source: None`.
 
 Serialization: empty arrays and `None` are omitted; `Did`, `DidUrl` serialize as strings;
 `Service.type` is a string when single; `@context` is emitted first.
@@ -262,7 +267,10 @@ pub trait KeyResolver: Send + Sync {
     async fn resolve_key(&self, key: &KeyReference, role: KeyRole) -> Result<Jwk, KeyResolutionError>;   // Unsupported(reference) when it cannot
 }
 pub struct CompositeKeyResolver(..);   // first resolver that does not answer Unsupported
-// in the crate: Resolver (DidUrl), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
+// in the crate: Resolver (DidUrl), DocumentKeyResolver (DidUrl, over documents supplied by the caller), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
+
+pub struct JwtValidator<R: KeyResolver, V: JwsVerifier = DefaultVerifier> { .. }   // validate, validate_as::<T>
+pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issuer_binding, required_claims, now: Option<i64>, leeway }
 ```
 
 - `jose::multikey`: the multicodec table (`ed25519-pub 0xed`, `p256-pub 0x1200`, `secp256k1-pub
@@ -296,6 +304,13 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   party (the DID of a DID URL; `did:jwk` or the RFC 7638 thumbprint of a key by value; the
   issuer URL of a JWKS). `X509Chain` and `Jku` are in the enum and resolve to `Unsupported`
   until implemented.
+- Plain JWTs: `JwtValidator` validates a JWT that is not a credential (an OAuth 2.0 access
+  token, RFC 9068) per RFC 7519 §7.2 and RFC 8725: an `alg` allow-list, the expected `typ`
+  (case-insensitive, `application/` optional), the signature under the key the
+  `KeyReference` names, the key bound to `iss` unless the options waive it for a resolver of
+  trusted keys (`IssuerBinding::Any`), the expected `iss` and `aud`, `exp`/`nbf`/`iat` against
+  an injectable clock in `NumericDate` seconds (the lower layer has no `chrono`) with a
+  leeway, and required claims. It lives in `resolver` because it needs `KeyResolver`.
 
 ## Upper layer
 
@@ -311,8 +326,8 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   `assertionMethod` or `authentication`), `TimeOptions` (explicit `now`, leeway), issuer and
   holder binding to the party the `KeyReference` names, audience and nonce, accepted `typ` beyond the profile's,
   `SubjectHolderRelationship`, `FailFast`, one format-agnostic `StatusCheck` trait over
-  `CredentialStatus::Vcdm` (and `CredentialStatus::SdJwt` with `sd-jwt`, for the `status` claim
-  of SD-JWT and JWT credentials alike, Token Status List §6.1) with a `StatusPolicy`,
+  `CredentialStatus::Vcdm` (and `CredentialStatus::StatusClaim` with `status-list`, for the
+  `status` claim of SD-JWT and JWT credentials alike, Token Status List §6.1) with a `StatusPolicy`,
   `extract_issuer`/`extract_holder` (ADR 0004, ADR 0006); `ClaimPath` (SD-JWT VC §5.6.1, OID4VP §7 claims path pointer),
   re-exported from `sd_jwt_vc`.
 - `sd_jwt_vc` (`sd-jwt`): RFC 9901 implemented in the crate (ADR 0005): `Disclosure`,
@@ -323,28 +338,36 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
   enforced, `SdJwtVcBuilder`; `SdJwtCredentialV2` for a VCDM 2.0 credential secured with
   SD-JWT (VC-JOSE-COSE §3.2.1: `typ: vc+sd-jwt`, the `CredentialV2` as the payload, `cnf` and
   `status` beside it), `SdJwtCredentialV2Builder`, and `EnvelopedVc::to_sd_jwt` for the
-  `application/vc+sd-jwt` envelope of a VCDM 2.0 presentation; `Status`/`StatusListRef`/
-  `StatusMechanism`, `StatusList` (ZLIB bit array) and `StatusListToken` for the Token Status
-  List; `TypeMetadata` with claim paths, `extends` folding, claim validation and `Integrity`
+  `application/vc+sd-jwt` envelope of a VCDM 2.0 presentation; `TypeMetadata` with claim paths, `extends` folding, claim validation and `Integrity`
   metadata; `SdJwtCredentialValidator` over `KeyResolver` + `JwsVerifier` (`validate` an SD-JWT
   VC, `validate_v2` a VCDM 2.0 credential: issuer key from the token's `KeyReference` under
   `assertionMethod`, `iss` or `issuer` bound to the party it names, time claims and validity
   period, key binding with `KeyBindingOptions` and the holder key from `cnf` (`jwk` or `kid`)
   under `authentication`, the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
-  `credentialStatus`, `StatusListCheck` over an `HttpClient`: `Accept:
-  application/statuslist+jwt`, and at most three redirects, each target `https` and fetched
-  through the client again so that every hop passes its address checks; its `StatusError` tells
-  a list that could not be fetched from one that is invalid, signed by a key that does not
-  resolve, expired or too short, so that a caller can retry only the first).
-  `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes next to `vc+jwt` ones
-  (`PresentedCredentialV2`), with key binding required per `PresentationValidationOptions`.
+  `credentialStatus`). `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes
+  next to `vc+jwt` ones (`PresentedCredentialV2`), with key binding required per
+  `PresentationValidationOptions`.
+- `status_list` (`status-list`): the IETF Token Status List (draft 21), which the draft defines for
+  any JWT (§6.1), so it serves JWT and SD-JWT credentials alike and needs no SD-JWT code:
+  `Status`/`StatusListRef`/`StatusMechanism` for the `status` claim, `StatusType`, `StatusList`
+  (ZLIB bit array) and `StatusListToken` (signed with any `Signer`, read with `status_of`), and,
+  with `did-web` as well, `StatusListCheck`, the `vc` `StatusCheck` over an `HttpClient`:
+  `Accept: application/statuslist+jwt`, and at most three redirects, each target `https` and
+  fetched through the client again so that every hop passes its address checks; its
+  `StatusError` tells a list that could not be fetched from one that is invalid, signed by a key
+  that does not resolve, expired or too short, so that a caller can retry only the first. It
+  depends on `vc` for `Jwt` and `JwtClaims`. `sd_jwt_vc` keeps deprecated aliases of its types,
+  and `sd_jwt_vc::validation::StatusListCheck`, for one release.
 - `domain_linkage` (`domain-linkage`): `DomainLinkageConfiguration` (JWT entries typed, Linked
   Data Proof entries carried as data), `DomainLinkageCredentialBuilder`, `DomainLinkageValidator`
   implementing the DIF Well Known DID Configuration checks (`iss == sub ==
   credentialSubject.id`, one `origin` matching the requested one after normalization, `exp`
   present, no `id`, no extra header parameters or claims, signature under `assertionMethod`);
   validation of a configuration is at-least-one, reporting the rest as errors, and validates at
-  most `max_credentials` (32 by default) entries of one configuration.
+  most `max_credentials` (32 by default) entries of one configuration. For the controller of
+  the origin, `entries` reads each JWT entry back without verifying it (`UnverifiedLinkage`:
+  DID, origin, issuer, `nbf`, `exp`), `earliest_expiry` says when to renew, and
+  `remove_origin` unlinks an origin.
   `fetch_configuration` gets the resource over the injected `methods::web::HttpClient` (HTTPS
   only; `404`/`410` is `NotPublished`, a state rather than a failure), `service`/`services`
   build and read `LinkedDomains` entries, and `DomainLinkageClient` fetches and validates per

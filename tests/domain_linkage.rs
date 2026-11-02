@@ -15,21 +15,21 @@
 
 mod common;
 
-use std::collections::HashMap;
 use std::error::Error as _;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri};
 use identity_kit::domain_linkage::{
     CONTEXT, CREDENTIAL_TYPE, DomainLinkageClient, DomainLinkageConfiguration,
     DomainLinkageCredentialBuilder, DomainLinkageError, DomainLinkageValidator, LinkedDid,
-    SERVICE_TYPE, configuration_url, fetch_configuration, normalize_origin, service, services,
+    SERVICE_TYPE, UnverifiedLinkage, configuration_url, fetch_configuration, normalize_origin,
+    service, services,
 };
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
-use identity_kit::methods::web::{DidWeb, HttpClient, HttpError, HttpResponse};
+use identity_kit::methods::web::DidWeb;
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
@@ -40,6 +40,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use common::Ed25519Signer;
+use common::http::Web;
 
 const DID: &str = "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM";
 const ORIGIN: &str = "https://identity.foundation";
@@ -102,19 +103,25 @@ fn well_known_location() {
         normalize_origin("localhost:3000").unwrap(),
         "https://localhost:3000"
     );
+    // No host: nothing failed to parse, so there is no source.
+    let error = normalize_origin("mailto:someone@example.com").unwrap_err();
     assert!(matches!(
-        normalize_origin("mailto:someone@example.com"),
-        Err(DomainLinkageError::InvalidOrigin(_))
+        &error,
+        DomainLinkageError::InvalidOrigin { origin, reason, source: None }
+            if origin == "mailto:someone@example.com" && reason == "no host"
     ));
-    assert!(matches!(
-        normalize_origin(""),
-        Err(DomainLinkageError::InvalidOrigin(_))
-    ));
-    // A host the WHATWG URL parser accepts but RFC 3986 does not.
-    assert!(matches!(
-        normalize_origin("`example.com"),
-        Err(DomainLinkageError::InvalidOrigin(_))
-    ));
+    assert_eq!(
+        error.to_string(),
+        "invalid origin \"mailto:someone@example.com\": no host"
+    );
+    // Not a URL: the URL error is the source.
+    let error = normalize_origin("").unwrap_err();
+    assert!(matches!(error, DomainLinkageError::InvalidOrigin { .. }));
+    assert!(error.source().unwrap().is::<url::ParseError>(), "{error}");
+    // A host the WHATWG URL parser accepts but RFC 3986 does not: the URI error.
+    let error = normalize_origin("`example.com").unwrap_err();
+    assert!(matches!(error, DomainLinkageError::InvalidOrigin { .. }));
+    assert!(error.source().unwrap().is::<identity_kit::did::DidError>());
 }
 
 #[test]
@@ -166,11 +173,53 @@ fn example_resource() {
     assert!(
         serde_json::from_value::<DomainLinkageConfiguration>(json!({"linked_dids": []})).is_err()
     );
-    let mut wrong = DomainLinkageConfiguration::new();
+    let mut wrong = DomainLinkageConfiguration::new().with_credential(example_jwt());
     wrong.context = "https://example.com/other".to_owned();
     assert!(matches!(
         wrong.check(),
         Err(DomainLinkageError::InvalidContext(_))
+    ));
+
+    // At least one entry: a resource without any is malformed, not an origin that links no
+    // DID. A configuration being built starts empty and passes once it holds a credential.
+    let error = serde_json::from_value::<DomainLinkageConfiguration>(json!({
+        "@context": CONTEXT, "linked_dids": []
+    }))
+    .unwrap_err();
+    assert_eq!(error.to_string(), "`linked_dids` is empty");
+    let empty = DomainLinkageConfiguration::new();
+    assert!(matches!(empty.check(), Err(DomainLinkageError::NoEntries)));
+    assert!(empty.with_credential(example_jwt()).check().is_ok());
+    // A Linked Data Proof entry is an entry: the example's alone still reads.
+    let mut linked_data_proof: Value = serde_json::from_str(resource()).unwrap();
+    linked_data_proof["linked_dids"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    let configuration: DomainLinkageConfiguration =
+        serde_json::from_value(linked_data_proof).unwrap();
+    assert!(matches!(
+        configuration.linked_dids.as_slice(),
+        [LinkedDid::LinkedDataProof(_)]
+    ));
+    assert_eq!(configuration.jwts().count(), 0);
+}
+
+#[tokio::test]
+async fn validators_refuse_a_configuration_without_entries() {
+    let empty = DomainLinkageConfiguration::new();
+    let validator = validator();
+    assert!(matches!(
+        validator
+            .validate_configuration(&empty, &origin(), &at(now()))
+            .await,
+        Err(DomainLinkageError::NoEntries)
+    ));
+    assert!(matches!(
+        validator
+            .validate_linkage(&empty, &Did::parse(DID).unwrap(), &origin(), &at(now()))
+            .await,
+        Err(DomainLinkageError::NoEntries)
     ));
 }
 
@@ -353,7 +402,7 @@ fn builder_reproduces_the_example_payload() {
             now(),
             now()
         ),
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
 }
 
@@ -652,7 +701,7 @@ async fn format_rules() {
             &with_vc(&|vc| vc["credentialSubject"]["origin"] = json!("not a url"))
         )
         .await,
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
 
     // A subject that is not a DID.
@@ -827,50 +876,20 @@ fn service_builder() {
         service(id.clone(), []),
         Err(DomainLinkageError::InvalidService { .. })
     ));
+    // An origin that does not normalize: its `InvalidOrigin` is the source.
+    let error = service(id, [url("mailto:someone@example.com")]).unwrap_err();
+    assert!(matches!(error, DomainLinkageError::InvalidService { .. }));
     assert!(matches!(
-        service(id, [url("mailto:someone@example.com")]),
-        Err(DomainLinkageError::InvalidService { .. })
+        error
+            .source()
+            .and_then(|e| e.downcast_ref::<DomainLinkageError>()),
+        Some(DomainLinkageError::InvalidOrigin { .. })
     ));
 }
 
 // ---------------------------------------------------------------------------------------------
 // Fetching
 // ---------------------------------------------------------------------------------------------
-
-/// A web serving fixed responses, recording what was fetched; `404` for anything else.
-#[derive(Default)]
-struct Web {
-    pages: HashMap<String, Result<(u16, Vec<u8>), String>>,
-    fetched: Mutex<Vec<String>>,
-}
-
-impl Web {
-    fn serving(mut self, url: &str, status: u16, body: impl Into<Vec<u8>>) -> Self {
-        self.pages.insert(url.to_owned(), Ok((status, body.into())));
-        self
-    }
-
-    fn failing(mut self, url: &str, message: &str) -> Self {
-        self.pages.insert(url.to_owned(), Err(message.to_owned()));
-        self
-    }
-
-    fn fetched(&self) -> Vec<String> {
-        self.fetched.lock().unwrap().clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl HttpClient for Web {
-    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-        self.fetched.lock().unwrap().push(url.to_string());
-        match self.pages.get(url.as_str()) {
-            Some(Ok((status, body))) => Ok(HttpResponse::new(*status, body.clone())),
-            Some(Err(message)) => Err(HttpError::msg(message)),
-            None => Ok(HttpResponse::new(404, Vec::new())),
-        }
-    }
-}
 
 const EXAMPLE_RESOURCE_URL: &str = "https://identity.foundation/.well-known/did-configuration.json";
 
@@ -933,9 +952,10 @@ async fn fetch_outcomes() {
             200,
             other_context.to_string(),
         )
-        .serving(&resource_of("empty.example"), 200, CONTEXT_ONLY);
+        .serving(&resource_of("empty.example"), 200, CONTEXT_ONLY)
+        .serving(&resource_of("missing.example"), 404, "");
 
-    // Not published: `404` (here: anything not served) and `410`.
+    // Not published: `404` and `410`.
     for (host, expected) in [("missing.example", 404), ("gone.example", 410)] {
         let error = fetch(&web, host).await.unwrap_err();
         assert!(error.is_not_published(), "{host}");
@@ -984,9 +1004,12 @@ async fn fetch_outcomes() {
             .contains("https://example.com/other")
     );
 
-    // A configuration without credentials fetches, and validates to nothing.
-    let empty = fetch(&web, "empty.example").await.unwrap();
-    assert!(empty.linked_dids.is_empty());
+    // A configuration without entries is malformed.
+    let error = fetch(&web, "empty.example").await.unwrap_err();
+    assert!(
+        matches!(&error, DomainLinkageError::InvalidConfiguration { source, .. } if source.to_string().starts_with("`linked_dids` is empty")),
+        "{error}"
+    );
 
     // Only HTTPS origins are fetched; nothing reaches the client for the others.
     let before = web.fetched().len();
@@ -996,7 +1019,7 @@ async fn fetch_outcomes() {
     ));
     assert!(matches!(
         fetch_configuration(&web, &url("data:text/plain,x")).await,
-        Err(DomainLinkageError::InvalidOrigin(_))
+        Err(DomainLinkageError::InvalidOrigin { .. })
     ));
     assert_eq!(web.fetched().len(), before);
 
@@ -1023,7 +1046,7 @@ async fn fetch_outcomes() {
         client
             .validate_origin(&url("https://empty.example"), &at(now()))
             .await,
-        Err(DomainLinkageError::NoValidCredential(errors)) if errors.is_empty()
+        Err(DomainLinkageError::InvalidConfiguration { .. })
     ));
 }
 
@@ -1092,7 +1115,13 @@ async fn origins_of_a_did_web_are_reported_one_by_one() {
                 200,
                 configuration.to_string(),
             )
-            .serving(EXAMPLE_RESOURCE_URL, 200, resource()),
+            .serving(
+                "https://example.org/.well-known/did-configuration.json",
+                404,
+                "",
+            )
+            .serving(EXAMPLE_RESOURCE_URL, 200, resource())
+            .serving("https://example.net/.well-known/did.json", 404, ""),
     );
     let resolver = Resolver::builder()
         .with(DidKey::default())
@@ -1306,4 +1335,153 @@ async fn credentials_past_the_limit_are_not_validated() {
         DomainLinkageError::TooManyCredentials(2)
     ));
     assert_eq!(validator.credential_validator().resolver().calls(), 4);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Maintaining a configuration: entries read without verification
+// ---------------------------------------------------------------------------------------------
+
+#[test]
+fn example_resource_entries() {
+    let configuration: DomainLinkageConfiguration = serde_json::from_str(resource()).unwrap();
+    // The Linked Data Proof entry (0) is not a JWT, so only the JWT entry (1) is read.
+    let entries: Vec<_> = configuration.entries().collect();
+    assert_eq!(entries.len(), 1);
+    let (index, linkage) = &entries[0];
+    assert_eq!(*index, 1);
+    let linkage = linkage.as_ref().unwrap();
+    assert_eq!(linkage.did, Did::parse(DID).unwrap());
+    assert_eq!(linkage.issuer.as_str(), DID);
+    // The example JWT writes the origin without its scheme.
+    assert_eq!(linkage.origin, ORIGIN);
+    assert_eq!(linkage.not_before.timestamp(), 1607112739);
+    assert_eq!(linkage.expires.map(|t| t.timestamp()), Some(1764879139));
+    assert_eq!(
+        configuration.earliest_expiry(),
+        Utc.timestamp_opt(1764879139, 0).single()
+    );
+    assert_eq!(
+        UnverifiedLinkage::from_jwt(&example_jwt()).unwrap(),
+        *linkage
+    );
+}
+
+#[tokio::test]
+async fn renewing_and_unlinking() {
+    let controller = controller();
+    let issue = |origin: &str, days: i64| {
+        DomainLinkageCredentialBuilder::new(
+            controller.did.clone(),
+            &Url::parse(origin).unwrap(),
+            now(),
+            now() + chrono::TimeDelta::days(days),
+        )
+        .unwrap()
+    };
+    let example_com = issue("https://example.com", 30)
+        .sign(&controller.kid, &controller.signer)
+        .await
+        .unwrap();
+    let example_org = issue("https://example.org:8443/path", 365)
+        .sign(&controller.kid, &controller.signer)
+        .await
+        .unwrap();
+    // A JWT that is not a credential: read, it reports why, and it is kept.
+    let unreadable: Jwt = common::unsigned_jwt(
+        &json!({ "alg": "EdDSA", "kid": controller.kid.as_str() }),
+        &json!({ "iss": controller.did.as_str() }),
+    )
+    .parse()
+    .unwrap();
+    let mut configuration = DomainLinkageConfiguration::new()
+        .with_credential(example_com.clone())
+        .with_credential(unreadable.clone())
+        .with_credential(example_org.clone());
+
+    let entries: Vec<_> = configuration.entries().collect();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].1.as_ref().unwrap().origin, "https://example.com");
+    assert!(matches!(
+        entries[1],
+        (1, Err(DomainLinkageError::Validation(_)))
+    ));
+    assert_eq!(
+        entries[2].1.as_ref().unwrap().origin,
+        "https://example.org:8443"
+    );
+    // Renewal is due when the first credential expires; the unreadable one is ignored.
+    assert_eq!(
+        configuration.earliest_expiry(),
+        Some(now() + chrono::TimeDelta::days(30))
+    );
+
+    // Unlinking compares normalized origins: no scheme, a path, a trailing slash.
+    assert_eq!(
+        configuration
+            .remove_origin(&Url::parse("https://example.com/").unwrap())
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        configuration.linked_dids,
+        [LinkedDid::Jwt(unreadable), LinkedDid::Jwt(example_org)]
+    );
+    assert_eq!(
+        configuration
+            .remove_origin(&Url::parse("https://example.com").unwrap())
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        configuration.earliest_expiry(),
+        Some(now() + chrono::TimeDelta::days(365))
+    );
+    assert!(matches!(
+        configuration.remove_origin(&Url::parse("mailto:someone@example.com").unwrap()),
+        Err(DomainLinkageError::InvalidOrigin { .. })
+    ));
+
+    // What remains validates as before.
+    let report = validator()
+        .validate_configuration(
+            &configuration,
+            &Url::parse("https://example.org:8443").unwrap(),
+            &at(now()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.dids().collect::<Vec<_>>(), [&controller.did]);
+}
+
+#[test]
+fn entries_report_why_they_do_not_read() {
+    let controller = controller();
+    let header = json!({ "alg": "EdDSA", "kid": controller.kid.as_str() });
+    let mut claims = serde_json::to_value(builder_for(&controller).jwt_claims()).unwrap();
+    let read = |claims: &Value| {
+        let jwt: Jwt = common::unsigned_jwt(&header, claims).parse().unwrap();
+        UnverifiedLinkage::from_jwt(&jwt)
+    };
+    assert_eq!(read(&claims).unwrap().origin, "https://example.com");
+
+    claims["vc"]["credentialSubject"]["origin"] = json!(["https://example.com"]);
+    assert!(matches!(
+        read(&claims),
+        Err(DomainLinkageError::InvalidOriginProperty(Some(_)))
+    ));
+    claims["vc"]["credentialSubject"]["origin"] = json!("mailto:someone@example.com");
+    assert!(matches!(
+        read(&claims),
+        Err(DomainLinkageError::InvalidOrigin { .. })
+    ));
+    claims["vc"]["credentialSubject"]["origin"] = json!("https://example.com");
+    claims["sub"] = json!("https://example.com/not-a-did");
+    claims["vc"]["credentialSubject"]["id"] = json!("https://example.com/not-a-did");
+    assert!(matches!(
+        read(&claims),
+        Err(DomainLinkageError::SubjectNotDid(Some(id))) if id == "https://example.com/not-a-did"
+    ));
+
+    // An empty configuration has nothing to renew.
+    assert_eq!(DomainLinkageConfiguration::new().earliest_expiry(), None);
 }

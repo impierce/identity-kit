@@ -3,6 +3,7 @@
 use core::fmt;
 use std::error::Error;
 
+use crate::cause::cause;
 use crate::did::{DidDocument, DocumentError};
 use crate::jose::Jwk;
 
@@ -118,17 +119,25 @@ pub enum ProduceError {
         actual: usize,
     },
     /// A key the method cannot represent: a private key, an unsupported key type, a malformed
-    /// JWK.
-    #[error("key {index} cannot be used: {reason}")]
+    /// JWK. The source is the error that says why, when there is one.
+    #[error("key {index} cannot be used: {reason}{}", cause(.source.as_ref()))]
     UnsupportedKey {
         /// The position of the key in the `keys` slice.
         index: usize,
         /// Why.
         reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
     },
-    /// The method-specific parameters are invalid.
-    #[error("invalid parameters: {0}")]
-    InvalidParams(String),
+    /// The method-specific parameters are invalid. The source is the error that says why, when
+    /// there is one.
+    #[error("invalid parameters: {reason}{}", cause(.source.as_ref()))]
+    InvalidParams {
+        /// What is wrong with them.
+        reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync>>,
+    },
     /// The document could not be assembled.
     #[error(transparent)]
     Document(#[from] DocumentError),
@@ -138,6 +147,23 @@ pub enum ProduceError {
 }
 
 impl ProduceError {
+    /// [`ProduceError::UnsupportedKey`] for the key at `index`, without an underlying error.
+    pub fn unsupported_key(index: usize, reason: impl Into<String>) -> Self {
+        Self::UnsupportedKey {
+            index,
+            reason: reason.into(),
+            source: None,
+        }
+    }
+
+    /// [`ProduceError::InvalidParams`] without an underlying error.
+    pub fn invalid_params(reason: impl Into<String>) -> Self {
+        Self::InvalidParams {
+            reason: reason.into(),
+            source: None,
+        }
+    }
+
     /// [`ProduceError::Backend`] wrapping `error`.
     pub fn backend(error: impl Error + Send + Sync + 'static) -> Self {
         Self::Backend(Box::new(error))

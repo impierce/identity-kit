@@ -10,11 +10,12 @@ use serde_json::{Map, Value};
 
 use super::{
     ClaimPath, Disclosure, HashAlgorithm, KeyBinding, PathComponent, Processed, SdJwt,
-    SdJwtBuilder, SdJwtError, Status,
+    SdJwtBuilder, SdJwtError,
 };
 use crate::did::DidUrl;
 use crate::jose::{Jwk, JwsHeader, Signer};
 use crate::resolver::{KeyReference, KeyReferenceError};
+use crate::status_list::Status;
 use crate::vc::JwtClaims;
 
 /// The `typ` of the issuer-signed JWT of an SD-JWT VC, `dc+sd-jwt`.

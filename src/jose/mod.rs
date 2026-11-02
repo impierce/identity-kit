@@ -21,7 +21,8 @@
 //!   lower half of the group order.
 //! - [`JwtClaims`] is a JWT claims set (RFC 7519): the registered claims as fields, `aud` as a
 //!   [`OneOrMany`], times as `NumericDate` seconds, every other claim kept in order.
-//!   [`CompactJws::claims`] reads a payload as one, unverified.
+//!   [`CompactJws::claims`] reads a payload as one, unverified; `JwtValidator` of
+//!   [`resolver`](crate::resolver) validates one, its signer's key resolved by a `KeyResolver`.
 //!
 //! JWE is out of scope.
 //!
@@ -45,7 +46,7 @@ mod verifier;
 
 pub use algorithm::{JwsAlgorithm, UnknownAlgorithm};
 pub use claims::JwtClaims;
-#[cfg(feature = "sd-jwt")]
+#[cfg(feature = "status-list")]
 pub(crate) use claims::numeric_date;
 pub use compact::{CompactJws, JwsHeader, Signer, encode_compact};
 pub use ecdsa::{ecdsa_signature_from_der, normalize_ecdsa_signature};

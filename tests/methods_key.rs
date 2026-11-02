@@ -345,10 +345,27 @@ async fn rsa_key_too_long_for_a_did() {
             max: DidKey::MAX_DID_LEN
         })
     );
+    let error = method
+        .produce(std::slice::from_ref(&too_long), ())
+        .await
+        .unwrap_err();
     assert!(matches!(
-        method.produce(std::slice::from_ref(&too_long), ()).await,
-        Err(ProduceError::UnsupportedKey { index: 0, .. })
+        error,
+        ProduceError::UnsupportedKey { index: 0, .. }
     ));
+    // The `DidKeyError` stays the source, and its message the end of the error's.
+    assert_eq!(
+        error.source().and_then(|e| e.downcast_ref::<DidKeyError>()),
+        Some(&DidKeyError::TooLong {
+            max: DidKey::MAX_DID_LEN
+        })
+    );
+    assert!(
+        error
+            .to_string()
+            .starts_with("key 0 cannot be used: it has no `did:key`: "),
+        "{error}"
+    );
     // The bare DID still parses, but its document would not fit a DID URL.
     let bare = did(&format!("did:key:{}", too_long.to_multikey().unwrap()));
     assert_eq!(

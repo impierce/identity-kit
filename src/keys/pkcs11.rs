@@ -4,7 +4,7 @@ use core::fmt;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
 use cryptoki::error::{Error as CryptokiError, RvError};
@@ -307,8 +307,9 @@ struct Inner {
     key_pair_generation: Vec<MechanismType>,
     write_protected: bool,
     pool: Pool,
-    /// Held while this store generates or deletes a key; see [`TOKEN_WRITES`].
-    writes: Arc<Mutex<()>>,
+    /// Held exclusively while this store generates or deletes a key, and shared by its other
+    /// uses of the token; see [`TOKEN_WRITES`].
+    writes: Arc<RwLock<()>>,
 }
 
 /// The logged-in sessions.
@@ -498,7 +499,7 @@ impl KeyStore for Pkcs11KeyStore {
 
     async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError> {
         let key = key.clone();
-        self.blocking(move |inner| inner.with_session(|session| inner.public_jwk(session, &key)))
+        self.blocking(move |inner| inner.reading(|session| inner.public_jwk(session, &key)))
             .await
     }
 
@@ -510,18 +511,15 @@ impl KeyStore for Pkcs11KeyStore {
     ) -> Result<Vec<u8>, KeyStoreError> {
         let key = key.clone();
         let data = data.to_vec();
-        self.blocking(move |inner| {
-            inner.with_session(|session| inner.sign(session, &key, alg, &data))
-        })
-        .await
+        self.blocking(move |inner| inner.reading(|session| inner.sign(session, &key, alg, &data)))
+            .await
     }
 
     async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError> {
         let key = key.clone();
         self.blocking(move |inner| {
-            inner.with_session(|session| {
-                Ok(find_key(session, ObjectClass::PRIVATE_KEY, &key)?.is_some())
-            })
+            inner
+                .reading(|session| Ok(find_key(session, ObjectClass::PRIVATE_KEY, &key)?.is_some()))
         })
         .await
     }
@@ -530,11 +528,8 @@ impl KeyStore for Pkcs11KeyStore {
         if self.inner.write_protected {
             return Err(KeyStoreError::Unsupported("generate"));
         }
-        self.blocking(move |inner| {
-            let _writing = inner.writes.lock().unwrap_or_else(PoisonError::into_inner);
-            inner.with_session(|session| inner.generate(session, &spec))
-        })
-        .await
+        self.blocking(move |inner| inner.writing(|session| inner.generate(session, &spec)))
+            .await
     }
 
     async fn delete(&self, key: &KeyId) -> Result<(), KeyStoreError> {
@@ -542,11 +537,8 @@ impl KeyStore for Pkcs11KeyStore {
             return Err(KeyStoreError::Unsupported("delete"));
         }
         let key = key.clone();
-        self.blocking(move |inner| {
-            let _writing = inner.writes.lock().unwrap_or_else(PoisonError::into_inner);
-            inner.with_session(|session| delete(session, &key))
-        })
-        .await
+        self.blocking(move |inner| inner.writing(|session| delete(session, &key)))
+            .await
     }
 }
 
@@ -571,6 +563,30 @@ impl Inner {
             }
         }
         Ok(session)
+    }
+
+    /// Runs `f` with a session, sharing the token's lock with the store's other reads; see
+    /// [`TOKEN_WRITES`]. The session comes first, so that a call waiting for one does not hold
+    /// the lock.
+    fn reading<T>(
+        &self,
+        f: impl FnOnce(&Session) -> Result<T, KeyStoreError>,
+    ) -> Result<T, KeyStoreError> {
+        self.with_session(|session| {
+            let _reading = self.writes.read().unwrap_or_else(PoisonError::into_inner);
+            f(session)
+        })
+    }
+
+    /// Runs `f` with a session, holding the token's lock alone; see [`TOKEN_WRITES`].
+    fn writing<T>(
+        &self,
+        f: impl FnOnce(&Session) -> Result<T, KeyStoreError>,
+    ) -> Result<T, KeyStoreError> {
+        self.with_session(|session| {
+            let _writing = self.writes.write().unwrap_or_else(PoisonError::into_inner);
+            f(session)
+        })
     }
 
     /// Runs `f` with a session from the pool, opening one if none is idle and fewer than the
@@ -610,10 +626,10 @@ impl Inner {
         let Some(public) = find_key(session, ObjectClass::PUBLIC_KEY, key)? else {
             return Err(
                 if find_key(session, ObjectClass::PRIVATE_KEY, key)?.is_some() {
-                    KeyStoreError::InvalidKey {
-                        key: key.clone(),
-                        reason: "the token has no public key object with this label".to_owned(),
-                    }
+                    KeyStoreError::invalid_key(
+                        key.clone(),
+                        "the token has no public key object with this label",
+                    )
                 } else {
                     KeyStoreError::NotFound(key.clone())
                 },
@@ -630,9 +646,11 @@ impl Inner {
         public: ObjectHandle,
     ) -> Result<Jwk, KeyStoreError> {
         let kind = key_kind(session, key, public)?;
-        let invalid = |reason: String| KeyStoreError::InvalidKey {
+        let invalid = |reason: &str| KeyStoreError::invalid_key(key.clone(), reason);
+        let not_a_jwk = |error: crate::jose::JwkError| KeyStoreError::InvalidKey {
             key: key.clone(),
-            reason,
+            reason: "the public key does not convert to a JWK".to_owned(),
+            source: Some(Box::new(error)),
         };
         let jwk = match kind {
             KeyKind::Rsa => {
@@ -653,29 +671,21 @@ impl Inner {
                 }
                 let (Some(n), Some(e)) = (modulus, exponent) else {
                     return Err(invalid(
-                        "the public key object has no modulus or public exponent".to_owned(),
+                        "the public key object has no modulus or public exponent",
                     ));
                 };
-                Jwk::from_rsa_public(&n, &e).map_err(|e| invalid(e.to_string()))?
+                Jwk::from_rsa_public(&n, &e).map_err(not_a_jwk)?
             }
             KeyKind::Ed25519 | KeyKind::P256 | KeyKind::Secp256k1 => {
                 let point = ec_point(session, key, public, kind)?;
                 match kind {
-                    KeyKind::Ed25519 => {
-                        Jwk::from_ed25519_public(&point).map_err(|e| invalid(e.to_string()))?
-                    }
-                    KeyKind::P256 => {
-                        Jwk::from_p256_public(&point).map_err(|e| invalid(e.to_string()))?
-                    }
+                    KeyKind::Ed25519 => Jwk::from_ed25519_public(&point).map_err(not_a_jwk)?,
+                    KeyKind::P256 => Jwk::from_p256_public(&point).map_err(not_a_jwk)?,
                     #[cfg(feature = "secp256k1")]
-                    KeyKind::Secp256k1 => {
-                        Jwk::from_secp256k1_public(&point).map_err(|e| invalid(e.to_string()))?
-                    }
+                    KeyKind::Secp256k1 => Jwk::from_secp256k1_public(&point).map_err(not_a_jwk)?,
                     #[cfg(not(feature = "secp256k1"))]
                     KeyKind::Secp256k1 => {
-                        return Err(invalid(
-                            "secp256k1 keys need the `secp256k1` feature".to_owned(),
-                        ));
+                        return Err(invalid("secp256k1 keys need the `secp256k1` feature"));
                     }
                     KeyKind::Rsa => unreachable!("matched above"),
                 }
@@ -862,7 +872,8 @@ impl Inner {
                 jwk.thumbprint_sha256()
                     .map_err(|e| KeyStoreError::InvalidKey {
                         key: KeyId::new(""),
-                        reason: e.to_string(),
+                        reason: "no RFC 7638 thumbprint".to_owned(),
+                        source: Some(Box::new(e)),
                     })
             })
             .and_then(|thumbprint| {
@@ -935,19 +946,24 @@ impl Pool {
 /// ends; a store on a module loaded already shares the context.
 static MODULES: Mutex<Vec<(PathBuf, Pkcs11)>> = Mutex::new(Vec::new());
 
-/// One lock per token of the process, held while a key is generated or deleted.
+/// One lock per token of the process: held alone while a key is generated or deleted, and
+/// shared by every other use of the token's objects.
 ///
 /// Generation and deletion are provisioning, not the signing path, and serializing them
-/// process-wide costs nothing there; SoftHSM2's file object store fails
+/// process-wide costs little there: signing and lookups only wait while a key is being
+/// created or destroyed, and never for each other. SoftHSM2's file object store fails
 /// (`CKR_GENERAL_ERROR`) when objects are created and destroyed from several sessions at
-/// once, which would otherwise make it unusable for tests that provision in parallel.
+/// once, and also when one session searches the token while another creates an object: the
+/// search rereads the token directory, finds the new object's file still empty and marks the
+/// object invalid, so the session creating it cannot set its attributes. Without the lock it
+/// would be unusable for tests that provision in parallel.
 static TOKEN_WRITES: Mutex<Vec<TokenWriteLock>> = Mutex::new(Vec::new());
 
 /// A token, as (canonical module path, slot id), and its write lock.
-type TokenWriteLock = ((PathBuf, u64), Arc<Mutex<()>>);
+type TokenWriteLock = ((PathBuf, u64), Arc<RwLock<()>>);
 
 /// The write lock of the token in `slot` of the module at `module` (canonical path).
-fn token_writes(module: &Path, slot: u64) -> Arc<Mutex<()>> {
+fn token_writes(module: &Path, slot: u64) -> Arc<RwLock<()>> {
     let key = (
         std::fs::canonicalize(module).unwrap_or_else(|_| module.to_path_buf()),
         slot,
@@ -956,7 +972,7 @@ fn token_writes(module: &Path, slot: u64) -> Arc<Mutex<()>> {
     if let Some((_, lock)) = locks.iter().find(|(k, _)| *k == key) {
         return Arc::clone(lock);
     }
-    let lock = Arc::new(Mutex::new(()));
+    let lock = Arc::new(RwLock::new(()));
     locks.push((key, Arc::clone(&lock)));
     lock
 }
@@ -1040,13 +1056,13 @@ fn find_key(
     match objects.as_slice() {
         [] => Ok(None),
         [object] => Ok(Some(*object)),
-        several => Err(KeyStoreError::InvalidKey {
-            key: key.clone(),
-            reason: format!(
+        several => Err(KeyStoreError::invalid_key(
+            key.clone(),
+            format!(
                 "the label names {} objects of the same class",
                 several.len()
             ),
-        }),
+        )),
     }
 }
 
@@ -1111,10 +1127,7 @@ fn key_kind(
             _ => {}
         }
     }
-    let invalid = |reason: &str| KeyStoreError::InvalidKey {
-        key: key.clone(),
-        reason: reason.to_owned(),
-    };
+    let invalid = |reason: &str| KeyStoreError::invalid_key(key.clone(), reason);
     match key_type {
         Some(CkKeyType::RSA) => Ok(KeyKind::Rsa),
         Some(CkKeyType::EC) => match params.as_deref() {
@@ -1145,10 +1158,7 @@ fn ec_point(
     let attributes = session
         .get_attributes(object, &[AttributeType::EcPoint])
         .map_err(Pkcs11Error::call("C_GetAttributeValue"))?;
-    let invalid = |reason: &str| KeyStoreError::InvalidKey {
-        key: key.clone(),
-        reason: reason.to_owned(),
-    };
+    let invalid = |reason: &str| KeyStoreError::invalid_key(key.clone(), reason);
     let Some(Attribute::EcPoint(encoded)) = attributes.into_iter().next() else {
         return Err(invalid("the public key object has no CKA_EC_POINT"));
     };

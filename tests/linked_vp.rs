@@ -14,11 +14,9 @@
 
 mod common;
 
-use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use chrono::{DateTime, TimeZone as _, Utc};
+use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{
     Context, Did, DidDocument, DidUrl, ResolutionError, ResolutionErrorKind, ResolutionOptions,
     ResolutionResult, Service, ServiceEndpoint, Uri,
@@ -29,7 +27,6 @@ use identity_kit::linked_vp::{
     LinkedVpValidationOptions, LinkedVpValidator, PRESENTATION_TYP, SERVICE_TYPE, decode, service,
     services,
 };
-use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::{CompositeKeyResolver, DidResolver, JwkResolver, Resolver};
 use identity_kit::vc::validation::{
@@ -42,6 +39,8 @@ use serde_json::{Value, json};
 use url::Url;
 
 use common::Ed25519Signer;
+use common::fixtures::{self, Party, now};
+use common::http::Web;
 
 const EXAMPLE_DID: &str = "did:example:123";
 const EXAMPLE_KID: &str = "did:example:123#_Qq0UL2Fq651Q0Fjd6TvnYE-faHiOpRlPVQcY_-tA4A";
@@ -79,12 +78,8 @@ fn url(s: &str) -> Url {
     Url::parse(s).unwrap()
 }
 
-/// Inside the validity of the example (2024-02-08 to 2029-02-08) and of the presentations built
-/// here (2024-01-01 to 2026-01-01).
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
-}
-
+/// At [`now`], inside the validity of the example (2024-02-08 to 2029-02-08) and of the
+/// presentations built here (2024-01-01 to 2026-01-01).
 fn options() -> LinkedVpValidationOptions {
     LinkedVpValidationOptions::new()
         .with_time(TimeOptions::at(now()))
@@ -145,41 +140,6 @@ impl DidResolver for Documents {
             .cloned()
             .map(ResolutionResult::new)
             .ok_or(ResolutionErrorKind::NotFound.into())
-    }
-}
-
-/// A web serving fixed responses, recording what was fetched.
-#[derive(Default)]
-struct Web {
-    pages: HashMap<String, Result<(u16, Vec<u8>), String>>,
-    fetched: Mutex<Vec<String>>,
-}
-
-impl Web {
-    fn serving(mut self, url: &str, status: u16, body: impl Into<Vec<u8>>) -> Self {
-        self.pages.insert(url.to_owned(), Ok((status, body.into())));
-        self
-    }
-
-    fn failing(mut self, url: &str, message: &str) -> Self {
-        self.pages.insert(url.to_owned(), Err(message.to_owned()));
-        self
-    }
-
-    fn fetched(&self) -> Vec<String> {
-        self.fetched.lock().unwrap().clone()
-    }
-}
-
-#[async_trait::async_trait]
-impl HttpClient for Web {
-    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
-        self.fetched.lock().unwrap().push(url.to_string());
-        match self.pages.get(url.as_str()) {
-            Some(Ok((status, body))) => Ok(HttpResponse::new(*status, body.clone())),
-            Some(Err(message)) => Err(HttpError::msg(message)),
-            None => Ok(HttpResponse::new(404, Vec::new())),
-        }
     }
 }
 
@@ -286,7 +246,7 @@ fn example_jwt_decodes() {
     assert!(decoded.claims.aud.is_none());
     assert!(!decoded.claims.additional.contains_key("nonce"));
 
-    let [credential] = decoded.credentials.as_slice() else {
+    let [Ok(credential)] = decoded.credentials.as_slice() else {
         panic!("one credential");
     };
     assert_eq!(
@@ -482,19 +442,13 @@ async fn top_level_payload_is_not_a_vcdm_jwt() {
     ));
 }
 
-// Presentations built here, by the RFC 8037 key behind a `did:key`.
+// Presentations built here, by the RFC 8037 key behind a `did:key`: the shared issuer, here
+// holding.
 
-struct Holder {
-    signer: Ed25519Signer,
-    did: Did,
-    kid: DidUrl,
-}
+type Holder = Party<Ed25519Signer>;
 
 fn holder() -> Holder {
-    let signer = Ed25519Signer::rfc8037();
-    let did = DidKey::did(&signer.public_jwk()).unwrap();
-    let kid = did.join(&format!("#{}", did.method_specific_id())).unwrap();
-    Holder { signer, did, kid }
+    fixtures::issuer()
 }
 
 fn did_key_validator() -> LinkedVpValidator<Resolver> {
@@ -904,10 +858,15 @@ fn service_entries() {
     // WHATWG leaves `|` unescaped in a path, which RFC 3986 does not allow in a URI.
     let piped = url("https://holder.example/a|b");
     assert_eq!(piped.as_str(), "https://holder.example/a|b");
-    assert!(matches!(
-        service(id.clone(), [piped]),
-        Err(LinkedVpError::InvalidService { reason, .. }) if reason.contains("is not a URI")
-    ));
+    let error = service(id.clone(), [piped]).unwrap_err();
+    assert!(
+        matches!(&error, LinkedVpError::InvalidService { reason, .. } if reason.contains("is not a URI"))
+    );
+    assert!(
+        std::error::Error::source(&error)
+            .unwrap()
+            .is::<identity_kit::did::DidError>()
+    );
 
     let mut document = DidDocument::new(Did::parse(EXAMPLE_DID).unwrap());
     document.insert_service(two).unwrap();
@@ -961,7 +920,9 @@ async fn urls_past_the_limit_are_reported_without_fetching() {
         ]
     }))
     .unwrap();
-    let web = Web::default().serving(EXAMPLE_URL, 200, vector("jwt"));
+    let web = Web::default()
+        .serving(EXAMPLE_URL, 200, vector("jwt"))
+        .serving(PUBLISHED_URL, 404, "");
     let client = client(web, example_validator());
     assert_eq!(client.max_urls(), 32);
     let client = client.with_max_urls(2);
@@ -985,6 +946,101 @@ async fn urls_past_the_limit_are_reported_without_fetching() {
     assert_eq!(client.http().fetched(), [EXAMPLE_URL, PUBLISHED_URL]);
 }
 
+#[tokio::test]
+async fn an_endpoint_uri_that_is_not_a_url_fails_alone() {
+    // A valid URI whose port is out of range, so not a URL.
+    let out_of_range = "https://example.org:99999/vp";
+    let document: DidDocument = serde_json::from_value(json!({
+        "id": EXAMPLE_DID,
+        "service": [
+            { "id": "did:example:123#vps", "type": SERVICE_TYPE, "serviceEndpoint": [out_of_range, EXAMPLE_URL] },
+            { "id": "did:example:123#map", "type": SERVICE_TYPE, "serviceEndpoint": { "origins": [EXAMPLE_URL] } }
+        ]
+    }))
+    .unwrap();
+    let linked: Vec<_> = services(&document).collect();
+    let vps = linked[0].as_ref().unwrap();
+    assert_eq!(vps.urls, [url(EXAMPLE_URL)]);
+    assert_eq!(
+        vps.invalid_urls,
+        [(
+            Uri::parse(out_of_range).unwrap(),
+            url::ParseError::InvalidPort
+        )]
+    );
+    // A map endpoint names no URL, so the service still fails as a whole.
+    assert!(
+        matches!(&linked[1], Err(LinkedVpError::InvalidService { id, .. }) if id.as_str() == "did:example:123#map")
+    );
+
+    let web = Web::default().serving(EXAMPLE_URL, 200, vector("jwt"));
+    let client = client(web, example_validator());
+    let reports = client.validate_document(&document, &options()).await;
+    assert_eq!(reports.len(), 3);
+    assert!(reports[0].url.is_none());
+    assert!(matches!(
+        &reports[0].result,
+        Err(LinkedVpError::InvalidService { id, reason, .. })
+            if id.as_str() == "did:example:123#vps" && reason.contains(out_of_range)
+    ));
+    assert_eq!(reports[1].url.as_ref(), Some(&url(EXAMPLE_URL)));
+    assert!(reports[1].result.is_ok());
+    assert!(matches!(
+        reports[2].result,
+        Err(LinkedVpError::InvalidService { .. })
+    ));
+    assert_eq!(client.http().fetched(), [EXAMPLE_URL]);
+}
+
+#[tokio::test]
+async fn a_credential_entry_that_is_not_a_jwt_fails_alone() {
+    let holder = holder();
+    let mut claims = builder(&holder)
+        .with_credential(credential(&holder, &holder.did).await)
+        .jwt_claims()
+        .unwrap();
+    let entries = claims.additional["vp"]["verifiableCredential"]
+        .as_array_mut()
+        .unwrap();
+    entries.push(json!("not-a-jwt"));
+    entries.push(json!(42));
+    let jwt = sign(&holder, &claims, None).await;
+
+    let decoded = decode(&jwt).unwrap();
+    assert_eq!(decoded.holder(), Some(&Uri::from(holder.did.clone())));
+    assert_eq!(decoded.presentation.verifiable_credential.len(), 1);
+    let [Ok(valid), Err(not_a_jwt), Err(not_a_string)] = decoded.credentials.as_slice() else {
+        panic!("one result per entry: {:?}", decoded.credentials);
+    };
+    assert_eq!(valid.credential.issuer.id(), &Uri::from(holder.did.clone()));
+    assert!(matches!(not_a_jwt, ValidationError::Jws(_)));
+    assert!(matches!(
+        not_a_string,
+        ValidationError::Credential(CredentialError::InvalidClaim { claim: "vp", .. })
+    ));
+
+    // The holder signed the entries, so the presentation verifies; the entries fail alone.
+    let error = did_key_validator()
+        .validate(
+            &jwt,
+            &holder.did,
+            &options().with_fail_fast(FailFast::AllErrors),
+        )
+        .await
+        .unwrap_err();
+    let errors = credential_errors(error);
+    assert_eq!(
+        errors.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert!(matches!(errors[0].1, ValidationError::Jws(_)));
+    let error = did_key_validator()
+        .validate(&jwt, &holder.did, &options())
+        .await
+        .unwrap_err();
+    assert_eq!(credential_errors(error).len(), 1);
+}
+
 // Fetching.
 
 #[tokio::test]
@@ -994,7 +1050,8 @@ async fn fetch_failures() {
         .failing("https://holder.example/refused", "connection refused")
         .serving("https://holder.example/binary", 200, vec![0xff, 0xfe])
         .serving("https://holder.example/text", 200, "not a token")
-        .serving("https://holder.example/empty", 200, "  \n");
+        .serving("https://holder.example/empty", 200, "  \n")
+        .serving("https://holder.example/missing", 404, "");
     let client = client(web, example_validator());
     assert!(matches!(
         client.fetch(&url("https://holder.example/gone")).await,
@@ -1015,10 +1072,18 @@ async fn fetch_failures() {
     );
     for path in ["binary", "text", "empty"] {
         let target = url(&format!("https://holder.example/{path}"));
+        let error = client.fetch(&target).await.unwrap_err();
         assert!(
-            matches!(client.fetch(&target).await, Err(LinkedVpError::InvalidBody { url, .. }) if url == target),
+            matches!(&error, LinkedVpError::InvalidBody { url, .. } if *url == target),
             "{path}"
         );
+        // The UTF-8 error of a binary body, the `JwsError` of a text that is not a JWS.
+        let source = std::error::Error::source(&error).unwrap();
+        if path == "binary" {
+            assert!(source.is::<core::str::Utf8Error>(), "{error}");
+        } else {
+            assert!(source.is::<identity_kit::jose::JwsError>(), "{error}");
+        }
     }
     // Plain HTTP and other schemes are refused without a request.
     for refused in ["http://holder.example/vp.jwt", IPFS_URL] {

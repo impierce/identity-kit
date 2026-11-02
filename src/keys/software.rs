@@ -145,19 +145,18 @@ impl SoftwareKeyStore {
         let set: JwkSet =
             serde_json::from_slice(&data).map_err(|e| KeyStoreError::InvalidKeySet {
                 path: path.clone(),
-                reason: e.to_string(),
+                reason: "not a JWK set".to_owned(),
+                source: Some(Box::new(e)),
             })?;
         let mut keys = IndexMap::with_capacity(set.keys.len());
         for jwk in set.keys {
             let (id, entry) =
-                Entry::from_jwk(jwk).map_err(|reason| KeyStoreError::InvalidKeySet {
-                    path: path.clone(),
-                    reason,
-                })?;
+                Entry::from_jwk(jwk).map_err(|unusable| unusable.for_key_set(path.clone()))?;
             if keys.insert(id.clone(), entry).is_some() {
                 return Err(KeyStoreError::InvalidKeySet {
                     path,
                     reason: format!("key `{id}` is defined twice"),
+                    source: None,
                 });
             }
         }
@@ -217,8 +216,7 @@ impl SoftwareKeyStore {
     /// the file cannot be written.
     pub fn import(&self, jwk: Jwk) -> Result<KeyId, KeyStoreError> {
         let key = KeyId::new(jwk.kid().unwrap_or_default());
-        let (id, entry) =
-            Entry::from_jwk(jwk).map_err(|reason| KeyStoreError::InvalidKey { key, reason })?;
+        let (id, entry) = Entry::from_jwk(jwk).map_err(|unusable| unusable.for_key(key))?;
         self.insert(id, entry)
     }
 

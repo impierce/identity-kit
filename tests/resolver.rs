@@ -12,6 +12,7 @@
 )]
 
 use std::collections::HashMap;
+use std::error::Error as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -308,15 +309,16 @@ impl DidProducer for ExampleProducer {
         if keys.is_empty() {
             return Err(ProduceError::NoKeys);
         }
-        let did = Did::parse(&format!("did:example:{params}"))
-            .map_err(|e| ProduceError::InvalidParams(e.to_string()))?;
+        let did = Did::parse(&format!("did:example:{params}")).map_err(|e| {
+            ProduceError::InvalidParams {
+                reason: "not a method-specific id".to_owned(),
+                source: Some(Box::new(e)),
+            }
+        })?;
         let mut builder = DidDocument::builder(did.clone());
         for (index, key) in keys.iter().enumerate() {
             if key.is_private() {
-                return Err(ProduceError::UnsupportedKey {
-                    index,
-                    reason: "private key".to_owned(),
-                });
+                return Err(ProduceError::unsupported_key(index, "private key"));
             }
             let method = VerificationMethod::new(
                 did.join(&format!("#key-{index}")).unwrap(),
@@ -1231,8 +1233,13 @@ async fn producer_makes_documents_the_resolver_serves() {
         .produce(&keys, "not valid".to_owned())
         .await
         .unwrap_err();
-    assert!(matches!(error, ProduceError::InvalidParams(_)));
-    assert!(error.to_string().starts_with("invalid parameters: "));
+    assert!(matches!(error, ProduceError::InvalidParams { .. }));
+    assert!(
+        error
+            .to_string()
+            .starts_with("invalid parameters: not a method-specific id: ")
+    );
+    assert!(error.source().unwrap().is::<identity_kit::did::DidError>());
 }
 
 #[test]
@@ -1263,8 +1270,13 @@ fn capabilities_and_error_messages() {
         "at most 1 key(s) can be used, got 2"
     );
     assert_eq!(
-        ProduceError::InvalidParams("no origin".to_owned()).to_string(),
+        ProduceError::invalid_params("no origin").to_string(),
         "invalid parameters: no origin"
+    );
+    assert!(
+        ProduceError::unsupported_key(0, "private key")
+            .source()
+            .is_none()
     );
     let backend = ProduceError::backend(std::io::Error::other("ledger down"));
     assert_eq!(backend.to_string(), "backend error: ledger down");

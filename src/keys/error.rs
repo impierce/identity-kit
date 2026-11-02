@@ -4,6 +4,7 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use super::KeyId;
+use crate::cause::cause;
 use crate::jose::{JwsAlgorithm, KeyType};
 
 /// Why a [`KeyStore`](super::KeyStore) operation failed.
@@ -50,13 +51,17 @@ pub enum KeyStoreError {
         alg: JwsAlgorithm,
     },
     /// The key exists but its material cannot be used: it does not decode, the public part does
-    /// not match the private part, the type is unknown, and so on.
-    #[error("key `{key}` is unusable: {reason}")]
+    /// not match the private part, the type is unknown, and so on. The source is the error that
+    /// says why, when there is one: the [`JwkError`](crate::jose::JwkError) of a public key that
+    /// does not convert to a JWK, the error of a private scalar out of range.
+    #[error("key `{key}` is unusable: {reason}{}", cause(.source.as_ref()))]
     InvalidKey {
         /// The key.
         key: KeyId,
         /// What is wrong with it.
         reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync + 'static>>,
     },
     /// Reading or writing the key store file failed.
     #[error("key store file `{}`: {source}", path.display())]
@@ -78,13 +83,20 @@ pub enum KeyStoreError {
         /// Its permission bits.
         mode: u32,
     },
-    /// The key store file is not a usable JWK set.
-    #[error("key store file `{}` is not a usable JWK set: {reason}", path.display())]
+    /// The key store file is not a usable JWK set. The source is the JSON error, or the error
+    /// that makes one of its keys unusable, when there is one.
+    #[error(
+        "key store file `{}` is not a usable JWK set: {reason}{}",
+        path.display(),
+        cause(.source.as_ref())
+    )]
     InvalidKeySet {
         /// The file.
         path: PathBuf,
         /// What is wrong with it.
         reason: String,
+        /// The underlying error.
+        source: Option<Box<dyn Error + Send + Sync + 'static>>,
     },
     /// An error of a remote backend (an HSM, a cloud service).
     #[error("key store backend error: {0}")]
@@ -92,6 +104,15 @@ pub enum KeyStoreError {
 }
 
 impl KeyStoreError {
+    /// [`KeyStoreError::InvalidKey`] for `key`, without an underlying error.
+    pub fn invalid_key(key: KeyId, reason: impl Into<String>) -> Self {
+        Self::InvalidKey {
+            key,
+            reason: reason.into(),
+            source: None,
+        }
+    }
+
     /// Wraps a backend's own error as [`KeyStoreError::Backend`].
     pub fn backend<E: Error + Send + Sync + 'static>(error: E) -> Self {
         Self::Backend(Box::new(error))
