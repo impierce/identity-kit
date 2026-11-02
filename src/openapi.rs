@@ -2,8 +2,8 @@
 //! [`DidDocument`], [`VerificationMethod`], [`MethodRef`], [`Service`], [`Jwk`],
 //! [`JwsAlgorithm`], `DomainLinkageConfiguration`, the credentials and presentations of `vc`
 //! (`Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`,
-//! `EnvelopedVp`), `ClaimPath`, `TypeMetadata` with its display and claim metadata, and
-//! `StatusType`.
+//! `EnvelopedVp`), `ClaimPath`, `Jwt`, `SdJwt`, `TypeMetadata` with its display and claim
+//! metadata, and `StatusType`.
 //!
 //! The schemas are written by hand rather than derived: every type carries open extension
 //! properties and custom serialization that a derive cannot express. Each schema describes the
@@ -862,6 +862,57 @@ mod claim_path {
     impl ToSchema for ClaimPath {
         fn name() -> Cow<'static, str> {
             Cow::Borrowed("ClaimPath")
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// JWTs and SD-JWTs in compact serialization
+// ---------------------------------------------------------------------------------------------
+
+#[cfg(feature = "vc")]
+mod compact {
+    use super::{Cow, PartialSchema, RefOr, Schema, ToSchema, string};
+    use crate::vc::Jwt;
+
+    /// A compact JWS (RFC 7515 §7.1): a non-empty base64url header, then the payload and the
+    /// signature, each base64url and separated by `.`.
+    const JWS: &str = r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*";
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl PartialSchema for Jwt {
+        fn schema() -> RefOr<Schema> {
+            string("A JWT (RFC 7519) in JWS compact serialization.")
+                .pattern(Some(format!("^{JWS}$")))
+                .into()
+        }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "vc"))))]
+    impl ToSchema for Jwt {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("Jwt")
+        }
+    }
+
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]
+    impl PartialSchema for crate::sd_jwt_vc::SdJwt {
+        fn schema() -> RefOr<Schema> {
+            string(
+                "An SD-JWT (RFC 9901 §4) in compact serialization: the issuer-signed JWT, each \
+                 disclosure followed by `~`, then an optional key binding JWT.",
+            )
+            .pattern(Some(format!("^{JWS}~([A-Za-z0-9_-]+~)*({JWS})?$")))
+            .into()
+        }
+    }
+
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "utoipa", feature = "sd-jwt"))))]
+    impl ToSchema for crate::sd_jwt_vc::SdJwt {
+        fn name() -> Cow<'static, str> {
+            Cow::Borrowed("SdJwt")
         }
     }
 }
