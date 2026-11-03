@@ -13,9 +13,17 @@ use url::Url;
 pub(crate) struct Web {
     routes: HashMap<String, Result<HttpResponse, String>>,
     requests: Mutex<Vec<(String, Option<String>)>>,
+    plain_http: bool,
 }
 
 impl Web {
+    /// This client [allowing plain `http`](HttpClient::allows_plain_http) for every URL, as a
+    /// client for local development does.
+    pub(crate) fn allowing_plain_http(mut self) -> Self {
+        self.plain_http = true;
+        self
+    }
+
     /// Serves `response` at `url`.
     pub(crate) fn with(mut self, url: &str, response: HttpResponse) -> Self {
         self.routes.insert(url.to_owned(), Ok(response));
@@ -82,5 +90,25 @@ impl HttpClient for Web {
 
     async fn get_accepting(&self, url: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
         self.respond(url, Some(media_type))
+    }
+
+    fn allows_plain_http(&self, _: &Url) -> bool {
+        self.plain_http
+    }
+}
+
+/// `Web` behind a client that implements only the fetches, keeping the trait's default for
+/// everything else: no plain `http`.
+#[derive(Debug)]
+pub(crate) struct DefaultPolicy<'a>(pub(crate) &'a Web);
+
+#[async_trait::async_trait]
+impl HttpClient for DefaultPolicy<'_> {
+    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
+        self.0.get(url).await
+    }
+
+    async fn get_accepting(&self, url: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
+        self.0.get_accepting(url, media_type).await
     }
 }

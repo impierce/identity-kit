@@ -106,7 +106,7 @@ use url::Url;
 use crate::cause::cause;
 use crate::did::{Did, DidDocument, DidUrl, ResolutionError, Service, ServiceEndpoint, Uri};
 use crate::jose::{DefaultVerifier, JwsHeader, JwsVerifier, Signer};
-use crate::methods::web::{HttpClient, HttpError};
+use crate::methods::web::{HttpClient, HttpError, fetchable};
 use crate::resolver::Resolver;
 use crate::vc::validation::{
     CredentialValidationOptions, DecodedCredential, JwtCredentialValidator, KeyReferenceError,
@@ -1081,7 +1081,8 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
 /// # Errors
 ///
 /// - [`DomainLinkageError::InvalidOrigin`] when `origin` has no host, and
-///   [`DomainLinkageError::InsecureOrigin`] when it is not `https`, both without fetching;
+///   [`DomainLinkageError::InsecureOrigin`] when it is not `https` and `http` does not
+///   [allow plain `http`](HttpClient::allows_plain_http) for it, both without fetching;
 /// - [`DomainLinkageError::NotPublished`] on `404` or `410`: the origin publishes no
 ///   configuration;
 /// - [`DomainLinkageError::Http`] when there is no response, and
@@ -1093,7 +1094,7 @@ pub async fn fetch_configuration<C: HttpClient + ?Sized>(
     origin: &Url,
 ) -> Result<DomainLinkageConfiguration, DomainLinkageError> {
     let url = configuration_url(origin)?;
-    if url.scheme() != "https" {
+    if !fetchable(http, &url) {
         return Err(DomainLinkageError::InsecureOrigin(
             url.origin().ascii_serialization(),
         ));

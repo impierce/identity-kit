@@ -11,7 +11,7 @@ use url::Url;
 
 use super::{KeyReference, KeyResolutionError, KeyResolver, KeyRole};
 use crate::jose::Jwk;
-use crate::methods::web::{HttpClient, HttpError};
+use crate::methods::web::{HttpClient, HttpError, fetchable};
 
 /// Resolves a [`KeyReference::Jwks`] through the JWT VC issuer metadata of the issuer (SD-JWT VC
 /// §3.5); every other reference is [`Unsupported`](KeyResolutionError::Unsupported).
@@ -20,7 +20,8 @@ use crate::methods::web::{HttpClient, HttpError};
 /// `https://host[:port]/.well-known/jwt-vc-issuer[/path]` (a trailing `/` of the path dropped),
 /// requires the metadata's `issuer` to be the issuer, takes its `jwks`, or fetches its
 /// `jwks_uri`, and returns the one key whose `kid` is the reference's. Issuer and `jwks_uri`
-/// must be `https`, and the issuer has no query, fragment or credentials. The key set of an
+/// must be `https`, unless the client [allows plain `http`](HttpClient::allows_plain_http) for
+/// them, and the issuer has no query, fragment or credentials. The key set of an
 /// issuer is cached for a time to live ([`DEFAULT_TTL`](Self::DEFAULT_TTL) unless set with
 /// [`with_ttl`](Self::with_ttl)), so a rotated key is found once its entry expires.
 ///
@@ -189,6 +190,9 @@ impl<C: HttpClient> JwksResolver<C> {
             return Ok(keys);
         }
         let url = metadata_url(issuer)?;
+        if !fetchable(&self.client, &url) {
+            return Err(JwksError::NotHttps(issuer.clone()));
+        }
         let metadata: Metadata = self.fetch_json(&url).await?;
         if Url::parse(&metadata.issuer).ok().as_ref() != Some(issuer) {
             return Err(JwksError::IssuerMismatch {
@@ -203,7 +207,7 @@ impl<C: HttpClient> JwksResolver<C> {
                     url: url.clone(),
                     reason: format!("`jwks_uri` {jwks_uri:?}: {e}"),
                 })?;
-                if jwks_uri.scheme() != "https" {
+                if !fetchable(&self.client, &jwks_uri) {
                     return Err(JwksError::NotHttps(jwks_uri));
                 }
                 self.fetch_json::<KeySet>(&jwks_uri).await?.keys
@@ -249,11 +253,9 @@ impl<C: HttpClient> JwksResolver<C> {
     }
 }
 
-/// `https://host[:port]/.well-known/jwt-vc-issuer[/path]` for `issuer`.
+/// `<scheme>://host[:port]/.well-known/jwt-vc-issuer[/path]` for `issuer`, whose scheme the
+/// caller checks on the result.
 fn metadata_url(issuer: &Url) -> Result<Url, JwksError> {
-    if issuer.scheme() != "https" {
-        return Err(JwksError::NotHttps(issuer.clone()));
-    }
     if issuer.query().is_some()
         || issuer.fragment().is_some()
         || issuer.host().is_none()

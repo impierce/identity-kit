@@ -3,7 +3,7 @@
 use url::Url;
 
 use crate::jose::{DefaultVerifier, JwsVerifier};
-use crate::methods::web::{HttpClient, HttpResponse};
+use crate::methods::web::{HttpClient, HttpResponse, fetchable};
 use crate::resolver::{KeyReference, KeyResolver, KeyRole};
 use crate::vc::Jwt;
 use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError, TimeOptions};
@@ -35,7 +35,8 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// A 301, 302, 303, 307 or 308 response is followed, as the draft recommends: its
 /// [`location`](HttpResponse::location) is resolved against the URL
 /// that returned it and fetched with a new request through the same client, so that every
-/// hop passes the client's checks. The check refuses a target that is not `https`, a URL
+/// hop passes the client's checks. The check refuses a target that is not `https` (unless the
+/// client [allows plain `http`](HttpClient::allows_plain_http) for it), a URL
 /// already visited (a loop), a redirect without a `Location`, and more than
 /// [`MAX_REDIRECTS`](Self::MAX_REDIRECTS) redirects.
 ///
@@ -109,7 +110,7 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusListCheck<C, R, V> {
                     Some(Box::new(e)),
                 )
             })?;
-            if next.scheme() != "https" {
+            if !fetchable(&self.client, &next) {
                 return Err(unavailable(
                     format!("redirect from {url} to {next}, which is not HTTPS"),
                     None,

@@ -1111,6 +1111,31 @@ mod local_network {
     }
 
     #[test]
+    fn plain_http_is_allowed_only_with_a_local_range() {
+        let target = url("http://127.0.0.1:8080/.well-known/did-configuration.json");
+        assert!(!ReqwestClient::new().unwrap().allows_plain_http(&target));
+        assert!(
+            !ReqwestClient::builder()
+                .build()
+                .unwrap()
+                .allows_plain_http(&target)
+        );
+        let private = ReqwestClient::builder()
+            .dangerous_allow_private_network()
+            .build()
+            .unwrap();
+        assert!(private.allows_plain_http(&target));
+        assert!(everything_local().allows_plain_http(&target));
+        // `&T`, `Box<T>` and `Arc<T>` forward it.
+        let client = loopback();
+        assert!(HttpClient::allows_plain_http(&&client, &target));
+        assert!(Box::new(client.clone()).allows_plain_http(&target));
+        let boxed: Box<dyn HttpClient> = Box::new(client.clone());
+        assert!(boxed.allows_plain_http(&target));
+        assert!(std::sync::Arc::new(client).allows_plain_http(&target));
+    }
+
+    #[test]
     fn local_ranges() {
         let none = LocalNetwork::NONE;
         let loopback = loopback().local_network();

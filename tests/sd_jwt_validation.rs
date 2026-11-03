@@ -1250,4 +1250,49 @@ mod status_list_check {
             assert_eq!(take_requests(&client).last(), Some(&at(last)), "{start}");
         }
     }
+
+    /// A client that allows plain `http`, as one for local development does, has a redirect
+    /// to `http` followed; any other scheme is still refused.
+    #[tokio::test]
+    async fn follows_a_redirect_to_http_when_the_client_allows_it() {
+        let issuer = issuer();
+        let plain = "http://localhost:8080/served/plain";
+        let client = std::sync::Arc::new(
+            Web::default()
+                .allowing_plain_http()
+                .redirect("https://example.com/plain", 302, plain)
+                .with(plain, token_for(&issuer, "https://example.com/plain").await)
+                .redirect(
+                    "https://example.com/ftp",
+                    302,
+                    "ftp://example.com/served/ftp",
+                ),
+        );
+        let check = StatusListCheck::new(
+            std::sync::Arc::clone(&client),
+            Resolver::builder().with(DidKey::default()).build(),
+            DefaultVerifier,
+        );
+        let run = |uri: &str| {
+            let status = Status::status_list(StatusListRef::new(uri, 0));
+            let check = &check;
+            async move {
+                check
+                    .check(
+                        CredentialStatus::StatusClaim(&status),
+                        TimeOptions::at(issued_at()),
+                    )
+                    .await
+            }
+        };
+        let result = run("https://example.com/plain").await;
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(take_requests(&client), ["https://example.com/plain", plain]);
+        let result = run("https://example.com/ftp").await;
+        assert!(
+            matches!(&result, Err(error @ StatusError::Unavailable { .. }) if error.to_string().contains("which is not HTTPS")),
+            "{result:?}"
+        );
+        assert_eq!(take_requests(&client), ["https://example.com/ftp"]);
+    }
 }

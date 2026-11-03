@@ -1485,3 +1485,68 @@ fn entries_report_why_they_do_not_read() {
     // An empty configuration has nothing to renew.
     assert_eq!(DomainLinkageConfiguration::new().earliest_expiry(), None);
 }
+
+/// With a client for local development, the configuration of an `http` origin on the local
+/// machine is fetched; any other client refuses it without sending a request.
+#[cfg(feature = "local-network")]
+mod local_network {
+    use identity_kit::methods::web::ReqwestClient;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::common::http::DefaultPolicy;
+    use super::*;
+
+    async fn serving_the_configuration() -> (MockServer, Url) {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/.well-known/did-configuration.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(resource()))
+            .mount(&server)
+            .await;
+        let origin = url(&format!("http://127.0.0.1:{}", server.address().port()));
+        (server, origin)
+    }
+
+    #[tokio::test]
+    async fn fetches_an_http_origin_on_loopback() {
+        let (server, origin) = serving_the_configuration().await;
+        let client = ReqwestClient::builder()
+            .dangerous_allow_loopback()
+            .build()
+            .unwrap();
+        let configuration = fetch_configuration(&client, &origin).await.unwrap();
+        assert_eq!(configuration.linked_dids.len(), 2);
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.scheme(), "http");
+    }
+
+    #[tokio::test]
+    async fn other_clients_refuse_an_http_origin() {
+        let (server, origin) = serving_the_configuration().await;
+        let insecure = |result: Result<_, DomainLinkageError>| matches!(result, Err(DomainLinkageError::InsecureOrigin(found)) if found == origin.as_str().trim_end_matches('/'));
+        let hardened = ReqwestClient::new().unwrap();
+        assert!(insecure(fetch_configuration(&hardened, &origin).await));
+        // A custom client keeps the default: no plain `http`.
+        let web = Web::default();
+        assert!(insecure(
+            fetch_configuration(&DefaultPolicy(&web), &origin).await
+        ));
+        assert!(web.fetched().is_empty());
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_public_host_over_http_is_refused_by_the_client() {
+        let client = ReqwestClient::builder()
+            .dangerous_allow_loopback()
+            .build()
+            .unwrap();
+        let result = fetch_configuration(&client, &url("http://93.184.216.34")).await;
+        assert!(
+            matches!(&result, Err(DomainLinkageError::Http { source, .. }) if source.to_string().contains("not an HTTPS URL")),
+            "{result:?}"
+        );
+    }
+}

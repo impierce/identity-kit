@@ -155,6 +155,18 @@ async fn well_known_url_inserts_before_the_path() {
 }
 
 #[tokio::test]
+async fn http_jwks_uri_of_an_https_issuer_when_the_client_allows_it() {
+    let jwks_uri = "http://127.0.0.1:8080/keys";
+    let web = Web::default()
+        .allowing_plain_http()
+        .serve_json(WELL_KNOWN, json!({"issuer": ISSUER, "jwks_uri": jwks_uri}))
+        .serve_json(jwks_uri, json!({"keys": [with_kid("key-1")]}));
+    let resolver = JwksResolver::new(web);
+    resolve(&resolver, ISSUER, "key-1").await.unwrap();
+    assert_eq!(resolver.client().fetched(), [WELL_KNOWN, jwks_uri]);
+}
+
+#[tokio::test]
 async fn issuer_must_be_https_without_query_or_fragment() {
     let resolver = JwksResolver::new(Web::default());
     assert!(matches!(
@@ -441,4 +453,106 @@ async fn sd_jwt_vc_issued_by_an_https_issuer() {
         error,
         SdJwtValidationError::Validation(ValidationError::KeyResolution { .. })
     ));
+}
+
+/// With a client for local development, the metadata and key set of an `http` issuer on the
+/// local machine are fetched; any other client refuses the issuer without sending a request.
+#[cfg(feature = "local-network")]
+mod local_network {
+    use std::sync::Arc;
+
+    use identity_kit::methods::web::{HttpClient, ReqwestClient};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::common::http::DefaultPolicy;
+    use super::*;
+
+    /// A server on `127.0.0.1` publishing the metadata of an `http` issuer, with its key set
+    /// at an `http` `jwks_uri`.
+    async fn serving_an_issuer() -> (MockServer, String) {
+        let server = MockServer::start().await;
+        let issuer = format!("http://127.0.0.1:{}/tenant", server.address().port());
+        Mock::given(method("GET"))
+            .and(path("/.well-known/jwt-vc-issuer/tenant"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({"issuer": issuer, "jwks_uri": format!("http://127.0.0.1:{}/keys", server.address().port())}),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/keys"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"keys": [ed25519("key-1")]})),
+            )
+            .mount(&server)
+            .await;
+        (server, issuer)
+    }
+
+    async fn resolve_with<C: HttpClient>(client: C, issuer: &str) -> Result<Jwk, JwksError> {
+        JwksResolver::new(client)
+            .resolve_key(&reference(issuer, "key-1"), KeyRole::Issuer)
+            .await
+            .map_err(|error| match error {
+                KeyResolutionError::Failed(inner) => *inner.downcast::<JwksError>().unwrap(),
+                other => panic!("unexpected {other:?}"),
+            })
+    }
+
+    fn loopback() -> ReqwestClient {
+        ReqwestClient::builder()
+            .dangerous_allow_loopback()
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fetches_an_http_issuer_on_loopback() {
+        let (server, issuer) = serving_an_issuer().await;
+        // Through `Arc`, which forwards the client's answer.
+        let key = resolve_with(Arc::new(loopback()), &issuer).await.unwrap();
+        assert_eq!(
+            key.thumbprint_sha256().unwrap(),
+            serde_json::from_value::<Jwk>(ed25519("key-1"))
+                .unwrap()
+                .thumbprint_sha256()
+                .unwrap()
+        );
+        let requests = server.received_requests().await.unwrap();
+        let fetched: Vec<_> = requests
+            .iter()
+            .map(|r| (r.url.scheme(), r.url.path()))
+            .collect();
+        assert_eq!(
+            fetched,
+            [
+                ("http", "/.well-known/jwt-vc-issuer/tenant"),
+                ("http", "/keys")
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn other_clients_refuse_an_http_issuer() {
+        let (server, issuer) = serving_an_issuer().await;
+        let not_https = |result: Result<Jwk, JwksError>| matches!(result, Err(JwksError::NotHttps(url)) if url.as_str() == issuer);
+        assert!(not_https(
+            resolve_with(ReqwestClient::new().unwrap(), &issuer).await
+        ));
+        // A custom client keeps the default: no plain `http`.
+        let web = Web::default();
+        assert!(not_https(resolve_with(DefaultPolicy(&web), &issuer).await));
+        assert!(web.fetched().is_empty());
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_public_host_over_http_is_refused_by_the_client() {
+        let result = resolve_with(loopback(), "http://93.184.216.34").await;
+        assert!(
+            matches!(&result, Err(JwksError::Http { source, .. }) if source.to_string().contains("not an HTTPS URL")),
+            "{result:?}"
+        );
+    }
 }

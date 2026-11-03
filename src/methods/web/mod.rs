@@ -90,6 +90,37 @@ pub trait HttpClient: Send + Sync {
         let _ = media_type;
         self.get(url).await
     }
+
+    /// Whether this client may fetch `url` over plain `http`.
+    ///
+    /// The fetch helpers built on this trait (the DID configuration of `domain_linkage`, the
+    /// presentations of `linked_vp`, the key sets of `JwksResolver` and the status list
+    /// redirects) refuse a URL that is not `https` before sending a request, unless this
+    /// returns `true` for an `http` URL. The client still decides in [`get`](Self::get): a
+    /// `true` here lets the request reach it, nothing more.
+    ///
+    /// The default is `false`. [`ReqwestClient`] returns `true` only when built for local
+    /// development and tests, with the `local-network` feature.
+    fn allows_plain_http(&self, url: &Url) -> bool {
+        let _ = url;
+        false
+    }
+}
+
+/// Whether `http` may be asked for `url`: an `https` URL, or an `http` URL the client
+/// [allows](HttpClient::allows_plain_http).
+#[cfg(any(
+    feature = "jwks",
+    feature = "status-list",
+    feature = "domain-linkage",
+    feature = "linked-vp"
+))]
+pub(crate) fn fetchable<C: HttpClient + ?Sized>(http: &C, url: &Url) -> bool {
+    match url.scheme() {
+        "https" => true,
+        "http" => http.allows_plain_http(url),
+        _ => false,
+    }
 }
 
 // Implements `HttpClient` for `&T`, `Box<T>` and `Arc<T>` by forwarding every method to `T`.
@@ -111,6 +142,10 @@ macro_rules! forward_http_client {
                 media_type: &str,
             ) -> Result<HttpResponse, HttpError> {
                 (**self).get_accepting(url, media_type).await
+            }
+
+            fn allows_plain_http(&self, url: &Url) -> bool {
+                (**self).allows_plain_http(url)
             }
         }
     )*};

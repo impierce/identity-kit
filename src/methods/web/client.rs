@@ -52,6 +52,12 @@ use super::{HttpClient, HttpError, HttpResponse};
 /// - Link-local addresses (including cloud metadata endpoints such as `169.254.169.254`) and
 ///   every other non-public range stay refused; redirects, the timeout and the body limit are
 ///   unchanged.
+/// - Such a client [allows plain `http`](HttpClient::allows_plain_http), so the fetch helpers
+///   built on [`HttpClient`] (the DID configuration of `domain_linkage`, the presentations of
+///   `linked_vp`, the key sets of `JwksResolver`, the status list redirects) pass an `http` URL
+///   to it instead of refusing it themselves, and a local entity that publishes `http`
+///   origins or endpoints can be validated. The client still fetches such a URL only when
+///   every address of its host is in an allowed range, and refuses it otherwise.
 #[derive(Debug, Clone)]
 pub struct ReqwestClient {
     client: reqwest::Client,
@@ -146,6 +152,17 @@ impl HttpClient for ReqwestClient {
 
     async fn get_accepting(&self, url: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
         self.fetch(url, Some(media_type)).await
+    }
+
+    /// `true` for a client from [`ReqwestClient::builder`] with a local range allowed (feature
+    /// `local-network`); `false` otherwise. [`get`](HttpClient::get) still fetches an `http`
+    /// URL only when every address of its host is in an allowed range.
+    fn allows_plain_http(&self, url: &Url) -> bool {
+        let _ = url;
+        #[cfg(feature = "local-network")]
+        return self.local != LocalNetwork::NONE;
+        #[cfg(not(feature = "local-network"))]
+        false
     }
 }
 
