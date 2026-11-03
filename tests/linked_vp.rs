@@ -1157,3 +1157,77 @@ async fn validators_accept_additional_typ_only_when_asked() {
             if matches!(credentials.get(&0), Some(ValidationError::UnexpectedTyp { .. }))
     ));
 }
+
+/// With a client for local development, a presentation at an `http` endpoint on the local
+/// machine is fetched; any other client refuses it without sending a request.
+#[cfg(feature = "local-network")]
+mod local_network {
+    use identity_kit::methods::web::ReqwestClient;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    async fn serving_the_presentation() -> (MockServer, Url) {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/linked-vp.jwt"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(example_jwt().as_str()))
+            .mount(&server)
+            .await;
+        let endpoint = url(&format!(
+            "http://127.0.0.1:{}/linked-vp.jwt",
+            server.address().port()
+        ));
+        (server, endpoint)
+    }
+
+    fn loopback() -> ReqwestClient {
+        ReqwestClient::builder()
+            .dangerous_allow_loopback()
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn fetches_an_http_endpoint_on_loopback() {
+        let (server, endpoint) = serving_the_presentation().await;
+        let client = LinkedVpClient::new(loopback(), example_validator());
+        assert_eq!(client.fetch(&endpoint).await.unwrap(), example_jwt());
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.scheme(), "http");
+    }
+
+    #[tokio::test]
+    async fn other_clients_refuse_an_http_endpoint() {
+        let (server, endpoint) = serving_the_presentation().await;
+        let unsupported = |result: Result<Jwt, LinkedVpError>| matches!(result, Err(LinkedVpError::UnsupportedEndpoint(found)) if found == endpoint);
+        let hardened = LinkedVpClient::new(ReqwestClient::new().unwrap(), example_validator());
+        assert!(unsupported(hardened.fetch(&endpoint).await));
+        // A custom client keeps the default: no plain `http`.
+        let custom = client(Web::default(), example_validator());
+        assert!(unsupported(custom.fetch(&endpoint).await));
+        assert!(custom.http().fetched().is_empty());
+        assert!(server.received_requests().await.unwrap().is_empty());
+        // Nor does allowing `http` let another scheme through.
+        let local = LinkedVpClient::new(loopback(), example_validator());
+        let ipfs = url("ipfs://bafybeihkoviema7g3gxyt6la7vd5ho32ictqbilu3wnlo3rs7ewhnp7lly");
+        assert!(matches!(
+            local.fetch(&ipfs).await,
+            Err(LinkedVpError::UnsupportedEndpoint(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_public_host_over_http_is_refused_by_the_client() {
+        let client = LinkedVpClient::new(loopback(), example_validator());
+        let result = client
+            .fetch(&url("http://93.184.216.34/linked-vp.jwt"))
+            .await;
+        assert!(
+            matches!(&result, Err(LinkedVpError::Http { source, .. }) if source.to_string().contains("not an HTTPS URL")),
+            "{result:?}"
+        );
+    }
+}

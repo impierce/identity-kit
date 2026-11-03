@@ -13,9 +13,17 @@ use url::Url;
 pub(crate) struct Web {
     routes: HashMap<String, Result<HttpResponse, String>>,
     requests: Mutex<Vec<(String, Option<String>)>>,
+    plain_http: bool,
 }
 
 impl Web {
+    /// This client [allowing plain `http`](HttpClient::allows_plain_http) for every URL, as a
+    /// client for local development does.
+    pub(crate) fn allowing_plain_http(mut self) -> Self {
+        self.plain_http = true;
+        self
+    }
+
     /// Serves `response` at `url`.
     pub(crate) fn with(mut self, url: &str, response: HttpResponse) -> Self {
         self.routes.insert(url.to_owned(), Ok(response));
@@ -82,5 +90,9 @@ impl HttpClient for Web {
 
     async fn get_accepting(&self, url: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
         self.respond(url, Some(media_type))
+    }
+
+    fn allows_plain_http(&self, _: &Url) -> bool {
+        self.plain_http
     }
 }

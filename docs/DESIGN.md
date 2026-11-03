@@ -296,7 +296,13 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   `local-network` feature adds `ReqwestClient::builder` with
   `dangerous_allow_loopback` and `dangerous_allow_private_network`: the host is resolved first,
   plain `http` is used only when every address is in an allowed range, the connection is pinned
-  to the checked addresses, and link-local and the other non-public ranges stay refused.
+  to the checked addresses, and link-local and the other non-public ranges stay refused. The
+  fetch helpers over `HttpClient` (`domain_linkage::fetch_configuration`,
+  `LinkedVpClient::fetch`, `JwksResolver`, the status list redirects) refuse a URL that is not
+  `https` without sending a request, unless it is `http` and `HttpClient::allows_plain_http`
+  says yes: `false` by default, `true` for a `ReqwestClient` from the builder with a local range
+  allowed, which then still refuses an `http` host with a public address. `did_from_url` stays
+  `https`-only, as the `did:web` method defines the mapping.
 - Key references (ADR 0006): a token names its key in one of several ways and `KeyReference`
   captures which; `from_jws` applies a fixed precedence, `sd_jwt_vc` builds one from `cnf`
   (`jwk`, `kid` as an absolute DID URL, `jku`). Resolving a reference says nothing about

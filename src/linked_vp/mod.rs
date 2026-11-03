@@ -93,7 +93,7 @@ use url::Url;
 use crate::cause::cause;
 use crate::did::{Did, DidDocument, DidUrl, ResolutionError, Service, ServiceEndpoint, Uri};
 use crate::jose::{DefaultVerifier, JwsError, JwsHeader, JwsVerifier, Signer};
-use crate::methods::web::{HttpClient, HttpError};
+use crate::methods::web::{HttpClient, HttpError, fetchable};
 use crate::resolver::Resolver;
 use crate::vc::validation::{
     CredentialValidationOptions, DecodedCredential, DecodedPresentation, FailFast,
@@ -746,12 +746,13 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
     ///
     /// # Errors
     ///
-    /// [`LinkedVpError::UnsupportedEndpoint`] for a URL that is not `https`, without fetching;
+    /// [`LinkedVpError::UnsupportedEndpoint`] for a URL that is not `https`, without fetching,
+    /// unless the client [allows plain `http`](HttpClient::allows_plain_http) for it;
     /// [`LinkedVpError::Http`] or [`LinkedVpError::HttpStatus`] when there is no `2xx`
     /// response; [`LinkedVpError::UnsupportedFormat`] for a JSON-LD presentation;
     /// [`LinkedVpError::InvalidBody`] for anything else that is not a compact JWT.
     pub async fn fetch(&self, url: &Url) -> Result<Jwt, LinkedVpError> {
-        if url.scheme() != "https" {
+        if !fetchable(&self.http, url) {
             return Err(LinkedVpError::UnsupportedEndpoint(url.clone()));
         }
         let response = self
