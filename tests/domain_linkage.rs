@@ -1494,6 +1494,7 @@ mod local_network {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    use super::common::http::DefaultPolicy;
     use super::*;
 
     async fn serving_the_configuration() -> (MockServer, Url) {
@@ -1529,7 +1530,9 @@ mod local_network {
         assert!(insecure(fetch_configuration(&hardened, &origin).await));
         // A custom client keeps the default: no plain `http`.
         let web = Web::default();
-        assert!(insecure(fetch_configuration(&web, &origin).await));
+        assert!(insecure(
+            fetch_configuration(&DefaultPolicy(&web), &origin).await
+        ));
         assert!(web.fetched().is_empty());
         assert!(server.received_requests().await.unwrap().is_empty());
     }

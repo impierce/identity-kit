@@ -96,3 +96,19 @@ impl HttpClient for Web {
         self.plain_http
     }
 }
+
+/// `Web` behind a client that implements only the fetches, keeping the trait's default for
+/// everything else: no plain `http`.
+#[derive(Debug)]
+pub(crate) struct DefaultPolicy<'a>(pub(crate) &'a Web);
+
+#[async_trait::async_trait]
+impl HttpClient for DefaultPolicy<'_> {
+    async fn get(&self, url: &Url) -> Result<HttpResponse, HttpError> {
+        self.0.get(url).await
+    }
+
+    async fn get_accepting(&self, url: &Url, media_type: &str) -> Result<HttpResponse, HttpError> {
+        self.0.get_accepting(url, media_type).await
+    }
+}

@@ -1166,6 +1166,7 @@ mod local_network {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    use super::common::http::DefaultPolicy;
     use super::*;
 
     async fn serving_the_presentation() -> (MockServer, Url) {
@@ -1206,9 +1207,10 @@ mod local_network {
         let hardened = LinkedVpClient::new(ReqwestClient::new().unwrap(), example_validator());
         assert!(unsupported(hardened.fetch(&endpoint).await));
         // A custom client keeps the default: no plain `http`.
-        let custom = client(Web::default(), example_validator());
+        let web = Web::default();
+        let custom = LinkedVpClient::new(DefaultPolicy(&web), example_validator());
         assert!(unsupported(custom.fetch(&endpoint).await));
-        assert!(custom.http().fetched().is_empty());
+        assert!(web.fetched().is_empty());
         assert!(server.received_requests().await.unwrap().is_empty());
         // Nor does allowing `http` let another scheme through.
         let local = LinkedVpClient::new(loopback(), example_validator());

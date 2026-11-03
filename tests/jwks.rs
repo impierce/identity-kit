@@ -453,6 +453,7 @@ mod local_network {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    use super::common::http::DefaultPolicy;
     use super::*;
 
     /// A server on `127.0.0.1` publishing the metadata of an `http` issuer, with its key set
@@ -528,8 +529,8 @@ mod local_network {
             resolve_with(ReqwestClient::new().unwrap(), &issuer).await
         ));
         // A custom client keeps the default: no plain `http`.
-        let web = Arc::new(Web::default());
-        assert!(not_https(resolve_with(Arc::clone(&web), &issuer).await));
+        let web = Web::default();
+        assert!(not_https(resolve_with(DefaultPolicy(&web), &issuer).await));
         assert!(web.fetched().is_empty());
         assert!(server.received_requests().await.unwrap().is_empty());
     }
