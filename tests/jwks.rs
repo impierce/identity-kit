@@ -155,6 +155,18 @@ async fn well_known_url_inserts_before_the_path() {
 }
 
 #[tokio::test]
+async fn http_jwks_uri_of_an_https_issuer_when_the_client_allows_it() {
+    let jwks_uri = "http://127.0.0.1:8080/keys";
+    let web = Web::default()
+        .allowing_plain_http()
+        .serve_json(WELL_KNOWN, json!({"issuer": ISSUER, "jwks_uri": jwks_uri}))
+        .serve_json(jwks_uri, json!({"keys": [with_kid("key-1")]}));
+    let resolver = JwksResolver::new(web);
+    resolve(&resolver, ISSUER, "key-1").await.unwrap();
+    assert_eq!(resolver.client().fetched(), [WELL_KNOWN, jwks_uri]);
+}
+
+#[tokio::test]
 async fn issuer_must_be_https_without_query_or_fragment() {
     let resolver = JwksResolver::new(Web::default());
     assert!(matches!(

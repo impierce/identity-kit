@@ -189,10 +189,10 @@ impl<C: HttpClient> JwksResolver<C> {
         if let Some(keys) = self.cached(issuer) {
             return Ok(keys);
         }
-        if !fetchable(&self.client, issuer) {
+        let url = metadata_url(issuer)?;
+        if !fetchable(&self.client, &url) {
             return Err(JwksError::NotHttps(issuer.clone()));
         }
-        let url = metadata_url(issuer)?;
         let metadata: Metadata = self.fetch_json(&url).await?;
         if Url::parse(&metadata.issuer).ok().as_ref() != Some(issuer) {
             return Err(JwksError::IssuerMismatch {
@@ -254,7 +254,7 @@ impl<C: HttpClient> JwksResolver<C> {
 }
 
 /// `<scheme>://host[:port]/.well-known/jwt-vc-issuer[/path]` for `issuer`, whose scheme the
-/// caller checked.
+/// caller checks on the result.
 fn metadata_url(issuer: &Url) -> Result<Url, JwksError> {
     if issuer.query().is_some()
         || issuer.fragment().is_some()
