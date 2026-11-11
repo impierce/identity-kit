@@ -55,7 +55,8 @@ pub enum KeyReference {
     DidUrl(DidUrl),
     /// The public key itself, from a `jwk` header or `cnf.jwk`.
     Jwk(Box<Jwk>),
-    /// An `x5c` certificate chain, DER, leaf first. No resolver in the crate handles it yet.
+    /// An `x5c` certificate chain, DER, leaf first. `X509Resolver` (feature `x509`) resolves
+    /// it against the application's trust anchors.
     X509Chain(Vec<Vec<u8>>),
     /// The key `kid` names in the key set of the HTTPS issuer `issuer` (SD-JWT VC §3.5).
     Jwks {
