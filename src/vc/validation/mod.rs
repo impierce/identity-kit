@@ -84,12 +84,12 @@ pub use credential::{
     decode_credential_v2,
 };
 pub use error::{PresentationValidationError, StatusError, ValidationError};
-#[cfg(feature = "linked-vp")]
-pub(crate) use presentation::decode_presentation_entries;
 pub use presentation::{
     DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, PresentedCredentialV2,
     decode_presentation, decode_presentation_v2,
 };
+#[cfg(feature = "linked-vp")]
+pub(crate) use presentation::{decode_presentation_entries, decode_presentation_entries_v2};
 
 /// A status entry of a credential, of either credential format, for a [`StatusCheck`].
 ///

@@ -4,19 +4,27 @@
 //! The service entry is the normative part of the specification: `type` is
 //! [`SERVICE_TYPE`] and `serviceEndpoint` one URL or a non-empty array of them. [`service`]
 //! builds one, [`services`] reads them out of a document. Each URL serves one presentation;
-//! this crate handles the JSON Web Token form (a VCDM 1.1 presentation in the `vp` claim, its
-//! credentials as JWTs) and reports the JSON-LD form as unsupported.
+//! this crate handles it as a JSON Web Token, in two forms, and reports the JSON-LD form as
+//! unsupported:
 //!
-//! - [`LinkedPresentationBuilder`] signs a presentation for publishing: `iss`, `sub` and
-//!   `holder` the DID, no `aud` and no `nonce`, which a presentation published for anyone
-//!   cannot carry.
+//! - a VCDM 1.1 presentation in the `vp` claim, its credentials as JWTs;
+//! - a VCDM 2.0 presentation secured with VC-JOSE-COSE (`typ` `vp+jwt`), the presentation the
+//!   payload, its credentials enveloped (`application/vc+jwt` or `application/vc+sd-jwt`).
+//!   [`is_vcdm2`] tells the two apart.
+//!
+//! - [`LinkedPresentationBuilder`] (VCDM 1.1) and [`LinkedPresentationV2Builder`] (VCDM 2.0)
+//!   sign a presentation for publishing: `iss` and `holder` the DID, no `aud` and no `nonce`,
+//!   which a presentation published for anyone cannot carry.
 //! - [`LinkedVpValidator`] validates one presentation for the DID whose document lists it:
 //!   holder and `iss` are that DID, the holder signed with a key of the DID under
 //!   `authentication`, `exp` holds when present, and every credential validates with its
 //!   subject the holder (the specification's SHOULD, configurable).
+//!   [`validate`](LinkedVpValidator::validate) and
+//!   [`validate_v2`](LinkedVpValidator::validate_v2) take one form each,
+//!   [`validate_any`](LinkedVpValidator::validate_any) either.
 //! - [`LinkedVpClient`] fetches what a document's services point to through an
-//!   [`HttpClient`] and validates each presentation, reporting per URL: every linked
-//!   presentation stands on its own.
+//!   [`HttpClient`] and validates each presentation, in either form, reporting per URL: every
+//!   linked presentation stands on its own.
 //!
 //! # What fails alone
 //!
@@ -27,10 +35,12 @@
 //!   [`LinkedVpService::invalid_urls`] and keeps the service's other URLs, and
 //!   [`LinkedVpClient::validate_document`] reports it on its own. A service fails as a whole
 //!   only when its endpoint is a map or names no URL.
-//! - An entry of the presentation's `verifiableCredential` that is not a credential JWT fails
-//!   alone: [`decode`] returns one result per entry, and [`LinkedVpValidator::validate`]
-//!   reports it in [`PresentationValidationError::credentials`] under its index, as any other
-//!   credential that does not validate.
+//! - An entry of the presentation's `verifiableCredential` that is not a credential JWT, or an
+//!   envelope that does not hold a credential, fails alone: [`decode`] and [`decode_v2`]
+//!   return one result per entry, and the validator reports it in
+//!   [`PresentationValidationError::credentials`] under its index, as any other credential
+//!   that does not validate. In the VCDM 2.0 form, an entry that is not an envelope at all
+//!   fails the presentation.
 //! - Everything else is the presentation's: it does not decode, its holder or signer is not
 //!   the linking DID, or its signature or time claims do not hold.
 //!
@@ -46,7 +56,8 @@
 //! The specification does not constrain `typ`. Its example presentation carries the literal
 //! `'vp+ld+jwt'`, stray quotes included, and its credential `'vc+ld+jwt'`; the validator
 //! accepts these ([`PRESENTATION_TYP`], [`CREDENTIAL_TYP`]) next to `JWT` and no `typ`. The
-//! builder writes `JWT`.
+//! VCDM 1.1 builder writes `JWT`; the VCDM 2.0 builder writes `vp+jwt`, which VC-JOSE-COSE
+//! defines.
 //!
 //! # Examples
 //!
@@ -96,12 +107,14 @@ use crate::jose::{DefaultVerifier, JwsError, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError, fetchable};
 use crate::resolver::Resolver;
 use crate::vc::validation::{
-    CredentialValidationOptions, DecodedCredential, DecodedPresentation, FailFast,
-    JwtPresentationValidator, KeyReference, KeyResolver, PresentationValidationError,
-    PresentationValidationOptions, SubjectHolderRelationship, TimeOptions, ValidationError,
-    decode_presentation_entries, extract_holder,
+    CredentialValidationOptions, DecodedCredential, DecodedPresentation, DecodedPresentationV2,
+    FailFast, JwtPresentationValidator, KeyReference, KeyResolver, PresentationValidationError,
+    PresentationValidationOptions, PresentedCredentialV2, SubjectHolderRelationship, TimeOptions,
+    ValidationError, decode_presentation_entries, decode_presentation_entries_v2, extract_holder,
 };
-use crate::vc::{CredentialError, Jwt, JwtClaims, Party, Presentation};
+use crate::vc::{
+    CredentialError, EnvelopedVc, Jwt, JwtClaims, Party, Presentation, PresentationV2,
+};
 
 /// The service type, `LinkedVerifiablePresentation`.
 pub const SERVICE_TYPE: &str = "LinkedVerifiablePresentation";
@@ -392,6 +405,145 @@ impl LinkedPresentationBuilder {
     }
 }
 
+/// Builds a linked presentation as a VCDM 2.0 presentation secured with VC-JOSE-COSE: the
+/// presentation is the JWT payload (`typ` `vp+jwt`), with `holder` and `iss` the holder, its
+/// credentials enveloped (`EnvelopedVerifiableCredential`, `application/vc+jwt` or
+/// `application/vc+sd-jwt`), `iat` and `nbf` the issuance time, `exp` when an expiration is
+/// set, and neither `aud` nor `nonce`.
+///
+/// A credential secured with SD-JWT is published with the disclosures its envelope holds,
+/// which anyone fetching the presentation can read.
+///
+/// # Examples
+///
+/// ```
+/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::did::{Did, Uri};
+/// use identity_kit::linked_vp::LinkedPresentationV2Builder;
+///
+/// let holder = Did::parse("did:example:123")?;
+/// let claims = LinkedPresentationV2Builder::new(holder)
+///     .with_id(Uri::parse("https://bar.example.com/verifiable-presentation.jwt")?)
+///     .with_issued_at(Utc.with_ymd_and_hms(2024, 2, 8, 17, 38, 46).unwrap())
+///     .with_expiration(Utc.with_ymd_and_hms(2029, 2, 8, 17, 38, 46).unwrap())
+///     .jwt_claims();
+/// assert_eq!(claims.iss.as_deref(), Some("did:example:123"));
+/// assert_eq!(claims.additional["holder"], "did:example:123");
+/// assert_eq!(claims.additional["type"], "VerifiablePresentation");
+/// assert_eq!((claims.iat, claims.nbf, claims.exp), (Some(1707413926), Some(1707413926), Some(1865266726)));
+/// assert!(claims.aud.is_none() && !claims.additional.contains_key("nonce"));
+/// assert!(!claims.additional.contains_key("vp"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LinkedPresentationV2Builder {
+    /// The holder: the DID whose document links the presentation.
+    pub holder: Did,
+    /// The presentation's `id`, usually the URL it is published at.
+    pub id: Option<Uri>,
+    /// The enveloped credentials.
+    pub credentials: Vec<EnvelopedVc>,
+    /// `iat` and `nbf`.
+    pub issued_at: DateTime<Utc>,
+    /// `exp`, if the presentation expires.
+    pub expiration: Option<DateTime<Utc>>,
+}
+
+impl LinkedPresentationV2Builder {
+    /// A presentation by `holder` of no credentials, issued now, without `id` or expiration.
+    pub fn new(holder: Did) -> Self {
+        Self {
+            holder,
+            id: None,
+            credentials: Vec::new(),
+            issued_at: Utc::now(),
+            expiration: None,
+        }
+    }
+
+    /// This presentation with its `id` set.
+    #[must_use]
+    pub fn with_id(mut self, id: impl Into<Uri>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// This presentation with `credential` added.
+    #[must_use]
+    pub fn with_credential(mut self, credential: EnvelopedVc) -> Self {
+        self.credentials.push(credential);
+        self
+    }
+
+    /// This presentation issued at `issued_at`.
+    #[must_use]
+    pub fn with_issued_at(mut self, issued_at: DateTime<Utc>) -> Self {
+        self.issued_at = issued_at;
+        self
+    }
+
+    /// This presentation expiring at `expiration`, which the specification recommends to limit
+    /// how long a published presentation stays valid.
+    #[must_use]
+    pub fn with_expiration(mut self, expiration: DateTime<Utc>) -> Self {
+        self.expiration = Some(expiration);
+        self
+    }
+
+    /// The presentation.
+    pub fn presentation(&self) -> PresentationV2 {
+        let mut presentation = PresentationV2::new().with_holder(self.holder.clone());
+        if let Some(id) = &self.id {
+            presentation = presentation.with_id(id.clone());
+        }
+        self.credentials
+            .iter()
+            .fold(presentation, |presentation, credential| {
+                presentation.with_credential(credential.clone())
+            })
+    }
+
+    /// The JWT claims: the presentation as the payload, with `iss`, `iat`, `nbf` and `exp`.
+    pub fn jwt_claims(&self) -> JwtClaims {
+        let mut claims = self
+            .presentation()
+            .to_jwt_claims()
+            .with_iss(self.holder.as_str())
+            .with_iat(self.issued_at)
+            .with_nbf(self.issued_at);
+        if let Some(expiration) = self.expiration {
+            claims = claims.with_exp(expiration);
+        }
+        claims
+    }
+
+    /// The presentation signed with `signer` under a header of `alg`, `typ` `vp+jwt` and
+    /// `kid`, `kid` naming a verification method of the holder, which a verifier resolves
+    /// under `authentication`.
+    ///
+    /// # Errors
+    ///
+    /// [`LinkedVpError::Validation`] with [`ValidationError::HolderMismatch`] when `kid` is not
+    /// a key of the holder, or with [`ValidationError::Jws`] when signing fails.
+    pub async fn sign(&self, kid: &DidUrl, signer: &dyn Signer) -> Result<Jwt, LinkedVpError> {
+        if kid.did() != &self.holder {
+            return Err(ValidationError::HolderMismatch {
+                holder: self.holder.clone().into(),
+                key: Box::new(KeyReference::DidUrl(kid.clone())),
+            }
+            .into());
+        }
+        let header = JwsHeader::new(signer.alg())
+            .with_typ(PresentationV2::JWT_TYP)
+            .with_kid(kid.as_str());
+        let jwt = Jwt::sign(&header, &self.jwt_claims(), signer)
+            .await
+            .map_err(ValidationError::from)?;
+        Ok(jwt)
+    }
+}
+
 /// Why a linked presentation could not be found, fetched or validated.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -583,6 +735,104 @@ pub fn decode(jwt: &Jwt) -> Result<DecodedLinkedPresentation, ValidationError> {
     })
 }
 
+/// A VCDM 2.0 linked presentation (`vp+jwt`) decoded without verification: the presentation,
+/// and the credential of each of its envelopes decoded on its own.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct DecodedLinkedPresentationV2 {
+    /// The JWS header.
+    pub header: JwsHeader,
+    /// The claims set, which is the presentation plus any registered claims.
+    pub claims: JwtClaims,
+    /// The presentation, with `iss` and `jti` mapped into `holder` and `id` when those are
+    /// absent.
+    pub presentation: PresentationV2,
+    /// One result per entry of `verifiableCredential`, in order: the enveloped credential
+    /// decoded (a credential secured with SD-JWT with the disclosures it carries applied), or
+    /// why that envelope does not hold one.
+    pub credentials: Vec<Result<PresentedCredentialV2, ValidationError>>,
+}
+
+impl DecodedLinkedPresentationV2 {
+    /// The holder: `holder` of the presentation, or `iss` when it has none.
+    pub fn holder(&self) -> Option<&Uri> {
+        self.presentation.holder.as_ref().map(Party::id)
+    }
+}
+
+/// Decodes a VCDM 2.0 linked presentation and its enveloped credentials without verifying or
+/// validating anything, accepting [`PRESENTATION_TYP`] besides `vp+jwt`. Each envelope decodes
+/// on its own: one that does not hold a credential is an error in
+/// [`DecodedLinkedPresentationV2::credentials`], next to the others. An entry of
+/// `verifiableCredential` that is not an envelope at all fails the presentation.
+///
+/// # Errors
+///
+/// As [`decode_presentation_v2`](crate::vc::validation::decode_presentation_v2), for the
+/// presentation alone.
+pub fn decode_v2(jwt: &Jwt) -> Result<DecodedLinkedPresentationV2, ValidationError> {
+    let presentation_typ: BTreeSet<String> = PRESENTATION_TYP.map(str::to_owned).into();
+    let (decoded, credentials) = decode_presentation_entries_v2(jwt, &presentation_typ)?;
+    Ok(DecodedLinkedPresentationV2 {
+        header: decoded.header,
+        claims: decoded.claims,
+        presentation: decoded.presentation,
+        credentials,
+    })
+}
+
+/// Whether `jwt` is a VCDM 2.0 presentation rather than a VCDM 1.1 one, read without
+/// verifying anything: its `typ` is `vp+jwt`, or its payload has no `vp` claim.
+///
+/// # Errors
+///
+/// [`ValidationError::Jws`] or [`ValidationError::Payload`] when the token does not decode.
+pub fn is_vcdm2(jwt: &Jwt) -> Result<bool, ValidationError> {
+    let jws = jwt.decode()?;
+    if jws.header().typ.as_deref() == Some(PresentationV2::JWT_TYP) {
+        return Ok(true);
+    }
+    let claims: JwtClaims =
+        serde_json::from_slice(jws.payload()).map_err(ValidationError::Payload)?;
+    Ok(!claims.additional.contains_key("vp"))
+}
+
+/// A validated linked presentation, in the JSON Web Token form it was published in.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum LinkedPresentation {
+    /// A VCDM 1.1 presentation in the `vp` claim, its credentials as JWTs.
+    Vcdm11(DecodedPresentation),
+    /// A VCDM 2.0 presentation secured with VC-JOSE-COSE, its credentials enveloped.
+    Vcdm2(DecodedPresentationV2),
+}
+
+impl LinkedPresentation {
+    /// The holder of the presentation.
+    pub fn holder(&self) -> Option<&Uri> {
+        match self {
+            Self::Vcdm11(decoded) => decoded.holder(),
+            Self::Vcdm2(decoded) => decoded.holder(),
+        }
+    }
+
+    /// The VCDM 1.1 presentation, if it is one.
+    pub fn as_vcdm11(&self) -> Option<&DecodedPresentation> {
+        match self {
+            Self::Vcdm11(decoded) => Some(decoded),
+            Self::Vcdm2(_) => None,
+        }
+    }
+
+    /// The VCDM 2.0 presentation, if it is one.
+    pub fn as_vcdm2(&self) -> Option<&DecodedPresentationV2> {
+        match self {
+            Self::Vcdm11(_) => None,
+            Self::Vcdm2(decoded) => Some(decoded),
+        }
+    }
+}
+
 /// Validates linked presentations: [`JwtPresentationValidator`] with the options fixed to the
 /// specification, plus the holder and the signer being the DID that links the presentation.
 ///
@@ -624,7 +874,7 @@ impl<R: KeyResolver, V: JwsVerifier> LinkedVpValidator<R, V> {
         &self.presentations
     }
 
-    /// Validates `jwt` as a presentation linked from the document of `did`.
+    /// Validates `jwt` as a VCDM 1.1 presentation linked from the document of `did`.
     ///
     /// The holder, and the party the token's [`KeyReference`] names, are checked against
     /// `did` before any key is resolved, so a presentation naming another DID never makes the
@@ -642,38 +892,94 @@ impl<R: KeyResolver, V: JwsVerifier> LinkedVpValidator<R, V> {
         did: &Did,
         options: &LinkedVpValidationOptions,
     ) -> Result<DecodedPresentation, LinkedVpError> {
-        let holder = extract_holder(jwt).map_err(PresentationValidationError::presentation)?;
-        if holder != *did {
-            return Err(LinkedVpError::HolderMismatch {
-                did: did.clone(),
-                holder,
-            });
-        }
-        let jws = jwt
-            .decode()
-            .map_err(|e| PresentationValidationError::presentation(e.into()))?;
-        if let Ok(reference) = KeyReference::from_jws(&jws, Some(did.as_str())) {
-            let of_did = match &reference {
-                KeyReference::DidUrl(url) => url.did() == did,
-                KeyReference::Jwk(jwk) => reference.binds_to(Some(did.as_str()), jwk),
-                _ => false,
-            };
-            if !of_did {
-                return Err(PresentationValidationError::presentation(
-                    ValidationError::HolderMismatch {
-                        holder: did.clone().into(),
-                        key: Box::new(reference),
-                    },
-                )
-                .into());
-            }
-        }
+        check_linking_did(jwt, did)?;
         let decoded = self
             .presentations
             .validate(jwt, &options.presentation_options())
             .await?;
         Ok(decoded)
     }
+
+    /// Validates `jwt` as a VCDM 2.0 presentation (`vp+jwt`) linked from the document of
+    /// `did`, with the checks of [`validate`](Self::validate) on the holder and the signing
+    /// key. Each credential is unwrapped from its envelope and validated as
+    /// [`JwtPresentationValidator::validate_v2`] does, a credential secured with SD-JWT
+    /// without a key binding: the holder's signature over the presentation proves control.
+    ///
+    /// # Errors
+    ///
+    /// As [`validate`](Self::validate), with what [`JwtPresentationValidator::validate_v2`]
+    /// reports.
+    pub async fn validate_v2(
+        &self,
+        jwt: &Jwt,
+        did: &Did,
+        options: &LinkedVpValidationOptions,
+    ) -> Result<DecodedPresentationV2, LinkedVpError> {
+        check_linking_did(jwt, did)?;
+        let decoded = self
+            .presentations
+            .validate_v2(jwt, &options.presentation_options())
+            .await?;
+        Ok(decoded)
+    }
+
+    /// Validates `jwt` as a presentation linked from the document of `did`, in whichever
+    /// JSON Web Token form it is: [`validate_v2`](Self::validate_v2) when [`is_vcdm2`], else
+    /// [`validate`](Self::validate).
+    ///
+    /// # Errors
+    ///
+    /// As [`validate`](Self::validate) and [`validate_v2`](Self::validate_v2);
+    /// [`LinkedVpError::Presentation`] when the token does not decode.
+    pub async fn validate_any(
+        &self,
+        jwt: &Jwt,
+        did: &Did,
+        options: &LinkedVpValidationOptions,
+    ) -> Result<LinkedPresentation, LinkedVpError> {
+        if is_vcdm2(jwt).map_err(PresentationValidationError::presentation)? {
+            self.validate_v2(jwt, did, options)
+                .await
+                .map(LinkedPresentation::Vcdm2)
+        } else {
+            self.validate(jwt, did, options)
+                .await
+                .map(LinkedPresentation::Vcdm11)
+        }
+    }
+}
+
+/// Checks the holder of `jwt`, and the party its [`KeyReference`] names, against `did`,
+/// without resolving any key.
+fn check_linking_did(jwt: &Jwt, did: &Did) -> Result<(), LinkedVpError> {
+    let holder = extract_holder(jwt).map_err(PresentationValidationError::presentation)?;
+    if holder != *did {
+        return Err(LinkedVpError::HolderMismatch {
+            did: did.clone(),
+            holder,
+        });
+    }
+    let jws = jwt
+        .decode()
+        .map_err(|e| PresentationValidationError::presentation(e.into()))?;
+    if let Ok(reference) = KeyReference::from_jws(&jws, Some(did.as_str())) {
+        let of_did = match &reference {
+            KeyReference::DidUrl(url) => url.did() == did,
+            KeyReference::Jwk(jwk) => reference.binds_to(Some(did.as_str()), jwk),
+            _ => false,
+        };
+        if !of_did {
+            return Err(PresentationValidationError::presentation(
+                ValidationError::HolderMismatch {
+                    holder: did.clone().into(),
+                    key: Box::new(reference),
+                },
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 /// What became of one URL of a `LinkedVerifiablePresentation` service.
@@ -685,7 +991,7 @@ pub struct LinkedPresentationReport {
     /// The URL; `None` when the service entry itself is invalid.
     pub url: Option<Url>,
     /// The presentation, validated, or why it was not.
-    pub result: Result<DecodedPresentation, LinkedVpError>,
+    pub result: Result<LinkedPresentation, LinkedVpError>,
 }
 
 /// Fetches the presentations a DID document links with an [`HttpClient`] and validates them
@@ -785,19 +1091,20 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> LinkedVpClient<C, R, V> {
         Jwt::new(body).map_err(|e: JwsError| invalid("not a compact JWS", Box::new(e)))
     }
 
-    /// Fetches and validates `url` as a presentation linked from the document of `did`.
+    /// Fetches and validates `url` as a presentation linked from the document of `did`, in
+    /// either JSON Web Token form.
     ///
     /// # Errors
     ///
-    /// As [`fetch`](Self::fetch) and [`LinkedVpValidator::validate`].
+    /// As [`fetch`](Self::fetch) and [`LinkedVpValidator::validate_any`].
     pub async fn validate_url(
         &self,
         url: &Url,
         did: &Did,
         options: &LinkedVpValidationOptions,
-    ) -> Result<DecodedPresentation, LinkedVpError> {
+    ) -> Result<LinkedPresentation, LinkedVpError> {
         let jwt = self.fetch(url).await?;
-        self.validator.validate(&jwt, did, options).await
+        self.validator.validate_any(&jwt, did, options).await
     }
 
     /// Fetches and validates every presentation `document` links, one report per URL in
