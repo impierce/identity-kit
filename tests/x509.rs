@@ -17,6 +17,7 @@ use identity_kit::resolver::{
     X509Certificate, X509Error, X509Resolver,
 };
 use serde::Deserialize;
+use serde_json::json;
 
 use common::Es256Signer;
 
@@ -516,6 +517,64 @@ fn reads_a_certificate() {
     }
 }
 
+/// ISRG Root X2, a root of Let's Encrypt with a P-384 key (<https://letsencrypt.org/certificates/>),
+/// SHA-256 fingerprint `69:72:9B:8E:15:A8:6E:FC:17:7A:57:AF:B7:17:1D:FC:64:AD:D2:8C:2F:CA:8C:F1:50:7E:34:45:3C:CB:14:70`.
+const ISRG_ROOT_X2: &str = "\
+    MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQswCQYDVQQGEwJVUzEpMCcGA1UE\
+    ChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5\
+    MDQwMDAwMDBaFw00MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBTZWN1cml0\
+    eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEzZvV\
+    n4CDCuwJSvMWSj5cz3es3mcFDR0HttwW+1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7m\
+    AHf7AlF9ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0TAQH/BAUwAwEB/zAd\
+    BgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZIzj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70\
+    /aTSVaYgLXTWNLxBo1BfASdWtL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\
+    /q4AaOeMSQ+2b1tbFfLn";
+
+/// A P-384 key reads as an `EC` JWK of that curve: the x509-limbo suite has none.
+#[test]
+fn reads_a_p384_key() {
+    let der = STANDARD.decode(ISRG_ROOT_X2).unwrap();
+    let root = X509Certificate::from_der(&der).unwrap();
+    assert_eq!(
+        root.subject(),
+        "CN=ISRG Root X2,O=Internet Security Research Group,C=US"
+    );
+    assert!(root.is_ca() && root.is_self_issued());
+    assert_eq!(
+        (root.not_before(), root.not_after()),
+        (
+            unix_seconds("2020-09-04T00:00:00+00:00"),
+            unix_seconds("2040-09-17T16:00:00+00:00")
+        )
+    );
+    let fingerprint =
+        common::decode(&root.sha256_thumbprint())
+            .iter()
+            .fold(String::new(), |mut hex, byte| {
+                use core::fmt::Write as _;
+                let _ = write!(hex, "{byte:02X}");
+                hex
+            });
+    assert_eq!(
+        fingerprint,
+        "69729B8E15A86EFC177A57AFB7171DFC64ADD28C2FCA8CF1507E34453CCB1470"
+    );
+
+    let key = serde_json::to_value(root.public_key().unwrap()).unwrap();
+    assert_eq!((&key["kty"], &key["crv"]), (&json!("EC"), &json!("P-384")));
+    let (x, y) = (
+        common::decode(key["x"].as_str().unwrap()),
+        common::decode(key["y"].as_str().unwrap()),
+    );
+    assert_eq!((x.len(), y.len()), (48, 48));
+    // The coordinates are the uncompressed point the certificate carries.
+    let point = [&[0x04][..], &x, &y].concat();
+    assert!(der.windows(point.len()).any(|window| window == point));
+
+    // It is a CA certificate, so it can be a trust anchor.
+    assert!(X509Resolver::new([der]).is_ok());
+}
+
 #[test]
 fn binds_an_identifier_through_subject_alternative_names() {
     let certified = certified();
@@ -728,6 +787,7 @@ fn trust_anchors_are_ca_certificates() {
         "",
         "not PEM",
         "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n",
+        "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n",
     ] {
         assert!(
             matches!(

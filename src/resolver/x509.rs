@@ -216,23 +216,9 @@ impl X509Resolver {
                 {
                     continue;
                 }
-                let seconds = |seconds: i64| {
-                    UnixTime::since_unix_epoch(Duration::from_secs(
-                        u64::try_from(seconds).unwrap_or(0),
-                    ))
-                };
-                if now < configured.not_before {
-                    error = webpki::Error::CertNotValidYet {
-                        time,
-                        not_before: seconds(configured.not_before),
-                    };
-                } else if now > configured.not_after {
-                    error = webpki::Error::CertExpired {
-                        time,
-                        not_after: seconds(configured.not_after),
-                    };
-                } else {
-                    return Ok(());
+                match outside_validity(now, configured.not_before, configured.not_after) {
+                    None => return Ok(()),
+                    Some(outside) => error = outside,
                 }
             }
             Err(error)
@@ -301,6 +287,27 @@ impl KeyResolver for X509Resolver {
             }
             other => Err(KeyResolutionError::unsupported(other)),
         }
+    }
+}
+
+/// Why a certificate valid from `not_before` to `not_after`, both inclusive and in seconds
+/// since the Unix epoch, is not valid at `now`; `None` when it is.
+fn outside_validity(now: i64, not_before: i64, not_after: i64) -> Option<webpki::Error> {
+    let time = |seconds: i64| {
+        UnixTime::since_unix_epoch(Duration::from_secs(u64::try_from(seconds).unwrap_or(0)))
+    };
+    if now < not_before {
+        Some(webpki::Error::CertNotValidYet {
+            time: time(now),
+            not_before: time(not_before),
+        })
+    } else if now > not_after {
+        Some(webpki::Error::CertExpired {
+            time: time(now),
+            not_after: time(not_after),
+        })
+    } else {
+        None
     }
 }
 
@@ -656,6 +663,49 @@ impl X509Error {
         Self::InvalidCertificate {
             index,
             source: Box::new(source),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validity_is_inclusive_at_both_ends() {
+        for now in [100, 150, 200] {
+            assert!(outside_validity(now, 100, 200).is_none(), "{now}");
+        }
+        assert!(matches!(
+            outside_validity(99, 100, 200),
+            Some(webpki::Error::CertNotValidYet { .. })
+        ));
+        assert!(matches!(
+            outside_validity(201, 100, 200),
+            Some(webpki::Error::CertExpired { .. })
+        ));
+    }
+
+    #[test]
+    fn p384_points_are_uncompressed() {
+        let mut point = vec![0x04];
+        point.extend([0x11; 48]);
+        point.extend([0x22; 48]);
+        let jwk = serde_json::to_value(p384_jwk(&point).unwrap()).unwrap();
+        assert_eq!(jwk["crv"], "P-384");
+        assert_eq!(
+            base64url::decode(jwk["x"].as_str().unwrap()).unwrap(),
+            [0x11; 48]
+        );
+        assert_eq!(
+            base64url::decode(jwk["y"].as_str().unwrap()).unwrap(),
+            [0x22; 48]
+        );
+        // Compressed, truncated, or empty.
+        let mut compressed = vec![0x02];
+        compressed.extend([0x11; 48]);
+        for invalid in [&compressed[..], &point[..96], &[]] {
+            assert!(matches!(p384_jwk(invalid), Err(X509Error::InvalidKey(_))));
         }
     }
 }
