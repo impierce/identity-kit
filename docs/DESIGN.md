@@ -323,11 +323,13 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
 - `vc` (`vc`): `Jwt` newtype; `JwtClaims` re-exported from `jose`, with its `chrono` conversions;
   `Credential`/`Presentation` for the VCDM 1.1 JWT profile, built with `new` and `with_*`
   setters, checked on deserialization, with `to_jwt_claims`/`from_jwt_claims`
-  (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree);
+  (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree), deprecated
+  outside domain linkage through deprecated aliases (ADR 0007);
   `CredentialV2`/`PresentationV2` as VC-JOSE-COSE JWT payloads (`typ: vc+jwt`/`vp+jwt`) and
   `EnvelopedVc`/`EnvelopedVp` over `data:` URLs; `chrono::DateTime<Utc>` timestamps serialized
   RFC 3339; `vc::validation` with `JwtCredentialValidator` and `JwtPresentationValidator`
-  (each with `validate` for 1.1 and `validate_v2` for 2.0, picked by the caller from `typ`)
+  (each with `validate` for 1.1, deprecated, and `validate_v2` for 2.0, picked by the caller
+  from `typ`)
   over `JwsVerifier` + `resolver::KeyResolver` (the key the token's `KeyReference` names, under
   `assertionMethod` or `authentication`), `TimeOptions` (explicit `now`, leeway), issuer and
   holder binding to the party the `KeyReference` names, audience and nonce, accepted `typ` beyond the profile's,
@@ -373,7 +375,8 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   most `max_credentials` (32 by default) entries of one configuration. For the controller of
   the origin, `entries` reads each JWT entry back without verifying it (`UnverifiedLinkage`:
   DID, origin, issuer, `nbf`, `exp`), `earliest_expiry` says when to renew, and
-  `remove_origin` unlinks an origin.
+  `remove_origin` unlinks an origin. The module re-exports `Credential` and `DecodedCredential`
+  without the deprecation the `vc` paths carry, since the specification requires VCDM 1.1.
   `fetch_configuration` gets the resource over the injected `methods::web::HttpClient` (HTTPS
   only; `404`/`410` is `NotPublished`, a state rather than a failure), `service`/`services`
   build and read `LinkedDomains` entries, and `DomainLinkageClient` fetches and validates per
@@ -381,7 +384,8 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   at most `max_origins` (32 by default) origins per document.
 - `linked_vp` (`linked-vp`): DIF Linked Verifiable Presentation v1.0.0. `service`/`services`
   for `LinkedVerifiablePresentation` entries (a map endpoint or a non-URL is an error, never
-  skipped), `LinkedPresentationBuilder` (VCDM 1.1 JWT, `iss == sub == holder`, optional `exp`,
+  skipped), `LinkedPresentationV2Builder` (VCDM 2.0 `vp+jwt`, credentials enveloped) and the
+  deprecated `LinkedPresentationBuilder` (VCDM 1.1 JWT, `iss == sub == holder`, optional `exp`,
   no `aud`/`nonce`), `LinkedVpValidator` over `JwtPresentationValidator` (holder and the DID of
   `kid` checked against the linking DID before any key is resolved, key under
   `authentication`, `AlwaysSubject` by default, the specification's `vp+ld+jwt`/`vc+ld+jwt`

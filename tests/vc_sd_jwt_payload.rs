@@ -5,6 +5,10 @@
 //! Appendix A.1) signs the credentials; a `did:jwk` holder (the P-256 key of RFC 7515
 //! Appendix A.3) presents them.
 #![cfg(all(feature = "vc", feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    deprecated,
+    reason = "the deprecated VCDM 1.1 validators must keep refusing SD-JWT payloads"
+)]
 
 mod common;
 

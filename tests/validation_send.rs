@@ -2,6 +2,10 @@
 //! multi-threaded runtime: in a spawned task, an `axum` handler or a method whose future must be
 //! `Send`. The checks are type checks; the futures are never polled.
 #![cfg(all(feature = "vc", feature = "sd-jwt"))]
+#![expect(
+    deprecated,
+    reason = "the deprecated VCDM 1.1 validation futures must stay `Send` too"
+)]
 
 use std::future::Future;
 

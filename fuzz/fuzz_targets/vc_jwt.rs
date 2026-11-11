@@ -3,6 +3,7 @@
 //! unchanged, a presentation that decodes, in either profile, decodes every credential, and no
 //! token that decodes is the issuer-signed JWT of an SD-JWT.
 #![no_main]
+#![expect(deprecated, reason = "fuzzes the deprecated VCDM 1.1 JWT profile next to VCDM 2.0")]
 
 use chrono::Timelike as _;
 use identity_kit::vc::validation::{

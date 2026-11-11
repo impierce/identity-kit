@@ -9,16 +9,17 @@ use crate::did::Uri;
 use crate::jose::{CompactJws, DefaultVerifier, JwsHeader, JwsVerifier};
 #[cfg(feature = "sd-jwt")]
 use crate::sd_jwt_vc::{SdJwtCredentialV2, SdJwtCredentialValidator, SdJwtValidationOptions};
+use crate::vc::presentation::Presentation;
 use crate::vc::{
-    CredentialError, CredentialV2, EnvelopedVc, Jwt, JwtClaims, Party, Presentation,
-    PresentationV2, Subject,
+    CredentialError, CredentialV2, EnvelopedVc, Jwt, JwtClaims, Party, PresentationV2, Subject,
 };
 
 #[cfg(feature = "sd-jwt")]
 use super::CredentialStatus;
+use super::credential::DecodedCredential;
 use super::credential::{NO_TYP, check_controller, check_typ, decode, decode_v2, plain_claims};
 use super::{
-    DecodedCredential, DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver, KeyRole,
+    DecodedCredentialV2, FailFast, JwtCredentialValidator, KeyResolver, KeyRole,
     PresentationValidationError, PresentationValidationOptions, StatusCheck,
     SubjectHolderRelationship, ValidationError,
 };
@@ -129,7 +130,7 @@ impl PresentedCredentialV2 {
 /// resolver, verifier and status check.
 ///
 /// Each profile has its own method, as for credentials: [`validate`](Self::validate) for the
-/// VCDM 1.1 JWT profile (`typ` `JWT`, the `vp` claim, credentials as JWTs) and
+/// VCDM 1.1 JWT profile (`typ` `JWT`, the `vp` claim, credentials as JWTs), deprecated, and
 /// [`validate_v2`](Self::validate_v2) for VCDM 2.0 secured with VC-JOSE-COSE (`typ`
 /// `vp+jwt`, the payload is the presentation, credentials enveloped). Neither accepts the
 /// other's `typ`. A verifier that takes both picks by `typ`, and since `typ` is optional in
@@ -137,6 +138,7 @@ impl PresentedCredentialV2 {
 /// a `vp` claim, VCDM 2.0 never has one.
 ///
 /// ```
+/// # #![allow(deprecated)]
 /// # #[cfg(feature = "did-key")]
 /// # {
 /// use identity_kit::jose::DefaultVerifier;
@@ -215,7 +217,17 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     /// A [`PresentationValidationError`] naming what failed: the presentation (in which case
     /// no credential was validated), or the credentials that failed, all of them under
     /// [`FailFast::AllErrors`].
+    #[deprecated(note = "the VCDM 1.1 JWT profile is deprecated: use `validate_v2`")]
     pub async fn validate(
+        &self,
+        jwt: &Jwt,
+        options: &PresentationValidationOptions,
+    ) -> Result<DecodedPresentation, PresentationValidationError> {
+        self.validate_vcdm11(jwt, options).await
+    }
+
+    /// [`validate`](Self::validate), for the modules that keep VCDM 1.1.
+    pub(crate) async fn validate_vcdm11(
         &self,
         jwt: &Jwt,
         options: &PresentationValidationOptions,
@@ -230,7 +242,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
             let result = match entry {
                 Ok(credential) => {
                     self.credentials
-                        .validate(&credential, &options.credentials)
+                        .validate_vcdm11(&credential, &options.credentials)
                         .await
                 }
                 Err(error) => Err(error),
@@ -486,6 +498,7 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtPresentat
 /// or [`ValidationError::Credential`] when the token or one of its credentials does not decode,
 /// and [`ValidationError::SdJwtPayload`] when one of them is the issuer-signed JWT of an
 /// SD-JWT.
+#[deprecated(note = "the VCDM 1.1 JWT profile is deprecated: use `decode_presentation_v2`")]
 pub fn decode_presentation(jwt: &Jwt) -> Result<DecodedPresentation, ValidationError> {
     let jws = jwt.decode()?;
     check_typ(jws.header(), "JWT", &NO_TYP)?;

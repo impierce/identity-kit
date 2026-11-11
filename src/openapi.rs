@@ -472,9 +472,10 @@ mod credentials {
         Schema, SchemaFormat, SchemaType, Schemas, ToSchema, array, collect, one_of, schema_ref,
         string, string_or_strings, uri,
     };
+    use crate::vc::credential::Credential;
+    use crate::vc::presentation::Presentation;
     use crate::vc::{
-        CONTEXT_V1, CONTEXT_V2, Credential, CredentialV2, EnvelopedVc, EnvelopedVp, Presentation,
-        PresentationV2,
+        CONTEXT_V1, CONTEXT_V2, CredentialV2, EnvelopedVc, EnvelopedVp, PresentationV2,
     };
 
     /// A compact JWS: three base64url parts joined by dots.

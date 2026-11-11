@@ -78,9 +78,13 @@ pub mod credentials {
     };
     #[cfg(feature = "linked-vp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "linked-vp")))]
+    #[expect(deprecated, reason = "kept for the deprecated VCDM 1.1 JWT profile")]
+    pub use crate::linked_vp::LinkedPresentationBuilder;
+    #[cfg(feature = "linked-vp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "linked-vp")))]
     pub use crate::linked_vp::{
-        LinkedPresentationBuilder, LinkedPresentationReport, LinkedVpClient, LinkedVpError,
-        LinkedVpService, LinkedVpValidationOptions, LinkedVpValidator,
+        LinkedPresentationReport, LinkedVpClient, LinkedVpError, LinkedVpService,
+        LinkedVpValidationOptions, LinkedVpValidator,
     };
     #[cfg(feature = "sd-jwt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
@@ -95,13 +99,17 @@ pub mod credentials {
     #[cfg_attr(docsrs, doc(cfg(feature = "status-list")))]
     pub use crate::status_list::{Status, StatusList, StatusListToken};
     pub use crate::vc::validation::{
-        CredentialStatus, CredentialValidationOptions, DecodedCredential, DecodedCredentialV2,
-        DecodedPresentation, DecodedPresentationV2, FailFast, JwtCredentialValidator,
-        JwtPresentationValidator, PresentationValidationOptions, PresentedCredentialV2,
-        StatusCheck, StatusPolicy, SubjectHolderRelationship, TimeOptions, ValidationError,
+        CredentialStatus, CredentialValidationOptions, DecodedCredentialV2, DecodedPresentationV2,
+        FailFast, JwtCredentialValidator, JwtPresentationValidator, PresentationValidationOptions,
+        PresentedCredentialV2, StatusCheck, StatusPolicy, SubjectHolderRelationship, TimeOptions,
+        ValidationError,
     };
+    #[expect(deprecated, reason = "kept for the deprecated VCDM 1.1 JWT profile")]
+    pub use crate::vc::validation::{DecodedCredential, DecodedPresentation};
     pub use crate::vc::{
-        ClaimPath, Credential, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt,
-        JwtClaims, Party, Presentation, PresentationV2, Subject,
+        ClaimPath, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Party,
+        PresentationV2, Subject,
     };
+    #[expect(deprecated, reason = "kept for the deprecated VCDM 1.1 JWT profile")]
+    pub use crate::vc::{Credential, Presentation};
 }

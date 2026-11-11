@@ -4,6 +4,10 @@
 //! validated over the RFC 8037 `did:key`, and every way one can fail.
 #![cfg(all(feature = "linked-vp", feature = "did-key"))]
 #![expect(
+    deprecated,
+    reason = "also tests the deprecated VCDM 1.1 form of linked presentations"
+)]
+#![expect(
     clippy::unreadable_literal,
     reason = "numbers are written as the specifications' examples write them"
 )]

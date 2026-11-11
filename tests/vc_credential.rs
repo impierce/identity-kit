@@ -1,6 +1,7 @@
 //! Specification vectors for `Credential`: the examples of the Verifiable Credentials Data
 //! Model 1.1 and its JWT profile (§6.3.1).
 #![cfg(feature = "vc")]
+#![expect(deprecated, reason = "tests the deprecated VCDM 1.1 JWT profile")]
 #![expect(
     clippy::unreadable_literal,
     reason = "numbers are written as the specifications' examples write them"
@@ -689,4 +690,27 @@ fn numeric_dates_are_whole_seconds() {
 fn base64url(data: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
+}
+
+/// `domain_linkage` re-exports the types of the deprecated aliases, undeprecated: a value
+/// passes between the two paths unchanged.
+#[cfg(feature = "domain-linkage")]
+#[test]
+fn domain_linkage_reexports_the_vcdm11_types() {
+    use identity_kit::domain_linkage;
+    use identity_kit::vc::validation::DecodedCredential;
+
+    fn credential(credential: domain_linkage::Credential) -> Credential {
+        credential
+    }
+    fn decoded(decoded: domain_linkage::DecodedCredential) -> DecodedCredential {
+        decoded
+    }
+    let _: fn(_) -> _ = decoded;
+    let issued = credential(domain_linkage::Credential::new(
+        Uri::parse("did:example:123").unwrap(),
+        chrono::DateTime::UNIX_EPOCH,
+        Subject::new(Uri::parse("did:example:123").unwrap()),
+    ));
+    assert_eq!(issued.issuer.id().as_str(), "did:example:123");
 }
