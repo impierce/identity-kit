@@ -621,6 +621,40 @@ pub fn decode_presentation_v2(jwt: &Jwt) -> Result<DecodedPresentationV2, Valida
     })
 }
 
+/// Decodes a VCDM 2.0 presentation JWT, accepting `presentation_typ`, and each credential it
+/// envelopes on its own: one result per entry, in order. The returned presentation's
+/// `credentials` stay empty.
+///
+/// # Errors
+///
+/// As [`decode_presentation_v2`], for the presentation alone.
+#[cfg(feature = "linked-vp")]
+pub(crate) fn decode_presentation_entries_v2(
+    jwt: &Jwt,
+    presentation_typ: &BTreeSet<String>,
+) -> Result<
+    (
+        DecodedPresentationV2,
+        Vec<Result<PresentedCredentialV2, ValidationError>>,
+    ),
+    ValidationError,
+> {
+    let jws = jwt.decode()?;
+    let (claims, presentation) = decode_payload_v2(&jws, presentation_typ)?;
+    let credentials = presentation
+        .verifiable_credential
+        .iter()
+        .map(decode_enveloped)
+        .collect();
+    let decoded = DecodedPresentationV2 {
+        header: jws.header().clone(),
+        claims,
+        presentation,
+        credentials: Vec::new(),
+    };
+    Ok((decoded, credentials))
+}
+
 /// Decodes the credential `enveloped` holds, by its media type.
 fn decode_enveloped(enveloped: &EnvelopedVc) -> Result<PresentedCredentialV2, ValidationError> {
     #[cfg(feature = "sd-jwt")]

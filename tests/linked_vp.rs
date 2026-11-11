@@ -23,8 +23,9 @@ use identity_kit::did::{
 };
 use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
 use identity_kit::linked_vp::{
-    CONTEXT, CREDENTIAL_TYP, LinkedPresentationBuilder, LinkedVpClient, LinkedVpError,
-    LinkedVpValidationOptions, LinkedVpValidator, PRESENTATION_TYP, SERVICE_TYPE, decode, service,
+    CONTEXT, CREDENTIAL_TYP, LinkedPresentation, LinkedPresentationBuilder,
+    LinkedPresentationV2Builder, LinkedVpClient, LinkedVpError, LinkedVpValidationOptions,
+    LinkedVpValidator, PRESENTATION_TYP, SERVICE_TYPE, decode, decode_v2, is_vcdm2, service,
     services,
 };
 use identity_kit::methods::{DidJwk, DidKey};
@@ -34,7 +35,10 @@ use identity_kit::vc::validation::{
     KeyReference, PresentationValidationError, PresentationValidationOptions,
     SubjectHolderRelationship, TimeOptions, ValidationError, decode_presentation,
 };
-use identity_kit::vc::{Credential, CredentialError, Jwt, JwtClaims, Presentation, Subject};
+use identity_kit::vc::{
+    Credential, CredentialError, CredentialV2, EnvelopedVc, Jwt, JwtClaims, Presentation,
+    PresentationV2, Subject,
+};
 use serde_json::{Value, json};
 use url::Url;
 
@@ -358,7 +362,17 @@ async fn example_fetched_from_the_example_document() {
     assert_eq!(reports.len(), 2);
     assert_eq!(reports[0].service.as_str(), "did:example:123#foo");
     assert_eq!(reports[0].url.as_ref(), Some(&url(EXAMPLE_URL)));
-    assert_eq!(reports[0].result.as_ref().unwrap().credentials.len(), 1);
+    assert_eq!(
+        reports[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .as_vcdm11()
+            .unwrap()
+            .credentials
+            .len(),
+        1
+    );
     assert_eq!(reports[1].service.as_str(), "did:example:123#baz");
     assert!(matches!(
         &reports[1].result,
@@ -518,7 +532,7 @@ async fn round_trip_over_did_key() {
     let reports = client.validate_document(&document, &options()).await;
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0].service, holder.did.join("#linked-vp").unwrap());
-    let decoded = reports[0].result.as_ref().unwrap();
+    let decoded = reports[0].result.as_ref().unwrap().as_vcdm11().unwrap();
     assert_eq!(decoded.presentation, builder.presentation());
     assert_eq!(decoded.header.typ.as_deref(), Some("JWT"));
     assert_eq!(decoded.claims, builder.jwt_claims().unwrap());
@@ -1232,4 +1246,251 @@ mod local_network {
             "{result:?}"
         );
     }
+}
+
+// VCDM 2.0 presentations secured with VC-JOSE-COSE (`vp+jwt`), their credentials enveloped,
+// built by the same holder.
+
+/// A VCDM 2.0 credential `holder` issued about `subject`.
+fn credential_v2(holder: &Holder, subject: &Did) -> CredentialV2 {
+    CredentialV2::new(
+        &holder.did,
+        Subject::new(subject.clone()).with_property("name", "Example LLC"),
+    )
+    .with_type("OrganizationCredential")
+    .with_valid_from(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
+}
+
+/// The credential `holder` issued about `subject`, as a `vc+jwt` envelope.
+async fn jwt_envelope(holder: &Holder, subject: &Did) -> EnvelopedVc {
+    let header = JwsHeader::new(JwsAlgorithm::EdDSA)
+        .with_typ(CredentialV2::JWT_TYP)
+        .with_kid(holder.kid.as_str());
+    let jwt = Jwt::sign(
+        &header,
+        &credential_v2(holder, subject).to_jwt_claims(),
+        &holder.signer,
+    )
+    .await
+    .unwrap();
+    EnvelopedVc::from_jwt(&jwt)
+}
+
+/// The credential `holder` issued about `subject` secured with SD-JWT, `name` selectively
+/// disclosable, as a `vc+sd-jwt` envelope holding every disclosure.
+#[cfg(feature = "sd-jwt")]
+async fn sd_jwt_envelope(holder: &Holder, subject: &Did) -> EnvelopedVc {
+    let issued =
+        identity_kit::sd_jwt_vc::SdJwtCredentialV2Builder::new(credential_v2(holder, subject))
+            .with_kid(holder.kid.as_str())
+            .conceal(["credentialSubject", "name"])
+            .sign(&holder.signer)
+            .await
+            .unwrap();
+    assert_eq!(issued.sd_jwt().disclosures().len(), 1);
+    EnvelopedVc::from_sd_jwt(issued.sd_jwt())
+}
+
+fn builder_v2(holder: &Holder) -> LinkedPresentationV2Builder {
+    LinkedPresentationV2Builder::new(holder.did.clone())
+        .with_id(Uri::parse(PUBLISHED_URL).unwrap())
+        .with_issued_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
+        .with_expiration(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+}
+
+#[cfg(feature = "sd-jwt")]
+#[tokio::test]
+async fn v2_round_trip_over_did_key() {
+    let holder = holder();
+    let builder = builder_v2(&holder)
+        .with_credential(sd_jwt_envelope(&holder, &holder.did).await)
+        .with_credential(jwt_envelope(&holder, &holder.did).await);
+    let jwt = builder.sign(&holder.kid, &holder.signer).await.unwrap();
+    assert!(is_vcdm2(&jwt).unwrap());
+
+    let mut document = resolver([]).resolve_document(&holder.did).await.unwrap();
+    document
+        .insert_service(
+            service(holder.did.join("#linked-vp").unwrap(), [url(PUBLISHED_URL)]).unwrap(),
+        )
+        .unwrap();
+    let web = Web::default().serving(PUBLISHED_URL, 200, jwt.as_str());
+    let client = client(web, did_key_validator());
+    let reports = client.validate_document(&document, &options()).await;
+    assert_eq!(reports.len(), 1);
+    let LinkedPresentation::Vcdm2(decoded) = reports[0].result.as_ref().unwrap() else {
+        panic!("a VCDM 2.0 presentation");
+    };
+    assert_eq!(decoded.presentation, builder.presentation());
+    assert_eq!(decoded.header.typ.as_deref(), Some(PresentationV2::JWT_TYP));
+    assert_eq!(decoded.claims, builder.jwt_claims());
+    assert_eq!(decoded.claims.iss.as_deref(), Some(holder.did.as_str()));
+    assert!(decoded.claims.aud.is_none());
+    assert!(!decoded.claims.additional.contains_key("nonce"));
+    assert!(!decoded.claims.additional.contains_key("vp"));
+    assert_eq!(decoded.holder(), Some(&Uri::from(holder.did.clone())));
+    let [sd_jwt, plain] = decoded.credentials.as_slice() else {
+        panic!("two credentials in order");
+    };
+    // Every disclosure travels with the credential: the concealed `name` is read back.
+    assert!(sd_jwt.as_sd_jwt().is_some());
+    assert!(plain.as_jwt().is_some());
+    for credential in [sd_jwt, plain] {
+        assert_eq!(
+            credential.credential().subject().unwrap().properties["name"],
+            "Example LLC"
+        );
+    }
+
+    // The validator picks the form from the token.
+    let validated = did_key_validator()
+        .validate_any(&jwt, &holder.did, &options())
+        .await
+        .unwrap();
+    assert!(validated.as_vcdm2().is_some() && validated.as_vcdm11().is_none());
+    assert_eq!(validated.holder(), Some(&Uri::from(holder.did.clone())));
+}
+
+#[tokio::test]
+async fn each_form_is_refused_by_the_other_validator() {
+    let holder = holder();
+    let v1 = builder(&holder)
+        .with_credential(credential(&holder, &holder.did).await)
+        .sign(&holder.kid, &holder.signer)
+        .await
+        .unwrap();
+    let v2 = builder_v2(&holder)
+        .with_credential(jwt_envelope(&holder, &holder.did).await)
+        .sign(&holder.kid, &holder.signer)
+        .await
+        .unwrap();
+    assert!(!is_vcdm2(&v1).unwrap());
+    assert!(is_vcdm2(&v2).unwrap());
+    assert!(!is_vcdm2(&example_jwt()).unwrap());
+
+    let validator = did_key_validator();
+    let validated = validator
+        .validate_any(&v1, &holder.did, &options())
+        .await
+        .unwrap();
+    assert!(validated.as_vcdm11().is_some() && validated.as_vcdm2().is_none());
+    assert_eq!(validated.holder(), Some(&Uri::from(holder.did.clone())));
+
+    let error = validator
+        .validate(&v2, &holder.did, &options())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        presentation_error(error),
+        ValidationError::UnexpectedTyp { .. }
+    ));
+    let error = validator
+        .validate_v2(&v1, &holder.did, &options())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        presentation_error(error),
+        ValidationError::UnexpectedTyp { .. }
+    ));
+}
+
+#[tokio::test]
+async fn top_level_payload_with_the_vcdm_1_1_context_is_neither_form() {
+    // The specification's "decoded JWT payload" example has no `vp` claim, so it is read as
+    // VCDM 2.0, whose payload it is not: its credentials are JWTs, not envelopes.
+    let flat: Jwt = vector("flat_jwt").trim().parse().unwrap();
+    assert!(is_vcdm2(&flat).unwrap());
+    assert!(decode_v2(&flat).is_err());
+    let error = example_validator()
+        .validate_any(&flat, &example_did(), &options())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        presentation_error(error),
+        ValidationError::Credential(_)
+    ));
+}
+
+#[tokio::test]
+async fn v2_builder_refuses_a_key_of_another_did() {
+    let holder = holder();
+    let other = fixtures::holder();
+    let error = builder_v2(&holder)
+        .sign(&other.kid, &holder.signer)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        LinkedVpError::Validation(ValidationError::HolderMismatch { .. })
+    ));
+}
+
+#[tokio::test]
+async fn v2_holder_must_be_the_linking_did() {
+    let holder = holder();
+    let jwt = builder_v2(&holder)
+        .with_credential(jwt_envelope(&holder, &holder.did).await)
+        .sign(&holder.kid, &holder.signer)
+        .await
+        .unwrap();
+    let other = fixtures::holder();
+    let error = did_key_validator()
+        .validate_v2(&jwt, &other.did, &options())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        LinkedVpError::HolderMismatch { did, holder: found } if did == other.did && found == holder.did
+    ));
+}
+
+#[tokio::test]
+async fn v2_envelopes_fail_alone() {
+    let holder = holder();
+    let other = fixtures::holder();
+    let jwt = builder_v2(&holder)
+        .with_credential(jwt_envelope(&holder, &holder.did).await)
+        .with_credential(EnvelopedVc::new("application/vc+jwt", "not-a-jwt").unwrap())
+        // A credential about another subject: the holder must be the subject by default.
+        .with_credential(jwt_envelope(&holder, &other.did).await)
+        .sign(&holder.kid, &holder.signer)
+        .await
+        .unwrap();
+
+    let decoded = decode_v2(&jwt).unwrap();
+    assert_eq!(decoded.holder(), Some(&Uri::from(holder.did.clone())));
+    assert!(decoded.credentials[0].is_ok());
+    assert!(decoded.credentials[1].is_err());
+    assert!(decoded.credentials[2].is_ok());
+
+    let error = did_key_validator()
+        .validate_v2(
+            &jwt,
+            &holder.did,
+            &options().with_fail_fast(FailFast::AllErrors),
+        )
+        .await
+        .unwrap_err();
+    let errors = credential_errors(error);
+    assert_eq!(
+        errors.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        [1, 2]
+    );
+
+    // With any relationship between subject and holder, only the malformed envelope fails.
+    let error = did_key_validator()
+        .validate_v2(
+            &jwt,
+            &holder.did,
+            &options()
+                .with_fail_fast(FailFast::AllErrors)
+                .with_subject_holder(SubjectHolderRelationship::Any),
+        )
+        .await
+        .unwrap_err();
+    let errors = credential_errors(error);
+    assert_eq!(
+        errors.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        [1]
+    );
 }
