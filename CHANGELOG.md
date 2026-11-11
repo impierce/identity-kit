@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/impierce/identity-kit/compare/v0.4.1...v0.5.0) - 2026-11-11
+
+### Added
+
+- *(linked_vp)* [**breaking**] add VCDM 2.0 linked presentations ([#169](https://github.com/impierce/identity-kit/pull/169))
+
 ## [0.4.1](https://github.com/impierce/identity-kit/compare/v0.4.0...v0.4.1) - 2026-11-03
 
 ### Added
