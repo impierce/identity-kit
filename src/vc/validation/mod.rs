@@ -75,19 +75,42 @@ pub use crate::resolver::{
 };
 use crate::vc::{Jwt, JwtClaims, TypedObject, claims};
 
-mod credential;
+pub(crate) mod credential;
 mod error;
-mod presentation;
+pub(crate) mod presentation;
 
-pub use credential::{
-    DecodedCredential, DecodedCredentialV2, JwtCredentialValidator, decode_credential,
-    decode_credential_v2,
-};
+#[expect(
+    deprecated,
+    reason = "re-exported for the VCDM 1.1 JWT profile, deprecated"
+)]
+pub use credential::decode_credential;
+#[cfg(feature = "domain-linkage")]
+pub(crate) use credential::decode_credential_vcdm11;
+pub use credential::{DecodedCredentialV2, JwtCredentialValidator, decode_credential_v2};
 pub use error::{PresentationValidationError, StatusError, ValidationError};
+#[expect(
+    deprecated,
+    reason = "re-exported for the VCDM 1.1 JWT profile, deprecated"
+)]
+pub use presentation::decode_presentation;
 pub use presentation::{
-    DecodedPresentation, DecodedPresentationV2, JwtPresentationValidator, PresentedCredentialV2,
-    decode_presentation, decode_presentation_v2,
+    DecodedPresentationV2, JwtPresentationValidator, PresentedCredentialV2, decode_presentation_v2,
 };
+
+/// A validated or decoded VCDM 1.1 credential JWT.
+///
+/// Deprecated with the VCDM 1.1 JWT profile; domain linkage keeps it as
+/// `domain_linkage::DecodedCredential`, which is the same type without the deprecation.
+#[deprecated(
+    note = "the VCDM 1.1 JWT profile is deprecated: use `DecodedCredentialV2` or `sd_jwt_vc`; domain linkage keeps it as `domain_linkage::DecodedCredential`"
+)]
+pub type DecodedCredential = credential::DecodedCredential;
+
+/// A validated or decoded VCDM 1.1 presentation JWT.
+///
+/// Deprecated with the VCDM 1.1 JWT profile.
+#[deprecated(note = "the VCDM 1.1 JWT profile is deprecated: use `DecodedPresentationV2`")]
+pub type DecodedPresentation = presentation::DecodedPresentation;
 #[cfg(feature = "linked-vp")]
 pub(crate) use presentation::{decode_presentation_entries, decode_presentation_entries_v2};
 

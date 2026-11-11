@@ -2,13 +2,23 @@
 //!
 //! The module implements two profiles over the same JOSE layer:
 //!
-//! - **VCDM 1.1 JWT profile** (§6.3.1 of the Verifiable Credentials Data Model 1.1):
-//!   [`Credential`] and [`Presentation`] map to and from a [`JwtClaims`] set whose `vc` or `vp`
-//!   claim holds the data model object and whose registered claims (`iss`, `sub`, `jti`, `nbf`,
-//!   `exp`, `aud`) carry the issuer, subject, id, validity period and audience.
+//! - **VCDM 1.1 JWT profile** (§6.3.1 of the Verifiable Credentials Data Model 1.1),
+//!   **deprecated**: [`Credential`] and [`Presentation`] map to and from a [`JwtClaims`] set
+//!   whose `vc` or `vp` claim holds the data model object and whose registered claims (`iss`,
+//!   `sub`, `jti`, `nbf`, `exp`, `aud`) carry the issuer, subject, id, validity period and
+//!   audience.
 //! - **VCDM 2.0 with VC-JOSE-COSE**: [`CredentialV2`] and [`PresentationV2`] are themselves the
 //!   JWT payload (`typ: vc+jwt` or `vp+jwt`), and a secured credential travels inside a
 //!   presentation as an [`EnvelopedVc`] holding a `data:application/vc+jwt,…` URL.
+//!
+//! VCDM 2.0 replaced VCDM 1.1, and VC-JOSE-COSE forbids the `vc` and `vp` claims, so the VCDM
+//! 1.1 profile is deprecated: its types ([`Credential`], [`Presentation`],
+//! [`DecodedCredential`](validation::DecodedCredential),
+//! [`DecodedPresentation`](validation::DecodedPresentation)), its decoders and the `validate`
+//! methods of the validators warn. Issue and present with the VCDM 2.0 types, or as SD-JWT VCs
+//! (`sd_jwt_vc`). The DIF Well Known DID Configuration requires a VCDM 1.1 credential, so
+//! `domain_linkage` keeps the profile: it re-exports the same types without the deprecation
+//! (`domain_linkage::Credential`, `domain_linkage::DecodedCredential`).
 //!
 //! Both are plain data with open extension properties; `@context` is carried, never processed.
 //! [`ClaimPath`] points at a claim in any JSON credential: the claim path of SD-JWT VC §5.6.1 and
@@ -29,6 +39,7 @@
 //! The JWT claims of VCDM 1.1 Example 31, decoded to a credential and back.
 //!
 //! ```
+//! # #![allow(deprecated)]
 //! use identity_kit::vc::{Credential, JwtClaims};
 //! use serde_json::json;
 //!
@@ -67,16 +78,24 @@
 //! ```
 
 mod claims;
-mod credential;
+pub(crate) mod credential;
 mod error;
 mod jwt;
 mod model;
 mod path;
-mod presentation;
+pub(crate) mod presentation;
 mod v2;
 pub mod validation;
 
-pub use credential::Credential;
+/// A VCDM 1.1 verifiable credential, for the JWT profile of VCDM 1.1 §6.3.1.
+///
+/// Deprecated outside the specifications that require VCDM 1.1: issue and validate credentials
+/// as [`CredentialV2`] (VC-JOSE-COSE) or as SD-JWT VCs (`sd_jwt_vc`) instead. Domain linkage
+/// keeps it, as `domain_linkage::Credential`, which is the same type without the deprecation.
+#[deprecated(
+    note = "the VCDM 1.1 JWT profile is deprecated: use `CredentialV2` or `sd_jwt_vc`; domain linkage keeps it as `domain_linkage::Credential`"
+)]
+pub type Credential = credential::Credential;
 pub use error::CredentialError;
 pub use jwt::Jwt;
 #[cfg(feature = "status-list")]
@@ -87,5 +106,9 @@ pub use crate::jose::JwtClaims;
 pub(crate) use crate::jose::numeric_date;
 pub use model::{CONTEXT_V1, CONTEXT_V2, Party, Subject, TypedObject};
 pub use path::{ClaimPath, ClaimPathError, PathComponent};
-pub use presentation::Presentation;
+/// A VCDM 1.1 verifiable presentation, for the JWT profile of VCDM 1.1 §6.3.1.
+///
+/// Deprecated: present credentials as a [`PresentationV2`] (VC-JOSE-COSE) instead.
+#[deprecated(note = "the VCDM 1.1 JWT profile is deprecated: use `PresentationV2`")]
+pub type Presentation = presentation::Presentation;
 pub use v2::{CredentialV2, EnvelopedVc, EnvelopedVp, PresentationV2};

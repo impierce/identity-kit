@@ -3,6 +3,10 @@
 //! credentials and presentations, SD-JWT VC type metadata) and the documents this crate
 //! produces, and reject what the types reject.
 #![cfg(feature = "utoipa")]
+#![expect(
+    deprecated,
+    reason = "the schemas of the deprecated VCDM 1.1 types are still published"
+)]
 
 use boon::{Compiler, Draft, SchemaIndex, Schemas};
 use identity_kit::did::{DidDocument, MethodRef, Service, VerificationMethod};

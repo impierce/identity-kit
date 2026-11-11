@@ -4,6 +4,10 @@
 //! Appendix A.1) signs `vc+jwt` credentials for a `did:jwk` holder (the P-256 key of RFC 7515
 //! Appendix A.3), who envelopes them in a `vp+jwt` presentation.
 #![cfg(all(feature = "vc", feature = "did-key", feature = "did-jwk"))]
+#![expect(
+    deprecated,
+    reason = "checks that each profile's validator refuses the other's tokens"
+)]
 
 mod common;
 

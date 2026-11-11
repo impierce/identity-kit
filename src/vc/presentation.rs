@@ -19,6 +19,7 @@ use super::{CredentialError, Jwt, JwtClaims, Party, claims};
 /// # Examples
 ///
 /// ```
+/// # #![allow(deprecated)]
 /// use identity_kit::did::{Did, Uri};
 /// use identity_kit::vc::{Jwt, Presentation};
 ///

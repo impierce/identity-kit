@@ -1,6 +1,7 @@
 //! Specification vectors for `Presentation`: VCDM 1.1 Example 33 (a presentation as JWT
 //! claims and as a JWT) and the presentation examples of §4.10.
 #![cfg(feature = "vc")]
+#![expect(deprecated, reason = "tests the deprecated VCDM 1.1 JWT profile")]
 #![expect(
     clippy::unreadable_literal,
     reason = "numbers are written as the specifications' examples write them"

@@ -24,7 +24,7 @@ Add it to a project with `cargo add identity-kit`. The API reference is on [docs
 - ✅ `DidResolver` and `DidProducer` traits with a `Resolver` registry, document cache and DID URL dereferencing
 - ✅ `KeyReference` and `KeyResolver`: a token's key found from a DID URL `kid`, a `#fragment` relative to a DID `iss`, a `jwk` header, `cnf`, or the JWT VC issuer metadata of an HTTPS `iss`
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
-- ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
+- ✅ Verifiable credentials and presentations as JWTs: [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, the [VCDM 1.1](https://www.w3.org/TR/vc-data-model-1.1/) JWT profile (deprecated outside domain linkage), and validators over any DID method
 - ✅ SD-JWT (RFC 9901), SD-JWT VC and VCDM 2.0 credentials secured with SD-JWT (`vc+sd-jwt`): issuing with selective disclosure, presenting with key binding, validating over any DID method, and type metadata
 - ✅ The IETF Token Status List for JWT and SD-JWT credentials alike: issuing and signing status lists, and checking the `status` claim
 - ✅ DIF Well Known DID Configuration: the DID configuration resource, its domain linkage credentials and their validation against an origin

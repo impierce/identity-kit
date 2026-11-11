@@ -7,20 +7,22 @@
 //! this crate handles it as a JSON Web Token, in two forms, and reports the JSON-LD form as
 //! unsupported:
 //!
-//! - a VCDM 1.1 presentation in the `vp` claim, its credentials as JWTs;
+//! - a VCDM 1.1 presentation in the `vp` claim, its credentials as JWTs, which
+//!   [`validate_any`](LinkedVpValidator::validate_any) still reads but whose builder and
+//!   single-form entry points are deprecated with the VCDM 1.1 JWT profile;
 //! - a VCDM 2.0 presentation secured with VC-JOSE-COSE (`typ` `vp+jwt`), the presentation the
 //!   payload, its credentials enveloped (`application/vc+jwt` or `application/vc+sd-jwt`).
 //!   [`is_vcdm2`] tells the two apart.
 //!
-//! - [`LinkedPresentationBuilder`] (VCDM 1.1) and [`LinkedPresentationV2Builder`] (VCDM 2.0)
-//!   sign a presentation for publishing: `iss` and `holder` the DID, no `aud` and no `nonce`,
+//! - [`LinkedPresentationV2Builder`] (VCDM 2.0) and the deprecated [`LinkedPresentationBuilder`]
+//!   (VCDM 1.1) sign a presentation for publishing: `iss` and `holder` the DID, no `aud` and no `nonce`,
 //!   which a presentation published for anyone cannot carry.
 //! - [`LinkedVpValidator`] validates one presentation for the DID whose document lists it:
 //!   holder and `iss` are that DID, the holder signed with a key of the DID under
 //!   `authentication`, `exp` holds when present, and every credential validates with its
 //!   subject the holder (the specification's SHOULD, configurable).
-//!   [`validate`](LinkedVpValidator::validate) and
-//!   [`validate_v2`](LinkedVpValidator::validate_v2) take one form each,
+//!   [`validate_v2`](LinkedVpValidator::validate_v2) and the deprecated
+//!   [`validate`](LinkedVpValidator::validate) take one form each,
 //!   [`validate_any`](LinkedVpValidator::validate_any) either.
 //! - [`LinkedVpClient`] fetches what a document's services point to through an
 //!   [`HttpClient`] and validates each presentation, in either form, reporting per URL: every
@@ -106,15 +108,16 @@ use crate::did::{Did, DidDocument, DidUrl, ResolutionError, Service, ServiceEndp
 use crate::jose::{DefaultVerifier, JwsError, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError, fetchable};
 use crate::resolver::Resolver;
+use crate::vc::presentation::Presentation;
+use crate::vc::validation::credential::DecodedCredential;
+use crate::vc::validation::presentation::DecodedPresentation;
 use crate::vc::validation::{
-    CredentialValidationOptions, DecodedCredential, DecodedPresentation, DecodedPresentationV2,
-    FailFast, JwtPresentationValidator, KeyReference, KeyResolver, PresentationValidationError,
-    PresentationValidationOptions, PresentedCredentialV2, SubjectHolderRelationship, TimeOptions,
-    ValidationError, decode_presentation_entries, decode_presentation_entries_v2, extract_holder,
+    CredentialValidationOptions, DecodedPresentationV2, FailFast, JwtPresentationValidator,
+    KeyReference, KeyResolver, PresentationValidationError, PresentationValidationOptions,
+    PresentedCredentialV2, SubjectHolderRelationship, TimeOptions, ValidationError,
+    decode_presentation_entries, decode_presentation_entries_v2, extract_holder,
 };
-use crate::vc::{
-    CredentialError, EnvelopedVc, Jwt, JwtClaims, Party, Presentation, PresentationV2,
-};
+use crate::vc::{CredentialError, EnvelopedVc, Jwt, JwtClaims, Party, PresentationV2};
 
 /// The service type, `LinkedVerifiablePresentation`.
 pub const SERVICE_TYPE: &str = "LinkedVerifiablePresentation";
@@ -272,6 +275,7 @@ fn invalid_url(service: &Service, uri: &Uri, error: url::ParseError) -> LinkedPr
 /// # Examples
 ///
 /// ```
+/// # #![allow(deprecated)]
 /// use chrono::{TimeZone as _, Utc};
 /// use identity_kit::did::{Did, Uri};
 /// use identity_kit::linked_vp::LinkedPresentationBuilder;
@@ -291,6 +295,9 @@ fn invalid_url(service: &Service, uri: &Uri, error: url::ParseError) -> LinkedPr
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
+#[deprecated(
+    note = "the VCDM 1.1 JWT profile is deprecated: publish with `LinkedPresentationV2Builder`"
+)]
 pub struct LinkedPresentationBuilder {
     /// The holder: the DID whose document links the presentation.
     pub holder: Did,
@@ -304,6 +311,7 @@ pub struct LinkedPresentationBuilder {
     pub expiration: Option<DateTime<Utc>>,
 }
 
+#[expect(deprecated, reason = "the VCDM 1.1 builder's own implementation")]
 impl LinkedPresentationBuilder {
     /// A presentation by `holder` of no credentials, issued now, without `id` or expiration.
     pub fn new(holder: Did) -> Self {
@@ -693,6 +701,7 @@ impl LinkedVpValidationOptions {
 /// its `verifiableCredential` decoded on its own.
 #[derive(Debug)]
 #[non_exhaustive]
+#[deprecated(note = "the VCDM 1.1 JWT profile is deprecated: use `DecodedLinkedPresentationV2`")]
 pub struct DecodedLinkedPresentation {
     /// The JWS header.
     pub header: JwsHeader,
@@ -706,6 +715,10 @@ pub struct DecodedLinkedPresentation {
     pub credentials: Vec<Result<DecodedCredential, ValidationError>>,
 }
 
+#[expect(
+    deprecated,
+    reason = "the deprecated VCDM 1.1 decoding's own implementation"
+)]
 impl DecodedLinkedPresentation {
     /// The holder: `holder` of the presentation, which decoding set from `iss`.
     pub fn holder(&self) -> Option<&Uri> {
@@ -722,6 +735,10 @@ impl DecodedLinkedPresentation {
 ///
 /// As [`decode_presentation`](crate::vc::validation::decode_presentation), for the
 /// presentation alone.
+#[deprecated(
+    note = "the VCDM 1.1 JWT profile is deprecated: use `decode_v2`, or `LinkedVpValidator::validate_any` to read either form"
+)]
+#[expect(deprecated, reason = "builds the deprecated VCDM 1.1 result")]
 pub fn decode(jwt: &Jwt) -> Result<DecodedLinkedPresentation, ValidationError> {
     let presentation_typ: BTreeSet<String> = PRESENTATION_TYP.map(str::to_owned).into();
     let credential_typ: BTreeSet<String> = CREDENTIAL_TYP.map(str::to_owned).into();
@@ -886,7 +903,21 @@ impl<R: KeyResolver, V: JwsVerifier> LinkedVpValidator<R, V> {
     /// [`LinkedVpError::HolderMismatch`] when the holder is not `did`, otherwise
     /// [`LinkedVpError::Presentation`] with what [`JwtPresentationValidator::validate`]
     /// reports; a key of another DID is a [`ValidationError::HolderMismatch`] there.
+    #[deprecated(
+        note = "the VCDM 1.1 JWT profile is deprecated: use `validate_v2`, or `validate_any` to accept either form"
+    )]
     pub async fn validate(
+        &self,
+        jwt: &Jwt,
+        did: &Did,
+        options: &LinkedVpValidationOptions,
+    ) -> Result<DecodedPresentation, LinkedVpError> {
+        self.validate_vcdm11(jwt, did, options).await
+    }
+
+    /// [`validate`](Self::validate), for [`validate_any`](Self::validate_any), which still
+    /// reads presentations published in the VCDM 1.1 form.
+    async fn validate_vcdm11(
         &self,
         jwt: &Jwt,
         did: &Did,
@@ -895,7 +926,7 @@ impl<R: KeyResolver, V: JwsVerifier> LinkedVpValidator<R, V> {
         check_linking_did(jwt, did)?;
         let decoded = self
             .presentations
-            .validate(jwt, &options.presentation_options())
+            .validate_vcdm11(jwt, &options.presentation_options())
             .await?;
         Ok(decoded)
     }
@@ -943,7 +974,7 @@ impl<R: KeyResolver, V: JwsVerifier> LinkedVpValidator<R, V> {
                 .await
                 .map(LinkedPresentation::Vcdm2)
         } else {
-            self.validate(jwt, did, options)
+            self.validate_vcdm11(jwt, did, options)
                 .await
                 .map(LinkedPresentation::Vcdm11)
         }

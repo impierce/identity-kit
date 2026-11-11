@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 
 use crate::did::Uri;
 use crate::jose::{CompactJws, DefaultVerifier, Jwk, JwsHeader, JwsVerifier};
-use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party};
+use crate::vc::credential::Credential;
+use crate::vc::{CredentialV2, Jwt, JwtClaims, Party};
 
 use serde_json::Value;
 
@@ -54,7 +55,7 @@ pub struct DecodedCredentialV2 {
 /// use identity_kit::methods::DidKey;
 /// use identity_kit::resolver::Resolver;
 /// use identity_kit::vc::validation::{CredentialValidationOptions, JwtCredentialValidator, TimeOptions};
-/// use identity_kit::vc::{Credential, Jwt, Subject};
+/// use identity_kit::vc::{CredentialV2, Jwt, Subject};
 ///
 /// // The Ed25519 key of RFC 8037 Appendix A.1 behind a `Signer`.
 /// struct Issuer(ed25519_dalek::SigningKey);
@@ -79,19 +80,21 @@ pub struct DecodedCredentialV2 {
 /// let issuer = DidKey::did(&jwk)?;
 /// let kid = issuer.join(&format!("#{}", issuer.method_specific_id()))?;
 ///
-/// let credential = Credential::new(
+/// let credential = CredentialV2::new(
 ///     &issuer,
-///     Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap(),
 ///     Subject::new(Uri::parse("did:example:ebfeb1f712ebc6f1c276e12ec21")?),
-/// );
-/// let header = JwsHeader::new(JwsAlgorithm::EdDSA).with_typ("JWT").with_kid(kid.as_str());
-/// let jwt = Jwt::sign(&header, &credential.to_jwt_claims()?, &Issuer(signing_key)).await?;
+/// )
+/// .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap());
+/// let header = JwsHeader::new(JwsAlgorithm::EdDSA)
+///     .with_typ(CredentialV2::JWT_TYP)
+///     .with_kid(kid.as_str());
+/// let jwt = Jwt::sign(&header, &credential.to_jwt_claims(), &Issuer(signing_key)).await?;
 ///
 /// let resolver = Resolver::builder().with(DidKey::default()).build();
 /// let validator = JwtCredentialValidator::new(resolver, DefaultVerifier);
 /// let options = CredentialValidationOptions::new()
 ///     .with_time(TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()));
-/// let decoded = validator.validate(&jwt, &options).await?;
+/// let decoded = validator.validate_v2(&jwt, &options).await?;
 /// assert_eq!(decoded.credential, credential);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # })?;
@@ -143,7 +146,19 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     ///
     /// The first [`ValidationError`] found, in the order the [module documentation](super)
     /// lists the checks.
+    #[deprecated(
+        note = "the VCDM 1.1 JWT profile is deprecated: use `validate_v2` or `sd_jwt_vc`; domain linkage keeps it through `DomainLinkageValidator`"
+    )]
     pub async fn validate(
+        &self,
+        jwt: &Jwt,
+        options: &CredentialValidationOptions,
+    ) -> Result<DecodedCredential, ValidationError> {
+        self.validate_vcdm11(jwt, options).await
+    }
+
+    /// [`validate`](Self::validate), for the modules that keep VCDM 1.1.
+    pub(crate) async fn validate_vcdm11(
         &self,
         jwt: &Jwt,
         options: &CredentialValidationOptions,
@@ -264,7 +279,15 @@ impl<R: core::fmt::Debug, V: core::fmt::Debug> core::fmt::Debug for JwtCredentia
 /// [`ValidationError::Jws`], [`ValidationError::Payload`], [`ValidationError::UnexpectedTyp`]
 /// or [`ValidationError::Credential`] when the token does not decode to a credential, and
 /// [`ValidationError::SdJwtPayload`] when it is the issuer-signed JWT of an SD-JWT.
+#[deprecated(
+    note = "the VCDM 1.1 JWT profile is deprecated: use `decode_credential_v2` or `sd_jwt_vc`"
+)]
 pub fn decode_credential(jwt: &Jwt) -> Result<DecodedCredential, ValidationError> {
+    decode_credential_vcdm11(jwt)
+}
+
+/// [`decode_credential`], for the modules that keep VCDM 1.1.
+pub(crate) fn decode_credential_vcdm11(jwt: &Jwt) -> Result<DecodedCredential, ValidationError> {
     decode(&jwt.decode()?, &NO_TYP)
 }
 
