@@ -16,9 +16,10 @@
 //! For a credential ([`JwtCredentialValidator`]):
 //!
 //! 1. The token is a compact JWS whose header names its key
-//!    ([`KeyReference::from_jws`], with the issuer as `iss`): a `kid` that is a DID URL of the
-//!    form `did:…#fragment`, a `#fragment` relative to a DID issuer, a `kid` into the key set of
-//!    an HTTPS issuer, or a `jwk`, `x5c` or `jku` header. A path or DID parameters such as
+//!    ([`KeyReference::candidates`], with the issuer as `iss`, the first of them the resolver
+//!    handles): a `kid` that is a DID URL of the form `did:…#fragment`, a `#fragment` relative
+//!    to a DID issuer, an `x5c` certificate chain, a `kid` into the key set of an HTTPS issuer,
+//!    or a `jwk` or `jku` header. A path or DID parameters such as
 //!    `versionId` in a DID URL are refused, so the signer cannot pick the document version its
 //!    key is looked up in (ADR 0004). When `typ` is present it names the profile: `JWT` for
 //!    VCDM 1.1, `vc+jwt` for VCDM 2.0, or one of the values the options add

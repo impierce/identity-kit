@@ -200,10 +200,10 @@ fn x5c_header_is_a_certificate_chain() {
     let reference = from_jws(json!({"alg": "ES256", "x5c": x5c}), None).unwrap();
     assert_eq!(reference, KeyReference::X509Chain(vec![leaf, root]));
     assert_eq!(reference.to_string(), "`x5c` chain of 2 certificates");
-    // `jwk` comes first.
+    // A chain comes before a key by value, which only asserts itself.
     assert_eq!(
         from_jws(json!({"alg": "EdDSA", "jwk": ed25519(), "x5c": x5c}), None).unwrap(),
-        KeyReference::Jwk(Box::new(ed25519()))
+        reference
     );
     for x5c in [
         json!("MIIB"),
@@ -218,6 +218,104 @@ fn x5c_header_is_a_certificate_chain() {
             Err(KeyReferenceError::InvalidX5c(_))
         ));
     }
+}
+
+/// Every reference a header makes, in the order a validator tries them: a DID URL, a
+/// certificate chain, the issuer's key set, a key by value, a key set URL.
+#[test]
+fn candidates_are_every_reference_in_order() {
+    let candidates = |header: Value, iss: Option<&str>| KeyReference::candidates(&jws(header), iss);
+    let leaf = b"leaf certificate".to_vec();
+    let x5c = json!([STANDARD.encode(&leaf)]);
+    let chain = KeyReference::X509Chain(vec![leaf]);
+    let by_value = KeyReference::Jwk(Box::new(ed25519()));
+    let jku = Url::parse("https://issuer.example/jwks.json").unwrap();
+    let everything = json!({
+        "alg": "EdDSA", "kid": "key-1", "x5c": x5c, "jwk": ed25519(), "jku": jku.as_str()
+    });
+
+    // A `kid` of an HTTPS issuer names a key set, after the chain.
+    let issuer = Url::parse("https://issuer.example").unwrap();
+    assert_eq!(
+        candidates(everything.clone(), Some(issuer.as_str())).unwrap(),
+        [
+            chain.clone(),
+            KeyReference::Jwks {
+                issuer,
+                kid: "key-1".to_owned()
+            },
+            by_value.clone(),
+            KeyReference::Jku {
+                url: jku.clone(),
+                kid: Some("key-1".to_owned())
+            },
+        ]
+    );
+    // A DID URL comes first.
+    let mut with_did_url = everything.clone();
+    with_did_url["kid"] = json!("did:example:123#key-1");
+    let all = candidates(with_did_url.clone(), None).unwrap();
+    assert_eq!(all.len(), 4);
+    assert_eq!(
+        all[0],
+        KeyReference::DidUrl(did_url("did:example:123#key-1"))
+    );
+    assert_eq!(all[1], chain);
+    // `from_jws` is the first of them.
+    assert_eq!(from_jws(with_did_url, None).unwrap(), all[0]);
+    assert_eq!(from_jws(everything, None).unwrap(), chain);
+
+    // A `kid` that names nothing by itself makes no reference when another parameter does.
+    assert_eq!(
+        candidates(
+            json!({"alg": "EdDSA", "kid": "key-1", "jwk": ed25519()}),
+            None
+        )
+        .unwrap(),
+        core::slice::from_ref(&by_value)
+    );
+    // A malformed parameter is skipped when another one makes a reference,
+    assert_eq!(
+        candidates(
+            json!({"alg": "EdDSA", "x5c": "MIIB", "jwk": ed25519()}),
+            None
+        )
+        .unwrap(),
+        [by_value]
+    );
+    let private: Value = json!({
+        "kty": "OKP", "crv": "Ed25519", "x": RFC8037_X,
+        "d": "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"
+    });
+    assert_eq!(
+        candidates(json!({"alg": "EdDSA", "x5c": x5c, "jwk": private}), None).unwrap(),
+        [chain]
+    );
+    // and is the error when none does, before a `kid` that names nothing.
+    assert!(matches!(
+        candidates(json!({"alg": "EdDSA", "kid": "key-1", "x5c": []}), None),
+        Err(KeyReferenceError::InvalidX5c(_))
+    ));
+    assert!(matches!(
+        candidates(json!({"alg": "EdDSA", "kid": "key-1"}), None),
+        Err(KeyReferenceError::InvalidKid { .. })
+    ));
+    assert!(matches!(
+        candidates(json!({"alg": "EdDSA"}), None),
+        Err(KeyReferenceError::Missing)
+    ));
+    // A DID URL with parameters, or a fragment without a DID to join, is refused outright.
+    assert!(matches!(
+        candidates(
+            json!({"alg": "EdDSA", "kid": "did:example:123?versionId=1#key-1", "x5c": x5c}),
+            None
+        ),
+        Err(KeyReferenceError::KidWithParameters(_))
+    ));
+    assert!(matches!(
+        candidates(json!({"alg": "EdDSA", "kid": "#key-1", "x5c": x5c}), None),
+        Err(KeyReferenceError::RelativeKidWithoutIssuer(_))
+    ));
 }
 
 #[test]
@@ -387,15 +485,18 @@ fn binding_rule_table() {
     assert!(!by_set.binds_to(None, &key));
 
     // Not resolved by the crate yet, so never bound.
-    let chain = KeyReference::X509Chain(vec![b"leaf".to_vec()]);
     let jku = KeyReference::Jku {
         url: Url::parse("https://issuer.example/jwks").unwrap(),
         kid: None,
     };
-    for reference in [chain, jku] {
-        assert!(!reference.binds_to(Some("https://issuer.example"), &key));
-        assert!(!reference.binds_to(None, &key));
-    }
+    assert!(!jku.binds_to(Some("https://issuer.example"), &key));
+    assert!(!jku.binds_to(None, &key));
+
+    // A certificate chain: no party, or one the first certificate names (`tests/x509.rs`).
+    // What is not a certificate names nobody, and without the `x509` feature nothing binds.
+    let chain = KeyReference::X509Chain(vec![b"leaf".to_vec()]);
+    assert!(!chain.binds_to(Some("https://issuer.example"), &key));
+    assert_eq!(chain.binds_to(None, &key), cfg!(feature = "x509"));
 }
 
 // ---------------------------------------------------------------------------------------------

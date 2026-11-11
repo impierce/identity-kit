@@ -7,7 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
 
-use super::{KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole};
+use super::{
+    JwsKeyError, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
+    resolve_jws_key,
+};
 use crate::jose::{
     CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsError, JwsHeader, JwsVerifier, JwtClaims,
     OneOrMany, VerificationError,
@@ -23,11 +26,13 @@ use crate::jose::{
 ///    (RFC 8725 §3.11). `typ` is compared as RFC 7515 §4.1.9 says: ignoring case and an
 ///    `application/` prefix.
 /// 2. The payload is a JSON claims set.
-/// 3. The key the header names ([`KeyReference::from_jws`], with the `iss` of the claims) is
-///    resolved for the [`KeyRole`] of the options and verifies the signature.
+/// 3. The key the header names ([`KeyReference::candidates`], with the `iss` of the claims,
+///    the first of them the resolver handles) is resolved for the [`KeyRole`] of the options
+///    at the validation time and verifies the signature.
 /// 4. Under [`IssuerBinding::KeyOfIssuer`], the default, the key belongs to `iss`
 ///    ([`KeyReference::binds_to`]): `iss` is the DID of a `kid` DID URL, the HTTPS issuer of a
-///    key set, or the `did:jwk` or thumbprint of a key by value.
+///    key set, the `did:jwk` or thumbprint of a key by value, or, for an `x5c` certificate
+///    chain, absent or named by the first certificate.
 /// 5. `iss` is the expected issuer, and `aud` includes the expected audience, when the options
 ///    name them.
 /// 6. `exp`, `nbf` and `iat` hold at the validation time, within the leeway.
@@ -195,15 +200,20 @@ impl<R: KeyResolver, V: JwsVerifier> JwtValidator<R, V> {
         let claims: JwtClaims =
             serde_json::from_slice(jws.payload()).map_err(JwtValidationError::Payload)?;
 
-        let reference = KeyReference::from_jws(&jws, claims.iss.as_deref())?;
-        let key = self
-            .resolver
-            .resolve_key(&reference, options.role)
-            .await
-            .map_err(|source| JwtValidationError::KeyResolution {
-                key: Box::new(reference.clone()),
-                source,
-            })?;
+        let (reference, key) = resolve_jws_key(
+            &self.resolver,
+            &jws,
+            claims.iss.as_deref(),
+            options.role,
+            options.now(),
+        )
+        .await
+        .map_err(|error| match error {
+            JwsKeyError::Reference(error) => JwtValidationError::KeyReference(error),
+            JwsKeyError::Resolution { key, source } => {
+                JwtValidationError::KeyResolution { key, source }
+            }
+        })?;
         jws.verify(&self.verifier, &key)?;
         if options.issuer_binding == IssuerBinding::KeyOfIssuer
             && !reference.binds_to(claims.iss.as_deref(), &key)

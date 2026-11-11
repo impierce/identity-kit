@@ -698,7 +698,8 @@ impl StatusListToken {
         Ok((jws.header().clone(), token))
     }
 
-    /// Signs this token with `signer`, `typ: statuslist+jwt` and the signer's `kid`.
+    /// Signs this token with `signer`, `typ: statuslist+jwt` and what names the signer's key
+    /// ([`JwsHeader::for_signer`]): its certificate chain in `x5c`, or else its `kid`.
     ///
     /// # Errors
     ///
@@ -709,8 +710,7 @@ impl StatusListToken {
     /// Never: the token always serializes to JSON, and the JWS is one this function has just
     /// encoded.
     pub async fn sign(&self, signer: &dyn Signer) -> Result<Jwt, StatusListError> {
-        let mut header = JwsHeader::new(signer.alg()).with_typ(Self::TYP);
-        header.kid = signer.kid().map(str::to_owned);
+        let header = JwsHeader::for_signer(signer).with_typ(Self::TYP);
         let payload = serde_json::to_vec(self).expect("a token serializes");
         let jwt = crate::jose::encode_compact(&header, &payload, signer).await?;
         Ok(Jwt::new(jwt).expect("a freshly encoded JWS decodes"))

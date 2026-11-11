@@ -39,6 +39,9 @@ did-web = []
 # `resolver::JwksResolver`: the keys of an HTTPS issuer from its JWT VC issuer metadata, over
 # `did:web`'s `HttpClient`.
 jwks = ["did-web"]
+# `resolver::X509Resolver`: the key of an `x5c` certificate chain validated against trust
+# anchors, via `rustls-webpki` with `ring`, and `X509Certificate`, via `x509-cert`.
+x509 = ["dep:rustls-pki-types", "dep:rustls-webpki", "dep:x509-cert"]
 # The hardened default `HttpClient` for `did:web`, via `reqwest` with `rustls` and `ring`.
 reqwest = ["did-web", "dep:reqwest", "dep:rustls", "dep:tokio"]
 # Development and tests only: `ReqwestClient::builder` with opt-ins that let the client reach
@@ -75,6 +78,8 @@ p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "gzip"], optional = true }
 rsa = { version = "0.10.0-rc.19", default-features = false, features = ["encoding", "sha2", "std"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+rustls-pki-types = { version = "1.12", features = ["std"], optional = true }
+rustls-webpki = { version = "0.103.15", default-features = false, features = ["ring", "std"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
 sha2 = "0.11"
@@ -82,6 +87,7 @@ thiserror = "2.0"
 tokio = { version = "1.0", features = ["net"], optional = true }
 url = "2.5"
 utoipa = { version = "6.0", optional = true }
+x509-cert = { version = "0.3", default-features = false, features = ["std"], optional = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]

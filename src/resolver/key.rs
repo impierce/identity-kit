@@ -55,7 +55,8 @@ pub enum KeyReference {
     DidUrl(DidUrl),
     /// The public key itself, from a `jwk` header or `cnf.jwk`.
     Jwk(Box<Jwk>),
-    /// An `x5c` certificate chain, DER, leaf first. No resolver in the crate handles it yet.
+    /// An `x5c` certificate chain, DER, leaf first. `X509Resolver` (feature `x509`) resolves
+    /// it against the application's trust anchors.
     X509Chain(Vec<Vec<u8>>),
     /// The key `kid` names in the key set of the HTTPS issuer `issuer` (SD-JWT VC §3.5).
     Jwks {
@@ -75,7 +76,8 @@ pub enum KeyReference {
 }
 
 impl KeyReference {
-    /// Where the key of `jws` is, given the `iss` of its claims (when `iss` is a string).
+    /// Where the key of `jws` is, given the `iss` of its claims (when `iss` is a string): the
+    /// first of the [`candidates`](Self::candidates).
     ///
     /// The header parameters are tried in this order, and the first that applies decides:
     ///
@@ -84,25 +86,47 @@ impl KeyReference {
     ///    that still lists a retired key (ADR 0004).
     /// 2. A `kid` starting with `#` is joined with `iss` into a [`DidUrl`](Self::DidUrl) when
     ///    `iss` is a DID, and refused otherwise.
-    /// 3. Another `kid`, with an `https` `iss`, is [`Jwks`](Self::Jwks).
-    /// 4. A `jwk` header is [`Jwk`](Self::Jwk); a private key there is refused.
-    /// 5. An `x5c` header is [`X509Chain`](Self::X509Chain), each certificate base64-decoded
+    /// 3. An `x5c` header is [`X509Chain`](Self::X509Chain), each certificate base64-decoded
     ///    but not parsed.
+    /// 4. Another `kid`, with an `https` `iss`, is [`Jwks`](Self::Jwks).
+    /// 5. A `jwk` header is [`Jwk`](Self::Jwk); a private key there is refused.
     /// 6. A `jku` header is [`Jku`](Self::Jku), with the `kid` when there is one.
     ///
-    /// A `kid` that none of the first three cases takes is an error when no `jwk`, `x5c` or
-    /// `jku` follows.
+    /// A certificate chain comes before the issuer's key set and a key by value: it is in the
+    /// token, so it costs no request, and it is validated against trust anchors, where a
+    /// `jwk` header only asserts itself (ADR 0008).
     ///
     /// # Errors
     ///
     /// A [`KeyReferenceError`]: [`Missing`](KeyReferenceError::Missing) when the header names no
     /// key, otherwise the parameter that is wrong.
     pub fn from_jws(jws: &CompactJws, iss: Option<&str>) -> Result<Self, KeyReferenceError> {
+        Self::candidates(jws, iss).map(|mut candidates| candidates.swap_remove(0))
+    }
+
+    /// Every reference the header of `jws` makes, in the order [`from_jws`](Self::from_jws)
+    /// lists; never empty.
+    ///
+    /// A token can carry the inputs of more than one mechanism, an `x5c` chain next to a `kid`
+    /// and an HTTPS `iss`, say. Which one applies is the verifier's policy, not the token's
+    /// (SD-JWT VC §3.5): a validator asks its [`KeyResolver`] for each candidate in turn and
+    /// takes the first the resolver handles, so the resolvers an application configures are
+    /// that policy. A candidate the resolver handles and fails to resolve ends the search.
+    ///
+    /// A parameter that is malformed is skipped when another one makes a reference.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_jws`](Self::from_jws), when no parameter makes a reference.
+    pub fn candidates(jws: &CompactJws, iss: Option<&str>) -> Result<Vec<Self>, KeyReferenceError> {
         let header = jws.header();
-        let mut kid_error = None;
+        let mut candidates = Vec::new();
+        let (mut kid_error, mut error) = (None, None);
+        let mut key_set = None;
         if let Some(kid) = header.kid.as_deref() {
             match Self::from_kid(kid, iss)? {
-                Ok(reference) => return Ok(reference),
+                Ok(reference @ Self::Jwks { .. }) => key_set = Some(reference),
+                Ok(reference) => candidates.push(reference),
                 Err(source) => {
                     kid_error = Some(KeyReferenceError::InvalidKid {
                         kid: kid.to_owned(),
@@ -111,16 +135,21 @@ impl KeyReference {
                 }
             }
         }
+        if let Some(x5c) = header.additional.get("x5c") {
+            match x5c_chain(x5c) {
+                Ok(chain) => candidates.push(Self::X509Chain(chain)),
+                Err(e) => error = error.or(Some(e)),
+            }
+        }
+        candidates.extend(key_set);
         if let Some(jwk) = &header.jwk {
             if jwk.is_private() {
-                return Err(KeyReferenceError::InvalidJwk(
+                error = error.or(Some(KeyReferenceError::InvalidJwk(
                     "the `jwk` header holds a private key".to_owned(),
-                ));
+                )));
+            } else {
+                candidates.push(Self::Jwk(Box::new(jwk.clone())));
             }
-            return Ok(Self::Jwk(Box::new(jwk.clone())));
-        }
-        if let Some(x5c) = header.additional.get("x5c") {
-            return x5c_chain(x5c).map(Self::X509Chain);
         }
         if let Some(jku) = header.additional.get("jku") {
             let url = jku
@@ -130,17 +159,24 @@ impl KeyReference {
                     value: jku.to_string(),
                     reason: "not a string".to_owned(),
                 })
-                .and_then(|jku| parse_url("jku", jku))?;
-            return Ok(Self::Jku {
-                url,
-                kid: header.kid.clone(),
-            });
+                .and_then(|jku| parse_url("jku", jku));
+            match url {
+                Ok(url) => candidates.push(Self::Jku {
+                    url,
+                    kid: header.kid.clone(),
+                }),
+                Err(e) => error = error.or(Some(e)),
+            }
         }
-        Err(kid_error.unwrap_or(KeyReferenceError::Missing))
+        if candidates.is_empty() {
+            return Err(error.or(kid_error).unwrap_or(KeyReferenceError::Missing));
+        }
+        Ok(candidates)
     }
 
-    /// Rules 1 to 3 of [`from_jws`](Self::from_jws): the reference `kid` makes with `iss`, or
-    /// why `kid` is not a DID URL when it makes none.
+    /// The reference `kid` makes with `iss`: a [`DidUrl`](Self::DidUrl) for a DID URL or a
+    /// `#fragment` of a DID `iss`, a [`Jwks`](Self::Jwks) for another `kid` of an `https`
+    /// `iss`, or why `kid` is not a DID URL when it makes none.
     fn from_kid(kid: &str, iss: Option<&str>) -> Result<Result<Self, DidError>, KeyReferenceError> {
         let not_did_url = match DidUrl::parse(kid) {
             Ok(url) => return did_url(url).map(Ok),
@@ -178,10 +214,13 @@ impl KeyReference {
     /// | [`DidUrl`](Self::DidUrl) | `party` is the DID of the URL |
     /// | [`Jwk`](Self::Jwk) | `party` is the `did:jwk` of `key`, or its RFC 7638 SHA-256 thumbprint, or absent (a SIOPv2 self-issued `sub`) |
     /// | [`Jwks`](Self::Jwks) | `party` is the issuer URL (compared as parsed URLs) |
-    /// | [`X509Chain`](Self::X509Chain), [`Jku`](Self::Jku) | never, until the crate resolves them |
+    /// | [`X509Chain`](Self::X509Chain) | with the `x509` feature: `party` is absent, or the first certificate binds it through a Subject Alternative Name (`X509Certificate::binds`) |
+    /// | [`Jku`](Self::Jku) | never, until the crate resolves it |
     ///
-    /// Only a key by value can bind to no party; a validator that requires an issuer or holder
-    /// passes it.
+    /// A key by value and a certificate chain can bind to no party; a validator that requires
+    /// an issuer or holder passes it. With a certificate chain, the party that signed is the
+    /// subject of the first certificate, and a claimed `iss` is not authenticated by the chain
+    /// (SD-JWT VC §3.5): it binds only when the certificate names it.
     ///
     /// # Examples
     ///
@@ -216,6 +255,13 @@ impl KeyReference {
             (Self::Jwks { issuer, .. }, Some(party)) => {
                 Url::parse(party).is_ok_and(|party| party == *issuer)
             }
+            #[cfg(feature = "x509")]
+            (Self::X509Chain(_), None) => true,
+            #[cfg(feature = "x509")]
+            (Self::X509Chain(chain), Some(party)) => chain
+                .first()
+                .and_then(|leaf| super::X509Certificate::from_der(leaf).ok())
+                .is_some_and(|leaf| leaf.binds(party)),
             _ => false,
         }
     }
@@ -386,6 +432,77 @@ pub trait KeyResolver: Send + Sync {
         key: &KeyReference,
         role: KeyRole,
     ) -> Result<Jwk, KeyResolutionError>;
+
+    /// The public key `key` names, usable in `role` at `now`, the validation time in seconds
+    /// since the Unix epoch.
+    ///
+    /// The validators call this method, with the time they validate at. The default ignores
+    /// the time and calls [`resolve_key`](Self::resolve_key), which is right for a key that
+    /// does not depend on it; a resolver whose answer does, such as `X509Resolver` with the
+    /// validity periods of certificates, implements it.
+    ///
+    /// # Errors
+    ///
+    /// As [`resolve_key`](Self::resolve_key).
+    async fn resolve_key_at(
+        &self,
+        key: &KeyReference,
+        role: KeyRole,
+        now: i64,
+    ) -> Result<Jwk, KeyResolutionError> {
+        let _ = now;
+        self.resolve_key(key, role).await
+    }
+}
+
+/// The key of `jws`, `iss` being the issuer its claims name, for `role` at `now`: the first of
+/// the [candidates](KeyReference::candidates) that `resolver` handles, with its reference.
+///
+/// # Errors
+///
+/// [`JwsKeyError::Reference`] when the header names no key, and [`JwsKeyError::Resolution`]
+/// with the candidate that failed, or with the first one when the resolver handles none.
+pub(crate) async fn resolve_jws_key<R: KeyResolver + ?Sized>(
+    resolver: &R,
+    jws: &CompactJws,
+    iss: Option<&str>,
+    role: KeyRole,
+    now: i64,
+) -> Result<(KeyReference, Jwk), JwsKeyError> {
+    let mut unsupported = None;
+    for reference in KeyReference::candidates(jws, iss).map_err(JwsKeyError::Reference)? {
+        match resolver.resolve_key_at(&reference, role, now).await {
+            Ok(key) => return Ok((reference, key)),
+            Err(source) if source.is_unsupported() => {
+                unsupported.get_or_insert(JwsKeyError::Resolution {
+                    key: Box::new(reference),
+                    source,
+                });
+            }
+            Err(source) => {
+                return Err(JwsKeyError::Resolution {
+                    key: Box::new(reference),
+                    source,
+                });
+            }
+        }
+    }
+    // `candidates` is never empty, so a search without a key ended on an unsupported one.
+    Err(unsupported.unwrap_or(JwsKeyError::Reference(KeyReferenceError::Missing)))
+}
+
+/// Why [`resolve_jws_key`] found no key.
+#[derive(Debug)]
+pub(crate) enum JwsKeyError {
+    /// The token names no key.
+    Reference(KeyReferenceError),
+    /// The resolver did not resolve `key`.
+    Resolution {
+        /// The reference.
+        key: Box<KeyReference>,
+        /// Why it did not resolve.
+        source: KeyResolutionError,
+    },
 }
 
 // Implements `KeyResolver` for `&T`, `Box<T>` and `Arc<T>` by forwarding every method to `T`.
@@ -403,6 +520,15 @@ macro_rules! forward_key_resolver {
                 role: KeyRole,
             ) -> Result<Jwk, KeyResolutionError> {
                 (**self).resolve_key(key, role).await
+            }
+
+            async fn resolve_key_at(
+                &self,
+                key: &KeyReference,
+                role: KeyRole,
+                now: i64,
+            ) -> Result<Jwk, KeyResolutionError> {
+                (**self).resolve_key_at(key, role, now).await
             }
         }
     )*};
@@ -642,6 +768,21 @@ impl KeyResolver for CompositeKeyResolver {
     ) -> Result<Jwk, KeyResolutionError> {
         for resolver in &self.resolvers {
             match resolver.resolve_key(key, role).await {
+                Err(KeyResolutionError::Unsupported(_)) => {}
+                answer => return answer,
+            }
+        }
+        Err(KeyResolutionError::unsupported(key))
+    }
+
+    async fn resolve_key_at(
+        &self,
+        key: &KeyReference,
+        role: KeyRole,
+        now: i64,
+    ) -> Result<Jwk, KeyResolutionError> {
+        for resolver in &self.resolvers {
+            match resolver.resolve_key_at(key, role, now).await {
                 Err(KeyResolutionError::Unsupported(_)) => {}
                 answer => return answer,
             }

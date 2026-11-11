@@ -4,7 +4,7 @@ use url::Url;
 
 use crate::jose::{DefaultVerifier, JwsVerifier};
 use crate::methods::web::{HttpClient, HttpResponse, fetchable};
-use crate::resolver::{KeyReference, KeyResolver, KeyRole};
+use crate::resolver::{JwsKeyError, KeyReference, KeyResolver, KeyRole, resolve_jws_key};
 use crate::vc::Jwt;
 use crate::vc::validation::{CredentialStatus, StatusCheck, StatusError, TimeOptions};
 
@@ -15,14 +15,16 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// A [`StatusCheck`] for the Token Status List: for the `status` claim of an SD-JWT
 /// credential or of a JWT credential ([`CredentialStatus::StatusClaim`]), fetches the status
 /// list token from the referenced URI with an [`HttpClient`], verifies it was signed by
-/// the key its header names ([`KeyReference::from_jws`] with the token's `iss`), resolved
-/// for [`KeyRole::Issuer`], checks it was issued by the validation time and has not expired,
+/// the key its header names ([`KeyReference::candidates`] with the token's `iss`, the first
+/// of them the resolver handles), resolved for [`KeyRole::Issuer`] at the validation time,
+/// checks it was issued by the validation time and has not expired,
 /// each within the validation's leeway ([`StatusListToken::status_of`]), and reads the status
 /// at the referenced index (Token Status List §8).
 ///
 /// When the token has an `iss`, the key must belong to it ([`KeyReference::binds_to`]);
-/// without one, only a key named by a DID URL is accepted, since a key by value or a key
-/// set could be anybody's. Beyond that the check trusts the key the reference resolves
+/// without one, only a key named by a DID URL or certified by an `x5c` chain is accepted,
+/// since a key by value or a key set could be anybody's. HAIP 1.0 §6.1 requires the chain:
+/// with the `x509` feature, give the check an `X509Resolver`. Beyond that the check trusts the key the reference resolves
 /// to; whether that key may speak for the list is the application's policy to enforce
 /// around it, by restricting the resolver, say.
 ///
@@ -124,8 +126,8 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusListCheck<C, R, V> {
         }
     }
 
-    /// The status list token at `uri`, fetched and verified.
-    async fn fetch(&self, uri: &str) -> Result<StatusListToken, StatusError> {
+    /// The status list token at `uri`, fetched and verified at `time`.
+    async fn fetch(&self, uri: &str, time: TimeOptions) -> Result<StatusListToken, StatusError> {
         let invalid = |reason: &str, source: Option<BoxError>| StatusError::InvalidList {
             uri: uri.to_owned(),
             reason: reason.to_owned(),
@@ -146,22 +148,33 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusListCheck<C, R, V> {
         let (_, token) = StatusListToken::decode(&jwt).map_err(|e| not_a_token(Box::new(e)))?;
         let jws = jwt.decode().map_err(|e| not_a_token(Box::new(e)))?;
         let iss = token.additional.get("iss").and_then(|iss| iss.as_str());
-        let reference = KeyReference::from_jws(&jws, iss)
-            .map_err(|e| invalid("no key to verify it with", Some(Box::new(e))))?;
-        let key = self
-            .resolver
-            .resolve_key(&reference, KeyRole::Issuer)
-            .await
-            .map_err(|e| StatusError::UnresolvedKey {
+        let (reference, key) = resolve_jws_key(
+            &self.resolver,
+            &jws,
+            iss,
+            KeyRole::Issuer,
+            time.now().timestamp(),
+        )
+        .await
+        .map_err(|error| match error {
+            JwsKeyError::Reference(e) => invalid("no key to verify it with", Some(Box::new(e))),
+            JwsKeyError::Resolution { key, source } => StatusError::UnresolvedKey {
                 uri: uri.to_owned(),
-                key: reference.to_string(),
-                source: e,
-            })?;
+                key: key.to_string(),
+                source,
+            },
+        })?;
         jws.verify(&self.verifier, &key)
             .map_err(|e| invalid("the signature does not verify", Some(Box::new(e))))?;
+        // Without an `iss`, a key by value or a key set could be anybody's; a DID URL names its
+        // DID, and a certificate chain its subject.
         let bound = match iss {
             Some(iss) => reference.binds_to(Some(iss), &key),
-            None => matches!(reference, KeyReference::DidUrl(_)),
+            None => match reference {
+                KeyReference::DidUrl(_) => true,
+                KeyReference::X509Chain(_) => reference.binds_to(None, &key),
+                _ => false,
+            },
         };
         if !bound {
             return Err(invalid(
@@ -196,7 +209,7 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusCheck for StatusListCh
             return Err(StatusError::Unsupported(names.join(", ")));
         };
         let uri = &reference.uri;
-        let token = self.fetch(uri).await?;
+        let token = self.fetch(uri, time).await?;
         let status_type = token.status_of(reference, time).map_err(|e| match e {
             StatusListError::Expired { expired_at, now } => StatusError::Expired {
                 uri: uri.clone(),

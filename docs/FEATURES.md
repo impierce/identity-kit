@@ -71,7 +71,11 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `DocumentKeyResolver`: resolves DID URLs of DID documents supplied by the caller, under the role's relationship, Multikeys as JWKs; other DIDs, DID URLs with a path or query and other kinds of reference are `Unsupported` and fall through a `CompositeKeyResolver`, while a supplied DID's missing method or wrong relationship is a final error |   ✅   |               | [DID Core §5.2, §5.3][did-core] | [#141](https://github.com/impierce/identity-kit/issues/141) |
 | `JwksResolver`: HTTPS `iss` + `kid` over JWT VC issuer metadata (`jwks`, `jwks_uri`)             |   ✅   | `jwks`        | [SD-JWT VC §3.5][sd-jwt-vc]      | [#53](https://github.com/impierce/identity-kit/issues/53) |
 | `JwtValidator` for plain JWTs (access tokens): `alg` allow-list, `typ`, signature, key bound to `iss`, `iss`, `aud`, `exp`/`nbf`/`iat` with leeway, required claims | ✅ | | [RFC 7519 §7.2][rfc7519], [RFC 8725][rfc8725], [RFC 9068][rfc9068] | [#121](https://github.com/impierce/identity-kit/issues/121) |
-| `x5c` certificate chains and `jku`: in `KeyReference`, resolvers to follow                       |   📋   |               | [RFC 7515 §4.1][rfc7515]         | [#53](https://github.com/impierce/identity-kit/issues/53) |
+| `X509Resolver`: the key of an `x5c` certificate chain validated against the application's trust anchors (RFC 5280 path validation by `rustls-webpki`, at the validation time), with HAIP's rules: signing certificate not self-signed, no trust anchor in the chain ([ADR 0008](adr/0008-x509-certificate-chains.md)) |   ✅   | `x509`        | [RFC 7515 §4.1.6][rfc7515], [RFC 5280 §6][rfc5280], [SD-JWT VC §3.5][sd-jwt-vc], [HAIP §6.1.1][haip] | [#164](https://github.com/impierce/identity-kit/issues/164) |
+| `X509Certificate`: subject, Subject Alternative Names, validity, key identifiers, SHA-256 thumbprint and public key of a certificate; `binds` an `iss` through a Subject Alternative Name |   ✅   | `x509`        | [RFC 5280 §4][rfc5280], [SD-JWT VC §3.5][sd-jwt-vc] | [#164](https://github.com/impierce/identity-kit/issues/164) |
+| `KeyReference::candidates`: every reference a token carries, the verifier's resolvers choosing the mechanism; `KeyResolver::resolve_key_at` with the validation time |   ✅   |               | [SD-JWT VC §3.5][sd-jwt-vc]      | [#164](https://github.com/impierce/identity-kit/issues/164) |
+| `CertifiedSigner`, `Signer::x5c`, `JwsHeader::with_x5c` and `for_signer`: tokens signed with a certificate chain in `x5c` |   ✅   |               | [RFC 7515 §4.1.6][rfc7515], [HAIP §6.1.1][haip] | [#164](https://github.com/impierce/identity-kit/issues/164) |
+| `jku` key set URLs: in `KeyReference`, resolver to follow                                        |   📋   |               | [RFC 7515 §4.1][rfc7515]         | [#53](https://github.com/impierce/identity-kit/issues/53) |
 
 ### `methods`: DID methods
 
@@ -181,6 +185,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [Well Known DID Configuration][did-config]   | DIF         | `domain_linkage`                          |
 | [Linked Verifiable Presentation][linked-vp]  | DIF         | `linked_vp`                               |
 | [RFC 3986: URI generic syntax][rfc3986]      | IETF        | `did`                                     |
+| [RFC 5280: X.509 certificates][rfc5280]      | IETF        | `resolver` (`X509Resolver`, `x509`)       |
 | [RFC 7515: JWS][rfc7515]                     | IETF        | `jose`, `keys`                            |
 | [RFC 7517: JWK][rfc7517]                     | IETF        | `jose`, `keys::software`                  |
 | [RFC 7518: JWA][rfc7518]                     | IETF        | `jose`                                    |
@@ -193,6 +198,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
 | [Token Status List][status-list] (draft 21)  | IETF draft  | `status_list`                             |
+| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`) |
 | [PKCS #11 v3.1][pkcs11]                      | OASIS       | `keys::pkcs11`                            |
 | [multicodec][multicodec], [multibase][multibase] | Multiformats | `methods::key`                        |
 
@@ -209,6 +215,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [did-config]: https://identity.foundation/.well-known/resources/did-configuration/
 [linked-vp]: https://identity.foundation/linked-vp/spec/v1.0.0/
 [rfc3986]: https://www.rfc-editor.org/rfc/rfc3986
+[rfc5280]: https://www.rfc-editor.org/rfc/rfc5280
 [rfc7515]: https://www.rfc-editor.org/rfc/rfc7515
 [rfc7517]: https://www.rfc-editor.org/rfc/rfc7517
 [rfc7518]: https://www.rfc-editor.org/rfc/rfc7518
@@ -218,6 +225,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [rfc8812]: https://www.rfc-editor.org/rfc/rfc8812
 [rfc9901]: https://www.rfc-editor.org/rfc/rfc9901
 [sd-jwt-vc]: https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/
+[haip]: https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html
 [status-list]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-21
 [rfc7519]: https://www.rfc-editor.org/rfc/rfc7519
 [rfc7800]: https://www.rfc-editor.org/rfc/rfc7800

@@ -13,14 +13,18 @@
 //!    to 5, SD-JWT VC §2.2) or as an [`SdJwtCredentialV2`] (`typ` `vc+sd-jwt` when present,
 //!    or one of `options.additional_typ`; disclosures; the payload as a
 //!    [`CredentialV2`](crate::vc::CredentialV2) with its registered claims agreeing with it).
-//! 2. The header of the issuer-signed JWT names its key ([`KeyReference::from_jws`], with the
-//!    issuer, `iss` or the credential's `issuer`, as `iss`): a `kid` that is a DID URL of the
-//!    form `did:…#fragment` (a path or DID parameters such as `versionId` are refused, as in
-//!    the JWT validators, ADR 0004), a `#fragment` relative to a DID issuer, a `kid` into the
-//!    JWT VC issuer metadata of an HTTPS issuer (SD-JWT VC §3.5, resolved by `JwksResolver`
-//!    with the `jwks` feature), or a `jwk`, `x5c` or `jku` header. The key is resolved for
-//!    [`KeyRole::Issuer`], verifies the signature, and belongs to the issuer
-//!    ([`KeyReference::binds_to`]).
+//! 2. The header of the issuer-signed JWT names its key ([`KeyReference::candidates`], with
+//!    the issuer, `iss` or the credential's `issuer`, as `iss`): a `kid` that is a DID URL of
+//!    the form `did:…#fragment` (a path or DID parameters such as `versionId` are refused, as
+//!    in the JWT validators, ADR 0004), a `#fragment` relative to a DID issuer, an `x5c`
+//!    certificate chain (SD-JWT VC §3.5, resolved by `X509Resolver` with the `x509` feature),
+//!    a `kid` into the JWT VC issuer metadata of an HTTPS issuer (SD-JWT VC §3.5, resolved by
+//!    `JwksResolver` with the `jwks` feature), or a `jwk` or `jku` header. The first of them
+//!    the resolver handles is resolved for [`KeyRole::Issuer`] at the validation time,
+//!    verifies the signature, and belongs to the issuer ([`KeyReference::binds_to`]). An
+//!    SD-JWT VC signed with a certificate chain needs no `iss`: its issuer is the subject of
+//!    the first certificate, and an `iss` it does carry must be one that certificate names.
+//!    Signed any other way, it needs one.
 //! 3. `nbf`, `exp` and `iat` hold at the validation time, and so do `validFrom` and
 //!    `validUntil` of a VCDM 2.0 credential.
 //! 4. When the options require key binding (RFC 9901 §7.3): the SD-JWT+KB carries a key
@@ -46,7 +50,7 @@ use super::{
 };
 use crate::did::Uri;
 use crate::jose::{DefaultVerifier, Jwk, JwsVerifier};
-use crate::resolver::{KeyReference, KeyReferenceError, KeyResolver, KeyRole};
+use crate::resolver::{KeyReference, KeyReferenceError, KeyResolver, KeyRole, resolve_jws_key};
 use crate::vc::validation::{
     CredentialStatus, StatusCheck, StatusPolicy, TimeOptions, ValidationError, check_statuses,
 };
@@ -309,13 +313,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             return Err(SdJwtValidationError::LegacyTyp);
         }
         let claims = credential.claims();
-        let issuer = claims
-            .iss
-            .as_deref()
-            .ok_or(CredentialError::MissingClaim("iss"))
-            .map_err(ValidationError::from)?;
+        let issuer = claims.iss.as_deref();
         let (issuer_key, key) = self
-            .verify_issuer_signature(credential.sd_jwt(), issuer)
+            .verify_issuer_signature(credential.sd_jwt(), issuer, options.time)
             .await?;
         check_issuer(issuer, &issuer_key, &key)?;
 
@@ -406,9 +406,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         let vc = credential.credential();
         let issuer = vc.issuer.id().as_str();
         let (issuer_key, key) = self
-            .verify_issuer_signature(credential.sd_jwt(), issuer)
+            .verify_issuer_signature(credential.sd_jwt(), Some(issuer), options.time)
             .await?;
-        check_issuer(issuer, &issuer_key, &key)?;
+        check_issuer(Some(issuer), &issuer_key, &key)?;
         options.time.check_claims(credential.claims())?;
         options.time.check(vc.valid_from, vc.valid_until, None)?;
         let (key_binding, holder_key) = match &options.key_binding {
@@ -428,23 +428,23 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         })
     }
 
-    /// Resolves the key the issuer-signed JWT names, `issuer` being its issuer, for
-    /// [`KeyRole::Issuer`] and verifies the signature; the reference and the key.
+    /// Resolves the key the issuer-signed JWT names, `issuer` being its `iss`, for
+    /// [`KeyRole::Issuer`] at `time` and verifies the signature; the reference and the key.
     async fn verify_issuer_signature(
         &self,
         sd_jwt: &SdJwt,
-        issuer: &str,
+        issuer: Option<&str>,
+        time: TimeOptions,
     ) -> Result<(KeyReference, Jwk), ValidationError> {
         let jws = sd_jwt.jwt().decode()?;
-        let reference = KeyReference::from_jws(&jws, Some(issuer))?;
-        let key = self
-            .resolver
-            .resolve_key(&reference, KeyRole::Issuer)
-            .await
-            .map_err(|source| ValidationError::KeyResolution {
-                key: Box::new(reference.clone()),
-                source,
-            })?;
+        let (reference, key) = resolve_jws_key(
+            &self.resolver,
+            &jws,
+            issuer,
+            KeyRole::Issuer,
+            time.now().timestamp(),
+        )
+        .await?;
         jws.verify(&self.verifier, &key)?;
         Ok((reference, key))
     }
@@ -454,6 +454,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
     async fn holder_key(
         &self,
         cnf: Option<&Confirmation>,
+        time: TimeOptions,
     ) -> Result<(KeyReference, Jwk), SdJwtValidationError> {
         let cnf = cnf.ok_or(SdJwtValidationError::NoHolderKey(
             KeyReferenceError::Missing,
@@ -464,7 +465,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             KeyReference::Jwk(jwk) => jwk.public(),
             reference => self
                 .resolver
-                .resolve_key(reference, KeyRole::Subject)
+                .resolve_key_at(reference, KeyRole::Subject, time.now().timestamp())
                 .await
                 .map_err(|source| ValidationError::KeyResolution {
                     key: Box::new(reference.clone()),
@@ -485,7 +486,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         let kb_jwt = sd_jwt
             .key_binding_jwt()
             .ok_or(SdJwtValidationError::KeyBindingRequired)?;
-        let holder_key = self.holder_key(cnf).await?;
+        let holder_key = self.holder_key(cnf, required.time).await?;
         let jws = kb_jwt.decode().map_err(ValidationError::from)?;
         match jws.header().typ.as_deref() {
             Some(super::KB_JWT_TYP) => {}
@@ -572,9 +573,23 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
     }
 }
 
-/// Checks that `key`, which `reference` resolved to, belongs to `issuer`
-/// ([`KeyReference::binds_to`]).
-fn check_issuer(issuer: &str, reference: &KeyReference, key: &Jwk) -> Result<(), ValidationError> {
+/// Checks that `key`, which `reference` resolved to, belongs to `issuer`, the `iss` of the
+/// credential ([`KeyReference::binds_to`]).
+///
+/// A credential signed with a certificate chain needs no `iss`: its issuer is the subject of
+/// the first certificate (SD-JWT VC §3.5). Any other reference identifies the issuer by `iss`
+/// alone, so it must be there; a key by value in particular binds to no party at all.
+fn check_issuer(
+    issuer: Option<&str>,
+    reference: &KeyReference,
+    key: &Jwk,
+) -> Result<(), ValidationError> {
+    let Some(issuer) = issuer else {
+        if matches!(reference, KeyReference::X509Chain(_)) && reference.binds_to(None, key) {
+            return Ok(());
+        }
+        return Err(CredentialError::MissingClaim("iss").into());
+    };
     if !reference.binds_to(Some(issuer), key) {
         return Err(ValidationError::IssuerMismatch {
             issuer: Uri::parse(issuer).map_err(|e| CredentialError::InvalidClaim {

@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::did::Uri;
 use crate::jose::{CompactJws, DefaultVerifier, Jwk, JwsHeader, JwsVerifier};
+use crate::resolver::resolve_jws_key;
 use crate::vc::{Credential, CredentialV2, Jwt, JwtClaims, Party};
 
 use serde_json::Value;
@@ -152,7 +153,12 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         let decoded = decode(&jws, &options.additional_typ)?;
         let issuer = &decoded.credential.issuer;
         let (reference, key) = self
-            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()))
+            .verify(
+                &jws,
+                KeyRole::Issuer,
+                Some(issuer.id().as_str()),
+                options.time,
+            )
             .await?;
         check_controller(issuer, &reference, &key, "issuer")?;
         options.time.check_claims(&decoded.claims)?;
@@ -191,7 +197,12 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         let decoded = decode_v2(&jws, &options.additional_typ)?;
         let issuer = &decoded.credential.issuer;
         let (reference, key) = self
-            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()))
+            .verify(
+                &jws,
+                KeyRole::Issuer,
+                Some(issuer.id().as_str()),
+                options.time,
+            )
             .await?;
         check_controller(issuer, &reference, &key, "issuer")?;
         options.time.check_claims(&decoded.claims)?;
@@ -215,23 +226,17 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         Ok(decoded)
     }
 
-    /// Resolves the key `jws` names, `iss` being its issuer, for `role` and verifies the
-    /// signature; the reference and the key.
+    /// Resolves the key `jws` names, `iss` being its issuer, for `role` at `time` and verifies
+    /// the signature; the reference and the key.
     pub(super) async fn verify(
         &self,
         jws: &CompactJws,
         role: KeyRole,
         iss: Option<&str>,
+        time: TimeOptions,
     ) -> Result<(KeyReference, Jwk), ValidationError> {
-        let reference = KeyReference::from_jws(jws, iss)?;
-        let key = self
-            .resolver
-            .resolve_key(&reference, role)
-            .await
-            .map_err(|source| ValidationError::KeyResolution {
-                key: Box::new(reference.clone()),
-                source,
-            })?;
+        let (reference, key) =
+            resolve_jws_key(&self.resolver, jws, iss, role, time.now().timestamp()).await?;
         jws.verify(&self.verifier, &key)?;
         Ok((reference, key))
     }
