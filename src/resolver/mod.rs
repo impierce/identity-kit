@@ -31,21 +31,38 @@
 //! A JWT names the key that signed it in one of several ways (ADR 0006), and
 //! [`KeyReference::from_jws`] reads which, in this order: a `kid` that is a DID URL
 //! (`did:…#fragment`, without a path or DID parameters); a `kid` that is a `#fragment`, joined
-//! with a DID `iss`; another `kid` with an HTTPS `iss`, naming a key of the issuer's key set; the
-//! key itself in a `jwk` header; an `x5c` certificate chain; a `jku` key set URL. A
-//! [`KeyResolver`] turns the reference into a key for a [`KeyRole`], the issuer's
-//! (`assertionMethod` in a DID document) or the subject's (`authentication`):
+//! with a DID `iss`; an `x5c` certificate chain; another `kid` with an HTTPS `iss`, naming a key
+//! of the issuer's key set; the key itself in a `jwk` header; a `jku` key set URL. A token can
+//! carry more than one of these, and which applies is the verifier's policy, not the token's:
+//! [`KeyReference::candidates`] lists them all in that order, and a validator takes the first
+//! its [`KeyResolver`] handles, so the resolvers an application configures are that policy
+//! (ADR 0008). A [`KeyResolver`] turns the reference into a key for a [`KeyRole`], the
+//! issuer's (`assertionMethod` in a DID document) or the subject's (`authentication`), at the
+//! validation time ([`KeyResolver::resolve_key_at`]):
 //!
 //! | Reference | Resolved by |
 //! |---|---|
 //! | [`KeyReference::DidUrl`] | [`Resolver`], dereferencing the verification method |
 //! | [`KeyReference::Jwk`] | [`JwkResolver`], the key itself |
 //! | [`KeyReference::Jwks`] | `JwksResolver` (feature `jwks`), the JWT VC issuer metadata of the issuer |
-//! | [`KeyReference::X509Chain`], [`KeyReference::Jku`] | nothing in the crate yet; an application's own [`KeyResolver`] |
+//! | [`KeyReference::X509Chain`] | `X509Resolver` (feature `x509`), the chain validated against the application's trust anchors |
+//! | [`KeyReference::Jku`] | nothing in the crate yet; an application's own [`KeyResolver`] |
 //!
 //! [`CompositeKeyResolver`] tries several in order. Resolving says nothing about trust: after
 //! the signature verifies, [`KeyReference::binds_to`] checks that the key belongs to the party
 //! the token claims, which the validators of the upper layer do.
+//!
+//! # X.509
+//!
+//! With the `x509` feature, `X509Resolver` validates the certificate chain of an `x5c` header
+//! against trust anchors the application supplies (RFC 5280 §6, by `rustls-webpki`) and
+//! returns the key of its first certificate: the *Inline X.509 Certificates* mechanism of
+//! SD-JWT VC §3.5, which the OpenID4VC High Assurance Interoperability Profile 1.0 mandates.
+//! It adds what that profile requires of every `x5c`: the signing certificate is not
+//! self-signed, and the chain leaves out the trust anchor. The issuer of such a token is the
+//! subject of the first certificate, which `X509Certificate` reads; an `iss` claim binds only
+//! when that certificate names it in a Subject Alternative Name. An issuer signs with
+//! [`CertifiedSigner`](crate::jose::CertifiedSigner), which puts its chain in the header.
 //!
 //! # Plain JWTs
 //!
@@ -137,6 +154,8 @@ mod jwt;
 mod key;
 mod producer;
 mod registry;
+#[cfg(feature = "x509")]
+mod x509;
 
 pub use cache::DocumentCache;
 pub use dereference::{DereferenceError, Dereferenced};
@@ -150,8 +169,12 @@ pub use key::{
     CompositeKeyResolver, DocumentKeyResolver, JwkResolver, KeyReference, KeyReferenceError,
     KeyResolutionError, KeyResolver, KeyRole,
 };
+pub(crate) use key::{JwsKeyError, resolve_jws_key};
 pub use producer::{DidProducer, Hosting, MethodCapabilities, ProduceError};
 pub use registry::{Resolver, ResolverBuilder};
+#[cfg(feature = "x509")]
+#[cfg_attr(docsrs, doc(cfg(feature = "x509")))]
+pub use x509::{X509Certificate, X509Error, X509Resolver};
 
 /// Resolves the DIDs of one method (DID Resolution "DID Resolution Algorithm").
 ///

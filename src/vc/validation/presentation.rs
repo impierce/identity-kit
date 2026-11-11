@@ -443,6 +443,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
                 jws,
                 KeyRole::Subject,
                 holder.map(|holder| holder.id().as_str()),
+                options.time,
             )
             .await?;
         let holder = holder.ok_or(CredentialError::MissingClaim(missing))?;

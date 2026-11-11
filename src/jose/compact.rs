@@ -3,6 +3,8 @@
 
 use core::fmt;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use indexmap::IndexMap;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -80,6 +82,37 @@ impl JwsHeader {
     pub fn with_typ(mut self, typ: impl Into<String>) -> Self {
         self.typ = Some(typ.into());
         self
+    }
+
+    /// This header with `chain` as its `x5c` parameter (RFC 7515 §4.1.6): DER-encoded
+    /// certificates, the one of the signing key first, each followed by the one that
+    /// certifies it.
+    ///
+    /// HAIP requires more of every `x5c` it defines: the first certificate is not
+    /// self-signed, and the chain leaves out the trust anchor.
+    #[must_use]
+    pub fn with_x5c<C: AsRef<[u8]>>(mut self, chain: &[C]) -> Self {
+        let chain = chain
+            .iter()
+            .map(|certificate| Value::String(STANDARD.encode(certificate)))
+            .collect();
+        self.additional
+            .insert("x5c".to_owned(), Value::Array(chain));
+        self
+    }
+
+    /// The header a token signed by `signer` starts from: its algorithm, and what names its
+    /// key, the certificate chain of [`Signer::x5c`] when it has one, otherwise its
+    /// [`kid`](Signer::kid).
+    pub fn for_signer(signer: &dyn Signer) -> Self {
+        let header = Self::new(signer.alg());
+        match signer.x5c() {
+            Some(chain) => header.with_x5c(chain),
+            None => Self {
+                kid: signer.kid().map(str::to_owned),
+                ..header
+            },
+        }
     }
 }
 
@@ -298,12 +331,90 @@ pub trait Signer: Send + Sync {
     /// The key id to put in a header, if the signer has one.
     fn kid(&self) -> Option<&str>;
 
+    /// The certificate chain of the signing key to put in an `x5c` header, if the signer has
+    /// one: DER-encoded certificates, the key's own first. `None` by default;
+    /// [`CertifiedSigner`] gives a signer one.
+    fn x5c(&self) -> Option<&[Vec<u8>]> {
+        None
+    }
+
     /// Signs `signing_input`.
     ///
     /// # Errors
     ///
     /// A [`SignError`] wrapping whatever the backend reports.
     async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, SignError>;
+}
+
+/// A [`Signer`] with the X.509 certificate chain of its key, for issuers that are identified by
+/// a certificate: the tokens the builders of this crate sign with it carry the chain in an
+/// `x5c` header (RFC 7515 §4.1.6) and no `kid`, as [`JwsHeader::for_signer`] does.
+///
+/// The OpenID4VC High Assurance Interoperability Profile requires this of SD-JWT VCs (§6.1.1)
+/// and Status List Tokens (§6.1), with a chain whose first certificate is not self-signed and
+/// that leaves out the trust anchor. The chain is not checked here: with the `x509` feature,
+/// `X509Resolver::validate` tells whether a verifier trusting a given anchor accepts it.
+///
+/// # Examples
+///
+/// ```
+/// use identity_kit::jose::{CertifiedSigner, JwsAlgorithm, JwsHeader, SignError, Signer};
+///
+/// struct Issuer;
+///
+/// #[async_trait::async_trait]
+/// impl Signer for Issuer {
+///     fn alg(&self) -> JwsAlgorithm { JwsAlgorithm::ES256 }
+///     fn kid(&self) -> Option<&str> { Some("key-1") }
+///     async fn sign(&self, _: &[u8]) -> Result<Vec<u8>, SignError> { Ok(vec![0; 64]) }
+/// }
+///
+/// // The DER of the issuer's certificate and of the CA certificate that issued it.
+/// let chain = vec![b"issuer certificate".to_vec(), b"CA certificate".to_vec()];
+/// let signer = CertifiedSigner::new(Issuer, chain);
+/// let header = JwsHeader::for_signer(&signer);
+/// assert_eq!(
+///     header.additional["x5c"],
+///     serde_json::json!(["aXNzdWVyIGNlcnRpZmljYXRl", "Q0EgY2VydGlmaWNhdGU="])
+/// );
+/// assert_eq!(header.kid, None);
+/// ```
+#[derive(Debug, Clone)]
+pub struct CertifiedSigner<S> {
+    signer: S,
+    chain: Vec<Vec<u8>>,
+}
+
+impl<S: Signer> CertifiedSigner<S> {
+    /// `signer` with `chain`, the DER-encoded certificate of its key followed by the
+    /// certificates that certify it, without the trust anchor.
+    pub fn new(signer: S, chain: Vec<Vec<u8>>) -> Self {
+        Self { signer, chain }
+    }
+
+    /// The signer.
+    pub fn signer(&self) -> &S {
+        &self.signer
+    }
+}
+
+#[async_trait::async_trait]
+impl<S: Signer> Signer for CertifiedSigner<S> {
+    fn alg(&self) -> JwsAlgorithm {
+        self.signer.alg()
+    }
+
+    fn kid(&self) -> Option<&str> {
+        self.signer.kid()
+    }
+
+    fn x5c(&self) -> Option<&[Vec<u8>]> {
+        Some(&self.chain)
+    }
+
+    async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, SignError> {
+        self.signer.sign(signing_input).await
+    }
 }
 
 /// Encodes `payload` under `header` as a compact JWS signed by `signer`.

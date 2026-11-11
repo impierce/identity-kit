@@ -85,6 +85,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
 | `linked-vp`          | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
 | `jwks`               | off     | implies `did-web` (for `HttpClient`); `JwksResolver` over JWT VC issuer metadata |
+| `x509`               | off     | `rustls-webpki` (with `ring`), `rustls-pki-types`, `x509-cert`; `X509Resolver` for `x5c` certificate chains and `X509Certificate` |
 | `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `JwsAlgorithm`, the VCDM 1.1 and 2.0 credentials and presentations (`Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp`), `DomainLinkageConfiguration`, `ClaimPath`, `Jwt`, `SdJwt`, `TypeMetadata` and `StatusType` |
 | `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |
 
@@ -260,14 +261,21 @@ pub struct Resolver { .. }   // ResolverBuilder: .with(resolver) .cache(ttl); re
 
 #[non_exhaustive]
 pub enum KeyReference { DidUrl(DidUrl), Jwk(Jwk), X509Chain(Vec<Vec<u8>>), Jwks { issuer: Url, kid: String }, Jku { url: Url, kid: Option<String> } }
-impl KeyReference { pub fn from_jws(jws: &CompactJws, iss: Option<&str>) -> Result<Self, KeyReferenceError>; }   // `kid` DID URL; `#frag` + DID `iss`; `kid` + HTTPS `iss`; `jwk`; `x5c`; `jku`
+impl KeyReference {
+    pub fn from_jws(jws: &CompactJws, iss: Option<&str>) -> Result<Self, KeyReferenceError>;          // the first candidate
+    pub fn candidates(jws: &CompactJws, iss: Option<&str>) -> Result<Vec<Self>, KeyReferenceError>;   // `kid` DID URL; `#frag` + DID `iss`; `x5c`; `kid` + HTTPS `iss`; `jwk`; `jku`
+}
 pub enum KeyRole { Issuer, Subject }                    // assertionMethod / authentication for a DID
 #[async_trait]
 pub trait KeyResolver: Send + Sync {
     async fn resolve_key(&self, key: &KeyReference, role: KeyRole) -> Result<Jwk, KeyResolutionError>;   // Unsupported(reference) when it cannot
+    async fn resolve_key_at(&self, key: &KeyReference, role: KeyRole, now: i64) -> Result<Jwk, KeyResolutionError>;   // provided: `resolve_key`; what the validators call
 }
 pub struct CompositeKeyResolver(..);   // first resolver that does not answer Unsupported
-// in the crate: Resolver (DidUrl), DocumentKeyResolver (DidUrl, over documents supplied by the caller), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`)
+// in the crate: Resolver (DidUrl), DocumentKeyResolver (DidUrl, over documents supplied by the caller), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`), X509Resolver (X509Chain, feature `x509`)
+
+pub struct X509Resolver { .. }      // new(anchors: DER), from_pem; validate(chain, now) -> Jwk
+pub struct X509Certificate { .. }   // from_der; subject, issuer, dns_names, uris, not_before, not_after, key identifiers, sha256_thumbprint, public_key, binds(iss)
 
 pub struct JwtValidator<R: KeyResolver, V: JwsVerifier = DefaultVerifier> { .. }   // validate, validate_as::<T>
 pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issuer_binding, required_claims, now: Option<i64>, leeway }
@@ -308,8 +316,24 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   (`jwk`, `kid` as an absolute DID URL, `jku`). Resolving a reference says nothing about
   trust: after the signature verifies, a validator checks that the key belongs to the claimed
   party (the DID of a DID URL; `did:jwk` or the RFC 7638 thumbprint of a key by value; the
-  issuer URL of a JWKS). `X509Chain` and `Jku` are in the enum and resolve to `Unsupported`
-  until implemented.
+  issuer URL of a JWKS; no party, or one a Subject Alternative Name of the first certificate
+  names, for a certificate chain). A token can carry several references, and the verifier's
+  policy picks the mechanism (SD-JWT VC §3.5): `candidates` lists them all and a validator
+  takes the first its resolver handles, so the configured resolvers are the policy. `Jku` is in
+  the enum and resolves to `Unsupported` until implemented.
+- X.509 (`x509`, ADR 0008): `X509Resolver` resolves the `x5c` chain of a token to the key of
+  its first certificate, for the *Inline X.509 Certificates* mechanism of SD-JWT VC §3.5 that
+  HAIP 1.0 mandates (§6.1.1 for SD-JWT VCs, §6.1 for Status List Tokens). The application
+  supplies the trust anchors, CA certificates only. `rustls-webpki` builds and validates the
+  path (RFC 5280 §6) at the validation time, which the validators pass through
+  `KeyResolver::resolve_key_at`; the resolver adds HAIP's rules (the signing certificate is
+  not self-signed, the chain leaves out the trust anchor), the validity of the anchor itself,
+  the leaf's `keyUsage` and a 2048-bit floor for RSA. Revocation and certificate policies are
+  not checked, and any extended key usage is accepted. The issuer of such a token is the
+  subject of the first certificate, read with `X509Certificate`; `iss` is optional for an
+  SD-JWT VC signed this way and binds only through a Subject Alternative Name. An issuer signs
+  with `jose::CertifiedSigner`, which carries its chain (`Signer::x5c`) into the `x5c` header
+  that `JwsHeader::for_signer` writes.
 - Plain JWTs: `JwtValidator` validates a JWT that is not a credential (an OAuth 2.0 access
   token, RFC 9068) per RFC 7519 §7.2 and RFC 8725: an `alg` allow-list, the expected `typ`
   (case-insensitive, `application/` optional), the signature under the key the
