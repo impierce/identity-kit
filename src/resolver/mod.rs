@@ -58,10 +58,10 @@
 //! against trust anchors the application supplies (RFC 5280 §6, by `rustls-webpki`) and
 //! returns the key of its first certificate: the *Inline X.509 Certificates* mechanism of
 //! SD-JWT VC §3.5, which the OpenID4VC High Assurance Interoperability Profile 1.0 mandates.
-//! It adds what that profile requires of every `x5c`: the signing certificate is not
-//! self-signed, and the chain leaves out the trust anchor. The issuer of such a token is the
-//! subject of the first certificate, which `X509Certificate` reads; an `iss` claim binds only
-//! when that certificate names it in a Subject Alternative Name. An issuer signs with
+//! It adds what that profile requires of every `x5c`, that the signing certificate is not
+//! self-signed. The issuer of such a token is the subject of the first certificate, which
+//! `X509Certificate` reads; an `iss` claim binds only as an `https` URL whose host is a DNS
+//! name of that certificate. An issuer signs with
 //! [`CertifiedSigner`](crate::jose::CertifiedSigner), which puts its chain in the header.
 //!
 //! # Plain JWTs

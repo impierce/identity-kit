@@ -23,7 +23,7 @@ that list goes stale. To run the whole suite and print every difference:
 X509_LIMBO=/path/to/limbo.json cargo test --features x509 --test x509 -- --ignored --nocapture
 ```
 
-At the commit above, 6874 of its 9807 testcases agree. Of the rest, 2829 are `bettertls::`
+At the commit above, 6875 of its 9807 testcases agree. Of the rest, 2833 are `bettertls::`
 testcases the suite refuses for the host name it validates for, which a token has none of.
 
 The vectors are not part of the published crate (`include` in `Cargo.toml` lists `tests/vectors`

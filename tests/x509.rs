@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use identity_kit::jose::{CertifiedSigner, Jwk, JwsHeader, Signer as _};
+use identity_kit::jose::{CertifiedSigner, Jwk, JwsHeader, Signer};
 use identity_kit::resolver::{
     CompositeKeyResolver, JwkResolver, KeyReference, KeyResolutionError, KeyResolver, KeyRole,
     X509Certificate, X509Error, X509Resolver,
@@ -202,7 +202,6 @@ const KNOWN_DIFFERENCES: &[(Difference, &[&str])] = &[
         Difference::TrustAnchorProfile,
         &[
             "rfc5280::ca-empty-subject",
-            "rfc5280::root-inconsistent-ca-extensions",
             "rfc5280::root-non-critical-basic-constraints",
             "rfc5280::ski::root-missing-ski",
             "rfc5280::unknown-critical-extension-root",
@@ -363,10 +362,19 @@ fn limbo_failures_name_their_cause() {
         testcase("rfc5280::leaf-ku-keycertsign").validate(),
         Err(X509Error::KeyUsage)
     ));
-    assert!(matches!(
-        testcase("rfc5280::root-missing-basic-constraints").validate(),
-        Err(X509Error::TrustAnchorNotCa { index: 0 })
-    ));
+    // A root that is no CA, and one that is but whose key usage lacks `keyCertSign`.
+    for id in [
+        "rfc5280::root-missing-basic-constraints",
+        "rfc5280::root-inconsistent-ca-extensions",
+    ] {
+        assert!(
+            matches!(
+                testcase(id).validate(),
+                Err(X509Error::TrustAnchorNotCa { index: 0 })
+            ),
+            "{id}"
+        );
+    }
     let weak = testcase("webpki::forbidden-weak-rsa-in-leaf")
         .validate()
         .unwrap_err();
@@ -575,15 +583,18 @@ fn reads_a_p384_key() {
     assert!(X509Resolver::new([der]).is_ok());
 }
 
+/// An `iss` binds as an `https` URL whose host is a DNS name of the certificate, written the
+/// way a URL parser writes it. The unit tests of `resolver::x509` hold the long list of what
+/// does not.
 #[test]
-fn binds_an_identifier_through_subject_alternative_names() {
+fn binds_an_https_issuer_through_a_dns_name() {
     let certified = certified();
     let leaf = X509Certificate::from_der(&certified.chain[0]).unwrap();
-    // An `https` URL whose host is a DNS name of the certificate, ignoring case.
     for bound in [
         "https://example.com",
+        "https://example.com/",
         "https://example.com/tenant/1",
-        "https://EXAMPLE.com:8443/",
+        "https://example.com:8443/",
     ] {
         assert!(leaf.binds(bound), "{bound}");
     }
@@ -592,20 +603,27 @@ fn binds_an_identifier_through_subject_alternative_names() {
         "https://sub.example.com",
         "https://example.com.attacker.example",
         "https://example.org",
+        "https://attacker.example@example.com",
+        "https://example.com?iss=https://attacker.example",
+        "https://example.com#attacker.example",
+        "https://EXAMPLE.com",
+        " https://example.com",
         "example.com",
         "did:web:example.com",
         "CN=example.com",
         "",
     ] {
-        assert!(!leaf.binds(unbound), "{unbound}");
+        assert!(!leaf.binds(unbound), "{unbound:?}");
     }
 
-    // A URI name binds exactly itself.
+    // A URI name binds nothing, not even itself: this certificate's DNS name is
+    // `example.com`, and its URIs name `sub.example.com` too.
     let with_uris = X509Certificate::from_der(&der(&testcase(
         "rfc5280::nc::nc-permits-uri-host-rejects-subdomain",
     )
     .peer_certificate))
     .unwrap();
+    assert_eq!(with_uris.dns_names(), ["example.com"]);
     assert_eq!(
         with_uris.uris(),
         [
@@ -613,9 +631,9 @@ fn binds_an_identifier_through_subject_alternative_names() {
             "https://sub.example.com/not-allowed"
         ]
     );
-    assert!(with_uris.binds("https://sub.example.com/not-allowed"));
-    assert!(!with_uris.binds("https://sub.example.com/"));
-    assert!(!with_uris.binds("https://sub.example.com/not-allowed/more"));
+    assert!(with_uris.binds("https://example.com/allowed"));
+    assert!(with_uris.binds("https://example.com/anything"));
+    assert!(!with_uris.binds("https://sub.example.com/not-allowed"));
 
     // `KeyReference::binds_to` applies it to the first certificate, and takes no party as
     // the certificate's own subject.
@@ -689,37 +707,50 @@ fn validates_a_chain_to_the_key_of_its_leaf() {
     );
 }
 
-/// HAIP 1.0 §6.1.1, and the same of every `x5c` it defines: "The X.509 certificate of the
-/// trust anchor MUST NOT be included in the x5c JOSE header […]. The X.509 certificate
-/// signing the request MUST NOT be self-signed."
+/// HAIP 1.0 §6.1.1, and the same of every `x5c` it defines: "The X.509 certificate signing
+/// the request MUST NOT be self-signed."
 #[test]
-fn haip_refuses_a_self_signed_signer_and_an_anchor_in_the_chain() {
+fn haip_refuses_a_self_signed_signer() {
     let certified = certified();
-    let resolver = resolver(&certified);
     // The root signs for itself: self-signed, even though it is trusted.
     assert!(matches!(
-        resolver.validate(std::slice::from_ref(&certified.anchor), DEFAULT_TIME),
+        resolver(&certified).validate(std::slice::from_ref(&certified.anchor), DEFAULT_TIME),
         Err(X509Error::SelfSigned)
     ));
-    // The root rides along at the end of the chain.
+    // A root the verifier does not trust is not an anchor because the token carries it.
     let mut with_root = certified.chain.clone();
     with_root.push(certified.anchor.clone());
-    assert!(matches!(
-        resolver.validate(&with_root, DEFAULT_TIME),
-        Err(X509Error::TrustAnchorInChain { index: 2 })
-    ));
-    // So does a pinned intermediate.
-    let pinned = X509Resolver::new([certified.chain[1].clone()]).unwrap();
-    assert!(matches!(
-        pinned.validate(&certified.chain, DEFAULT_TIME),
-        Err(X509Error::TrustAnchorInChain { index: 1 })
-    ));
-    // A root the verifier does not trust is not an anchor because the token carries it.
     let untrusting = X509Resolver::new([other_anchor()]).unwrap();
     assert!(matches!(
         untrusting.validate(&with_root, DEFAULT_TIME),
         Err(X509Error::PathValidation(_))
     ));
+}
+
+/// HAIP also forbids an issuer to put the trust anchor in `x5c`. A verifier cannot enforce
+/// that without refusing honest chains: an issuer sends `[leaf, intermediate]` to everyone,
+/// and a verifier whose trust list names the intermediate must accept it as well as one whose
+/// list names the root. A copy of an anchor in the chain adds no trust either way.
+#[test]
+fn a_trust_anchor_in_the_chain_changes_nothing() {
+    let certified = certified();
+    let (intermediate, root) = (certified.chain[1].clone(), certified.anchor.clone());
+    let mut with_root = certified.chain.clone();
+    with_root.push(root.clone());
+    for (anchors, chain) in [
+        // The verifier pins the intermediate, alone or next to the root.
+        (vec![intermediate.clone()], &certified.chain),
+        (vec![root.clone(), intermediate.clone()], &certified.chain),
+        (vec![intermediate], &with_root),
+        // The issuer sent the root along.
+        (vec![root], &with_root),
+    ] {
+        let resolver = X509Resolver::new(anchors).unwrap();
+        assert_eq!(
+            resolver.validate(chain, DEFAULT_TIME).unwrap(),
+            certified.key
+        );
+    }
 }
 
 #[test]
@@ -748,12 +779,27 @@ fn chain_limits_and_malformed_certificates() {
         resolver.validate(&[b"not a certificate".to_vec()], DEFAULT_TIME),
         Err(X509Error::InvalidCertificate { index: 0, .. })
     ));
-    // A malformed certificate after the leaf is no intermediate, so the path stops there.
-    let broken = [certified.chain[0].clone(), b"not a certificate".to_vec()];
-    assert!(matches!(
-        resolver.validate(&broken, DEFAULT_TIME),
-        Err(X509Error::PathValidation(_))
-    ));
+    // Every entry of `x5c` is a certificate, wherever it stands, needed for the path or not.
+    for (broken, index) in [
+        (
+            vec![certified.chain[0].clone(), b"not a certificate".to_vec()],
+            1,
+        ),
+        (
+            vec![
+                certified.chain[0].clone(),
+                certified.chain[1].clone(),
+                b"not a certificate".to_vec(),
+            ],
+            2,
+        ),
+    ] {
+        let result = resolver.validate(&broken, DEFAULT_TIME);
+        assert!(
+            matches!(&result, Err(X509Error::InvalidCertificate { index: found, .. }) if *found == index),
+            "{result:?}"
+        );
+    }
 }
 
 #[test]
@@ -923,6 +969,33 @@ fn certified_signer_puts_the_chain_in_the_header() {
     let header = JwsHeader::for_signer(&plain);
     assert_eq!(header.kid.as_deref(), Some("key-1"));
     assert!(!header.additional.contains_key("x5c"));
+    // An empty chain names no key, so the `kid` stands.
+    let empty = CertifiedSigner::new(Es256Signer::rfc7515_a3().with_kid("key-1"), Vec::new());
+    let header = JwsHeader::for_signer(&empty);
+    assert_eq!(header.kid.as_deref(), Some("key-1"));
+    assert!(!header.additional.contains_key("x5c"));
+}
+
+/// A signer behind a `Box<dyn Signer>`, as an `Identity` hands one out, behind a reference or
+/// behind an `Arc` can be given a chain, and keeps the one it has.
+#[tokio::test]
+async fn signers_behind_pointers_keep_their_chain() {
+    let certified = certified();
+    let boxed: Box<dyn Signer> = Box::new(Es256Signer::rfc7515_a3().with_kid("key-1"));
+    assert_eq!(boxed.x5c(), None);
+    let wrapped = CertifiedSigner::new(boxed, certified.chain.clone());
+    assert_eq!(wrapped.x5c(), Some(&certified.chain[..]));
+
+    let shared: Arc<dyn Signer> = Arc::new(wrapped);
+    let by_reference = &shared;
+    let again: Box<dyn Signer + '_> = Box::new(by_reference);
+    for signer in [&shared as &dyn Signer, &by_reference, &again] {
+        assert_eq!(signer.x5c(), Some(&certified.chain[..]));
+        assert_eq!(signer.kid(), Some("key-1"));
+        assert_eq!(signer.alg(), identity_kit::jose::JwsAlgorithm::ES256);
+        assert_eq!(signer.sign(b"input").await.unwrap().len(), 64);
+        assert!(JwsHeader::for_signer(signer).additional.contains_key("x5c"));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -986,14 +1059,81 @@ mod jwt {
 }
 
 // ---------------------------------------------------------------------------------------------
+// A VCDM 2.0 credential JWT
+// ---------------------------------------------------------------------------------------------
+
+#[cfg(feature = "vc")]
+mod vc {
+    use chrono::{TimeZone as _, Utc};
+    use identity_kit::did::Uri;
+    use identity_kit::jose::DefaultVerifier;
+    use identity_kit::vc::validation::{
+        CredentialValidationOptions, JwtCredentialValidator, TimeOptions, ValidationError,
+    };
+    use identity_kit::vc::{CredentialV2, Jwt, Subject};
+
+    use super::*;
+
+    async fn credential(certified: &Certified, issuer: &str) -> Jwt {
+        let credential = CredentialV2::new(
+            Uri::parse(issuer).unwrap(),
+            Subject::new(Uri::parse("did:example:subject").unwrap()),
+        );
+        let header = JwsHeader::for_signer(&certified.signer).with_typ(CredentialV2::JWT_TYP);
+        Jwt::sign(&header, &credential.to_jwt_claims(), &certified.signer)
+            .await
+            .unwrap()
+    }
+
+    /// A VCDM credential always names its issuer, so the certificate must name it too.
+    #[tokio::test]
+    async fn issuer_must_be_named_by_the_certificate() {
+        let certified = certified();
+        let validator = JwtCredentialValidator::new(resolver(&certified), DefaultVerifier);
+        let at = |seconds: i64| {
+            CredentialValidationOptions::new()
+                .with_time(TimeOptions::at(Utc.timestamp_opt(seconds, 0).unwrap()))
+        };
+
+        let named = credential(&certified, "https://example.com").await;
+        let decoded = validator
+            .validate_v2(&named, &at(DEFAULT_TIME))
+            .await
+            .unwrap();
+        assert!(decoded.header.additional.contains_key("x5c"));
+        assert_eq!(decoded.header.kid, None);
+
+        // The chain is validated at the validation time.
+        assert!(matches!(
+            validator.validate_v2(&named, &at(31_536_000_002)).await,
+            Err(ValidationError::KeyResolution { .. })
+        ));
+
+        // Another HTTPS issuer, and a DID, which a certificate never binds.
+        for claimed in ["https://issuer.example", "did:example:123"] {
+            let forged = credential(&certified, claimed).await;
+            let result = validator.validate_v2(&forged, &at(DEFAULT_TIME)).await;
+            assert!(
+                matches!(
+                    &result,
+                    Err(ValidationError::IssuerMismatch { issuer, .. }) if issuer.as_str() == claimed
+                ),
+                "{claimed}: {result:?}"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // SD-JWT VC (HAIP 1.0 §6.1.1)
 // ---------------------------------------------------------------------------------------------
 
 #[cfg(feature = "sd-jwt")]
 mod sd_jwt_vc {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use chrono::{DateTime, TimeZone as _, Utc};
     use identity_kit::jose::DefaultVerifier;
-    use identity_kit::resolver::KeyReferenceError;
     use identity_kit::sd_jwt_vc::validation::{SdJwtValidationError, SdJwtValidationOptions};
     use identity_kit::sd_jwt_vc::{SdJwtCredentialValidator, SdJwtVc, SdJwtVcBuilder};
     use identity_kit::vc::CredentialError;
@@ -1182,15 +1322,58 @@ mod sd_jwt_vc {
             "{result:?}"
         );
 
-        // A chain that does not validate ends the search: the key set is not tried.
+        // A chain that does not validate ends the search: the key set is not tried, though it
+        // would have resolved the key.
+        let key_set = Arc::new(KeySet {
+            key: certified.key.clone(),
+            asked: AtomicUsize::new(0),
+        });
+        let validated = validator(Arc::clone(&key_set))
+            .validate_credential(credential.clone(), &options())
+            .await
+            .unwrap();
+        assert!(matches!(validated.issuer_key, KeyReference::Jwks { .. }));
+        assert_eq!(key_set.asked.load(Ordering::SeqCst), 1);
+
         let untrusting = CompositeKeyResolver::new()
             .with(X509Resolver::new([other_anchor()]).unwrap())
-            .with(JwkResolver);
-        assert!(key_resolution(
-            &validator(untrusting)
-                .validate_credential(credential, &options())
-                .await
-        ));
+            .with_shared(key_set.clone());
+        let result = validator(untrusting)
+            .validate_credential(credential, &options())
+            .await;
+        assert!(
+            matches!(
+                &result,
+                Err(SdJwtValidationError::Validation(ValidationError::KeyResolution { key, .. }))
+                    if matches!(**key, KeyReference::X509Chain(_))
+            ),
+            "{result:?}"
+        );
+        assert_eq!(key_set.asked.load(Ordering::SeqCst), 1);
+    }
+
+    /// Resolves any reference into an issuer's key set to `key`, counting how often it is
+    /// asked for one.
+    struct KeySet {
+        key: Jwk,
+        asked: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl KeyResolver for KeySet {
+        async fn resolve_key(
+            &self,
+            key: &KeyReference,
+            _: KeyRole,
+        ) -> Result<Jwk, KeyResolutionError> {
+            match key {
+                KeyReference::Jwks { .. } => {
+                    self.asked.fetch_add(1, Ordering::SeqCst);
+                    Ok(self.key.clone())
+                }
+                other => Err(KeyResolutionError::unsupported(other)),
+            }
+        }
     }
 
     /// A verifier of issuer key sets, which does not resolve chains, falls through to the
@@ -1244,28 +1427,36 @@ mod sd_jwt_vc {
             "{result:?}"
         );
 
-        // And a credential that names no key at all fails on that.
-        let bare = identity_kit::sd_jwt_vc::SdJwtBuilder::new(
+        // Without `iss` and without a chain, no key is looked for at all: a `kid` that is a
+        // DID URL would otherwise send the resolver to that DID's document first.
+        let asked = Arc::new(KeySet {
+            key: certified.key.clone(),
+            asked: AtomicUsize::new(0),
+        });
+        let anonymous = identity_kit::sd_jwt_vc::SdJwtBuilder::new(
             identity_kit::sd_jwt_vc::SdJwtVcClaims::new(VCT).to_map(),
         )
         .sign(
-            &JwsHeader::new(identity_kit::jose::JwsAlgorithm::ES256).with_typ("dc+sd-jwt"),
+            &JwsHeader::new(identity_kit::jose::JwsAlgorithm::ES256)
+                .with_typ("dc+sd-jwt")
+                .with_kid("key-1"),
             certified.signer.signer(),
         )
         .await
         .unwrap();
-        let result = validator(resolver(&certified))
-            .validate(&bare, &options())
+        let result = validator(Arc::clone(&asked))
+            .validate(&anonymous, &options())
             .await;
         assert!(
             matches!(
                 &result,
                 Err(SdJwtValidationError::Validation(
-                    ValidationError::KeyReference(KeyReferenceError::Missing)
+                    ValidationError::Credential(CredentialError::MissingClaim("iss"))
                 ))
             ),
             "{result:?}"
         );
+        assert_eq!(asked.asked.load(Ordering::SeqCst), 0);
     }
 }
 

@@ -24,9 +24,11 @@ type BoxError = Box<dyn std::error::Error + Send + Sync>;
 /// When the token has an `iss`, the key must belong to it ([`KeyReference::binds_to`]);
 /// without one, only a key named by a DID URL or certified by an `x5c` chain is accepted,
 /// since a key by value or a key set could be anybody's. HAIP 1.0 §6.1 requires the chain:
-/// with the `x509` feature, give the check an `X509Resolver`. Beyond that the check trusts the key the reference resolves
-/// to; whether that key may speak for the list is the application's policy to enforce
-/// around it, by restricting the resolver, say.
+/// with the `x509` feature, give the check an `X509Resolver`. Beyond that the check trusts the
+/// key the reference resolves to; whether that key may speak for the list is the
+/// application's policy to enforce around it, by restricting the resolver, say. That matters
+/// most for a token without `iss` under a chain: any certificate under the resolver's trust
+/// anchors signs it, so give the check trust anchors that certify status list issuers only.
 ///
 /// # Fetching
 ///
@@ -195,6 +197,8 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusCheck for StatusListCh
         status: CredentialStatus<'_>,
         time: TimeOptions,
     ) -> Result<(), StatusError> {
+        // One validation time for the token's key and for the token.
+        let time = time.pinned();
         let CredentialStatus::StatusClaim(status) = status else {
             return Err(StatusError::Unsupported(status.mechanism()));
         };

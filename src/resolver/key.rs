@@ -113,7 +113,10 @@ impl KeyReference {
     /// takes the first the resolver handles, so the resolvers an application configures are
     /// that policy. A candidate the resolver handles and fails to resolve ends the search.
     ///
-    /// A parameter that is malformed is skipped when another one makes a reference.
+    /// A malformed `x5c`, `jwk` or `jku` is skipped when another parameter makes a reference,
+    /// as is a `kid` that names nothing by itself. A `kid` that is refused outright ends the
+    /// search, whatever else the header carries: a DID URL with a path or DID parameters, or a
+    /// `#fragment` without a DID `iss` to join it with.
     ///
     /// # Errors
     ///
@@ -214,13 +217,14 @@ impl KeyReference {
     /// | [`DidUrl`](Self::DidUrl) | `party` is the DID of the URL |
     /// | [`Jwk`](Self::Jwk) | `party` is the `did:jwk` of `key`, or its RFC 7638 SHA-256 thumbprint, or absent (a SIOPv2 self-issued `sub`) |
     /// | [`Jwks`](Self::Jwks) | `party` is the issuer URL (compared as parsed URLs) |
-    /// | [`X509Chain`](Self::X509Chain) | with the `x509` feature: `party` is absent, or the first certificate binds it through a Subject Alternative Name (`X509Certificate::binds`) |
+    /// | [`X509Chain`](Self::X509Chain) | with the `x509` feature: `party` is absent, or an `https` URL whose host is a DNS name of the first certificate (`X509Certificate::binds`) |
     /// | [`Jku`](Self::Jku) | never, until the crate resolves it |
     ///
     /// A key by value and a certificate chain can bind to no party; a validator that requires
     /// an issuer or holder passes it. With a certificate chain, the party that signed is the
     /// subject of the first certificate, and a claimed `iss` is not authenticated by the chain
-    /// (SD-JWT VC §3.5): it binds only when the certificate names it.
+    /// (SD-JWT VC §3.5): it binds only when the certificate names its host. A DID never binds
+    /// to a chain.
     ///
     /// # Examples
     ///
@@ -440,6 +444,11 @@ pub trait KeyResolver: Send + Sync {
     /// the time and calls [`resolve_key`](Self::resolve_key), which is right for a key that
     /// does not depend on it; a resolver whose answer does, such as `X509Resolver` with the
     /// validity periods of certificates, implements it.
+    ///
+    /// A resolver that wraps another one (a cache, a filter, a logger) must implement this
+    /// method too and forward it: left to the default, it would answer for the current time
+    /// whatever time the validator asked for, and a certificate chain would be validated at
+    /// the wrong one.
     ///
     /// # Errors
     ///

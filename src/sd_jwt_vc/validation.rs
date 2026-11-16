@@ -314,8 +314,15 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         }
         let claims = credential.claims();
         let issuer = claims.iss.as_deref();
+        // Only a certificate chain identifies an issuer without `iss`: anything else fails
+        // here, before a key is looked for.
+        if issuer.is_none() && !credential.header().additional.contains_key("x5c") {
+            return Err(ValidationError::from(CredentialError::MissingClaim("iss")).into());
+        }
+        // One validation time for the key and the claims.
+        let time = options.time.pinned();
         let (issuer_key, key) = self
-            .verify_issuer_signature(credential.sd_jwt(), issuer, options.time)
+            .verify_issuer_signature(credential.sd_jwt(), issuer, time)
             .await?;
         check_issuer(issuer, &issuer_key, &key)?;
 
@@ -323,7 +330,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         time_claims.nbf = claims.nbf;
         time_claims.exp = claims.exp;
         time_claims.iat = claims.iat;
-        options.time.check_claims(&time_claims)?;
+        time.check_claims(&time_claims)?;
 
         let (key_binding, holder_key) = match &options.key_binding {
             Some(required) => {
@@ -405,12 +412,14 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
     ) -> Result<ValidatedSdJwtCredentialV2, SdJwtValidationError> {
         let vc = credential.credential();
         let issuer = vc.issuer.id().as_str();
+        // One validation time for the key and the claims.
+        let time = options.time.pinned();
         let (issuer_key, key) = self
-            .verify_issuer_signature(credential.sd_jwt(), Some(issuer), options.time)
+            .verify_issuer_signature(credential.sd_jwt(), Some(issuer), time)
             .await?;
         check_issuer(Some(issuer), &issuer_key, &key)?;
-        options.time.check_claims(credential.claims())?;
-        options.time.check(vc.valid_from, vc.valid_until, None)?;
+        time.check_claims(credential.claims())?;
+        time.check(vc.valid_from, vc.valid_until, None)?;
         let (key_binding, holder_key) = match &options.key_binding {
             Some(required) => {
                 let (claims, holder_key) = self
@@ -486,7 +495,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         let kb_jwt = sd_jwt
             .key_binding_jwt()
             .ok_or(SdJwtValidationError::KeyBindingRequired)?;
-        let holder_key = self.holder_key(cnf, required.time).await?;
+        // One validation time for the holder's key and the key binding JWT.
+        let time = required.time.pinned();
+        let holder_key = self.holder_key(cnf, time).await?;
         let jws = kb_jwt.decode().map_err(ValidationError::from)?;
         match jws.header().typ.as_deref() {
             Some(super::KB_JWT_TYP) => {}
@@ -528,9 +539,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
                 reason: format!("{iat} is out of range"),
             })
         })?;
-        required.time.check(None, None, Some(issued_at))?;
+        time.check(None, None, Some(issued_at))?;
         if let Some(max_age) = required.max_age {
-            let now = required.time.now();
+            let now = time.now();
             // A `max_age` beyond what `chrono` represents bounds nothing.
             let oldest = chrono::TimeDelta::from_std(max_age)
                 .ok()

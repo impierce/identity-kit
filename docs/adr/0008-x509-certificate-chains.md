@@ -53,15 +53,28 @@ anchor merely because it is included there)". It adds three things that shape th
 
 3. **Checks added around it.** The x509-limbo suite showed what `rustls-webpki` leaves to its
    caller; the resolver adds:
-   - HAIP's two rules: the first certificate is not self-signed, and no certificate of the
-     chain is one of the trust anchors. They hold for every chain, not as an option: X.509 is
-     here for HAIP, and relaxing a rule later is compatible where tightening one is not.
-   - a trust anchor is a CA certificate (`basicConstraints` with `cA`), checked when the
-     resolver is built, and is within its own validity period at the validation time, which
-     `rustls-webpki` does not look at;
-   - a leaf with `keyUsage` asserts `digitalSignature` and not `keyCertSign`;
+   - HAIP's rule that the first certificate is not self-signed. It holds for every chain, not
+     as an option: X.509 is here for HAIP, and relaxing a rule later is compatible where
+     tightening one is not.
+   - every certificate of the chain parses, where `rustls-webpki` skips an intermediate it
+     cannot read;
+   - a trust anchor is a CA certificate (`basicConstraints` with `cA`, and `keyCertSign` when
+     it has `keyUsage`), checked when the resolver is built, and is within its own validity
+     period at the validation time, which `rustls-webpki` does not look at;
+   - an intermediate of the path with `keyUsage` asserts `keyCertSign` (RFC 5280 §4.2.1.3),
+     which `rustls-webpki` does not look at either;
+   - a leaf with `keyUsage` asserts `digitalSignature` or `nonRepudiation`, the one bit a
+     certificate for electronic seals may carry (ETSI EN 319 412-2 §4.3.2), and not
+     `keyCertSign`;
    - an RSA leaf key has at least 2048 bits;
    - a chain has at most 10 certificates.
+
+   HAIP's other rule, that `x5c` leaves out the trust anchor, is the issuer's to keep. A
+   verifier cannot enforce it without refusing chains it should accept: an issuer does not
+   know which certificate of its path a verifier trusts, so a verifier that trusts the
+   intermediate receives it in every chain. Comparing bytes does not enforce it either, as a
+   root reissued with the same key is a different certificate. A copy of an anchor in the
+   chain adds no trust, since a certificate is never trusted for being in `x5c`.
 
    Not checked: revocation (CRLs, OCSP), and certificate policies. SHA-1, P-521 and Brainpool
    signatures are refused, as `ring` has none of them.
@@ -75,9 +88,13 @@ anchor merely because it is included there)". It adds three things that shape th
    have validated a token at one time and its certificates at another.
 
 5. **The issuer is the certificate's subject; `iss` binds only through a Subject Alternative
-   Name.** `KeyReference::binds_to` for a chain accepts no party, or a party the first
-   certificate names: a `uniformResourceIdentifier` equal to it, or, for an `https` URL, a
-   `dNSName` equal to its host. Anything else is an `IssuerMismatch`, since any holder of a
+   Name.** `KeyReference::binds_to` for a chain accepts no party, or an `https` URL whose host
+   is a `dNSName` of the first certificate, as earlier HAIP drafts required of `iss`. The URL
+   has no credentials, query or fragment and is written as a URL parser writes it back, so no
+   two readers take it for different hosts; a wildcard `dNSName` binds nothing. A
+   `uniformResourceIdentifier` binds nothing either, an `https` URL or a DID alike: name
+   constraints on DNS names do not reach it, so a CA confined to one domain could certify
+   any identifier. Anything else is an `IssuerMismatch`, since any holder of a
    certificate under a trusted anchor could otherwise claim any `iss`. The SD-JWT VC validator
    accepts a credential without `iss` only when a chain resolved its key: a key by value
    binds to no party either, and must not stand in for an issuer. `X509Certificate` reads the
@@ -89,6 +106,11 @@ anchor merely because it is included there)". It adds three things that shape th
    (`KeyResolutionError::Unsupported` moves on, any other error ends the search). A verifier
    configured with `X509Resolver` alone is a HAIP verifier; one with `JwksResolver` alone
    ignores chains. `from_jws` stays the first candidate.
+   The choice is per verifier, not per issuer: a verifier with both resolvers accepts an
+   issuer's `iss` under a chain that names its host as well as under its published key set,
+   so every trust anchor can speak for every host it certifies. A verifier that must hold one
+   issuer to one mechanism (SD-JWT VC §3.5, Security Considerations) validates with the
+   resolver for that mechanism alone.
 
 7. **A chain is tried before the issuer's key set and before a key by value.** The order
    becomes: DID URL `kid`, `x5c`, `kid` with an HTTPS `iss`, `jwk`, `jku`. HAIP credentials
@@ -109,8 +131,9 @@ anchor merely because it is included there)". It adds three things that shape th
   `from_jws` itself and resolves only that reference should use `candidates`.
 - A verifier with both `X509Resolver` and `JwksResolver` rejects a token whose chain does not
   validate even when its key set would have verified it.
-- A credential with a chain and an `iss` the certificate does not name is rejected. Ecosystems
-  built on earlier HAIP drafts required `iss` to match a `dNSName`, so theirs pass.
+- A credential with a chain and an `iss` the certificate does not name is rejected, and so is
+  one whose `iss` is a DID. Ecosystems built on earlier HAIP drafts required `iss` to match a
+  `dNSName`, so theirs pass.
 - `x509` adds `rustls-webpki`, `rustls-pki-types` and `x509-cert`, and `ring` where `reqwest`
   did not already bring it. It is not a default feature.
 - The `aki` trusted authorities query of OID4VP §6.1.1.1, which HAIP §5 requires, and the

@@ -31,9 +31,9 @@ fuzz_target!(|data: &[u8]| {
             certificate.public_key(),
             format!("{certificate:?}"),
         );
-        // What a certificate binds, it names.
+        // A URI name binds nothing, and a DNS name at most its own `https` origin.
         for uri in certificate.uris() {
-            assert!(certificate.binds(uri));
+            assert!(!certificate.binds(uri));
         }
         for name in certificate.dns_names() {
             let _ = certificate.binds(&format!("https://{name}"));

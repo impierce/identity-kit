@@ -200,12 +200,14 @@ impl<R: KeyResolver, V: JwsVerifier> JwtValidator<R, V> {
         let claims: JwtClaims =
             serde_json::from_slice(jws.payload()).map_err(JwtValidationError::Payload)?;
 
+        // One validation time for the key and for the claims.
+        let now = options.now();
         let (reference, key) = resolve_jws_key(
             &self.resolver,
             &jws,
             claims.iss.as_deref(),
             options.role,
-            options.now(),
+            now,
         )
         .await
         .map_err(|error| match error {
@@ -240,7 +242,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtValidator<R, V> {
                 found: claims.aud.clone(),
             });
         }
-        options.check_times(&claims)?;
+        options.check_times(&claims, now)?;
         for claim in &options.required_claims {
             if !has_claim(&claims, claim) {
                 return Err(JwtValidationError::MissingClaim(claim.clone()));
@@ -313,8 +315,9 @@ pub struct ValidatedJwt<T = JwtClaims> {
 #[non_exhaustive]
 pub enum IssuerBinding {
     /// The key must belong to `iss` ([`KeyReference::binds_to`]): a `kid` DID URL of the DID
-    /// `iss`, a key of the key set of the HTTPS `iss`, or a key by value whose `did:jwk` or
-    /// thumbprint is `iss`, or which comes with no `iss` at all.
+    /// `iss`, a key of the key set of the HTTPS `iss`, a key by value whose `did:jwk` or
+    /// thumbprint is `iss`, or which comes with no `iss` at all, or the key of a certificate
+    /// chain whose first certificate names `iss`, or which comes with no `iss`.
     #[default]
     KeyOfIssuer,
     /// Any key the [`KeyResolver`] resolves is accepted, whatever `iss` says: for a resolver
@@ -324,7 +327,9 @@ pub enum IssuerBinding {
     /// Never with a resolver that returns a key the token itself carries, such as
     /// [`JwkResolver`](super::JwkResolver) for a `jwk` header, or one that resolves any DID:
     /// the issuer binding is then the only thing tying the key to `iss`, and without it anyone
-    /// can sign a token with their own key.
+    /// can sign a token with their own key. The same holds for `X509Resolver`: without the
+    /// binding, anyone holding a certificate under one of its trust anchors can sign a token
+    /// with any `iss`.
     Any,
 }
 
@@ -447,9 +452,8 @@ impl JwtValidationOptions {
         self.algorithms.is_empty() || self.algorithms.contains(&alg)
     }
 
-    /// Checks `exp`, `nbf` and `iat` at the validation time, within the leeway.
-    fn check_times(&self, claims: &JwtClaims) -> Result<(), JwtValidationError> {
-        let now = self.now();
+    /// Checks `exp`, `nbf` and `iat` at `now`, within the leeway.
+    fn check_times(&self, claims: &JwtClaims, now: i64) -> Result<(), JwtValidationError> {
         let leeway = i64::try_from(self.leeway.as_secs()).unwrap_or(i64::MAX);
         let latest = now.saturating_add(leeway);
         let earliest = now.saturating_sub(leeway);

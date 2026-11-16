@@ -106,7 +106,8 @@ impl JwsHeader {
     /// [`kid`](Signer::kid).
     pub fn for_signer(signer: &dyn Signer) -> Self {
         let header = Self::new(signer.alg());
-        match signer.x5c() {
+        // An empty chain names no key: RFC 7515 §4.1.6 has at least the key's own certificate.
+        match signer.x5c().filter(|chain| !chain.is_empty()) {
             Some(chain) => header.with_x5c(chain),
             None => Self {
                 kid: signer.kid().map(str::to_owned),
@@ -333,7 +334,7 @@ pub trait Signer: Send + Sync {
 
     /// The certificate chain of the signing key to put in an `x5c` header, if the signer has
     /// one: DER-encoded certificates, the key's own first. `None` by default;
-    /// [`CertifiedSigner`] gives a signer one.
+    /// [`CertifiedSigner`] gives a signer one. A signer that wraps another one forwards it.
     fn x5c(&self) -> Option<&[Vec<u8>]> {
         None
     }
@@ -345,6 +346,38 @@ pub trait Signer: Send + Sync {
     /// A [`SignError`] wrapping whatever the backend reports.
     async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, SignError>;
 }
+
+// Implements `Signer` for `&T`, `Box<T>` and `Arc<T>` by forwarding every method to `T`, so
+// that a signer behind a reference or a `Box<dyn Signer>`, as an `Identity` returns one, can
+// be wrapped or passed on. A method added to the trait is added here too: one with a default
+// body would still compile if left out, and calls through these wrappers would then run the
+// default, not `T`'s override. `clippy::missing_trait_methods` turns that omission into an
+// error.
+macro_rules! forward_signer {
+    ($($ty:ty),* $(,)?) => {$(
+        #[async_trait::async_trait]
+        #[deny(clippy::missing_trait_methods)]
+        impl<T: Signer + ?Sized> Signer for $ty {
+            fn alg(&self) -> JwsAlgorithm {
+                (**self).alg()
+            }
+
+            fn kid(&self) -> Option<&str> {
+                (**self).kid()
+            }
+
+            fn x5c(&self) -> Option<&[Vec<u8>]> {
+                (**self).x5c()
+            }
+
+            async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, SignError> {
+                (**self).sign(signing_input).await
+            }
+        }
+    )*};
+}
+
+forward_signer!(&T, Box<T>, std::sync::Arc<T>);
 
 /// A [`Signer`] with the X.509 certificate chain of its key, for issuers that are identified by
 /// a certificate: the tokens the builders of this crate sign with it carry the chain in an

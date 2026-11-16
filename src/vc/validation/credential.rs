@@ -151,18 +151,15 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     ) -> Result<DecodedCredential, ValidationError> {
         let jws = jwt.decode()?;
         let decoded = decode(&jws, &options.additional_typ)?;
+        // One validation time for the key, the claims and the status.
+        let time = options.time.pinned();
         let issuer = &decoded.credential.issuer;
         let (reference, key) = self
-            .verify(
-                &jws,
-                KeyRole::Issuer,
-                Some(issuer.id().as_str()),
-                options.time,
-            )
+            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()), time)
             .await?;
         check_controller(issuer, &reference, &key, "issuer")?;
-        options.time.check_claims(&decoded.claims)?;
-        options.time.check(
+        time.check_claims(&decoded.claims)?;
+        time.check(
             Some(decoded.credential.issuance_date),
             decoded.credential.expiration_date,
             None,
@@ -177,7 +174,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
                 .chain(status.iter().map(status_claim_entry))
                 .collect(),
             options.status,
-            options.time,
+            time,
         )
         .await?;
         Ok(decoded)
@@ -195,18 +192,15 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
     ) -> Result<DecodedCredentialV2, ValidationError> {
         let jws = jwt.decode()?;
         let decoded = decode_v2(&jws, &options.additional_typ)?;
+        // One validation time for the key, the claims and the status.
+        let time = options.time.pinned();
         let issuer = &decoded.credential.issuer;
         let (reference, key) = self
-            .verify(
-                &jws,
-                KeyRole::Issuer,
-                Some(issuer.id().as_str()),
-                options.time,
-            )
+            .verify(&jws, KeyRole::Issuer, Some(issuer.id().as_str()), time)
             .await?;
         check_controller(issuer, &reference, &key, "issuer")?;
-        options.time.check_claims(&decoded.claims)?;
-        options.time.check(
+        time.check_claims(&decoded.claims)?;
+        time.check(
             decoded.credential.valid_from,
             decoded.credential.valid_until,
             None,
@@ -220,7 +214,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
                 .chain(status.iter().map(status_claim_entry))
                 .collect(),
             options.status,
-            options.time,
+            time,
         )
         .await?;
         Ok(decoded)

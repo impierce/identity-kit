@@ -53,17 +53,22 @@ const MIN_RSA_BITS: usize = 2048;
 ///
 /// 1. The chain has at least one and at most [`MAX_CHAIN_LENGTH`](Self::MAX_CHAIN_LENGTH)
 ///    certificates.
-/// 2. The leaf is not self-signed, and no certificate of the chain is one of the trust
-///    anchors: HAIP requires both of every `x5c` it defines.
-/// 3. A path from the leaf to a trust anchor validates as RFC 5280 §6 describes, at the
-///    validation time: each signature, each validity period, `basicConstraints` and the path
-///    length, name constraints, and no critical extension that is not understood. The
+/// 2. Every certificate of the chain reads as one, and the leaf is not self-issued (its
+///    subject is not its issuer), which HAIP requires of every `x5c` it defines: "The X.509
+///    certificate signing the request MUST NOT be self-signed."
+/// 3. A path from the leaf to a trust anchor validates, at the validation time: each
+///    signature, each validity period, `basicConstraints` and the path length, name
+///    constraints on DNS names, and no critical extension that is not understood. The
 ///    certificates after the leaf are a pool to build the path from, so their order does not
-///    matter. Path validation is [`rustls-webpki`](https://docs.rs/rustls-webpki)'s.
-/// 4. The trust anchor the path ends at is within its own validity period.
-/// 5. A leaf that has a `keyUsage` extension asserts `digitalSignature` and not `keyCertSign`
-///    (RFC 5280 §4.2.1.3).
-/// 6. The leaf's key is one a JWS can be verified with: P-256, P-384, secp256k1 (feature
+///    matter, and one that is itself a trust anchor adds nothing. Path building and these
+///    checks are [`rustls-webpki`](https://docs.rs/rustls-webpki)'s.
+/// 4. Every CA certificate of the path that has a `keyUsage` extension asserts
+///    `keyCertSign` (RFC 5280 §6.1.4), the trust anchor included.
+/// 5. The trust anchor the path ends at is within its own validity period.
+/// 6. A leaf that has a `keyUsage` extension asserts `digitalSignature` or `nonRepudiation`
+///    (`contentCommitment`, which qualified seal certificates carry alone), and not
+///    `keyCertSign` (RFC 5280 §4.2.1.3).
+/// 7. The leaf's key is one a JWS can be verified with: P-256, P-384, secp256k1 (feature
 ///    `secp256k1`), Ed25519 or RSA of at least 2048 bits.
 ///
 /// Certificates are signed with ECDSA on P-256 or P-384, Ed25519, or RSA from 2048 bits, with
@@ -73,8 +78,14 @@ const MIN_RSA_BITS: usize = 2048;
 ///
 /// - **Revocation.** Neither CRLs nor OCSP are consulted. An application that needs it checks
 ///   the chain itself, or keeps its trust anchors current.
-/// - **Extended key usage.** SD-JWT VC and HAIP define none for credential issuers, so any is
-///   accepted.
+/// - **Extended key usage and certificate policies.** SD-JWT VC and HAIP define none for
+///   credential issuers, so any is accepted. The [`KeyRole`] makes no difference either: a
+///   chain is validated the same for an issuer and for a holder.
+/// - **Name constraints on anything but DNS names**, which is why only a DNS name binds an
+///   `iss` ([`X509Certificate::binds`]).
+/// - **Whether the chain leaves out the trust anchor.** HAIP forbids an issuer to include
+///   it. A verifier that pins an intermediate CA cannot tell an issuer's chain that includes
+///   it from a violation, and a copy of an anchor adds no trust, so such a chain validates.
 /// - **Who the subject is.** A valid chain says the key belongs to the subject of the leaf
 ///   under one of the trust anchors, not that this subject may issue a given credential:
 ///   that is the application's policy, with [`X509Certificate`] to read the subject from.
@@ -83,13 +94,24 @@ const MIN_RSA_BITS: usize = 2048;
 ///
 /// With `x5c`, the issuer is the subject of the leaf certificate, and an `iss` claim is not
 /// authenticated by the chain (SD-JWT VC §3.5). [`KeyReference::binds_to`] therefore accepts
-/// an `iss` only when the leaf binds it through a Subject Alternative Name, and the SD-JWT VC
-/// validator accepts a credential without `iss`.
+/// an `iss` only when the leaf binds it, as an `https` URL whose host is one of its DNS names
+/// ([`X509Certificate::binds`]), and the SD-JWT VC validator accepts a credential without
+/// `iss`.
+///
+/// Every CA under the trust anchors is trusted to certify the names it puts in a leaf, the
+/// subject included: name constraints restrict DNS names in the Subject Alternative Name
+/// extension, not a common name. Which mechanism verifies a token also follows from what the
+/// token carries, a chain or a `kid`, whenever the application configures resolvers for both;
+/// an application that must pin one mechanism per issuer (SD-JWT VC §3.5 asks that an
+/// attacker cannot choose it) checks the `KeyReference` the validator returns, or gives each
+/// issuer's tokens a validator with the one resolver.
 ///
 /// # Time
 ///
 /// A validator passes its validation time through [`KeyResolver::resolve_key_at`];
-/// [`resolve_key`](KeyResolver::resolve_key) validates at the current time.
+/// [`resolve_key`](KeyResolver::resolve_key) validates at the current time. A resolver that
+/// wraps this one must forward `resolve_key_at`, or its chains are validated at the current
+/// time whatever the validator asks.
 #[derive(Clone)]
 pub struct X509Resolver {
     anchors: Vec<Anchor>,
@@ -110,9 +132,10 @@ impl X509Resolver {
     /// A resolver trusting `anchors`, DER-encoded certificates: root CAs, or any CA
     /// certificate the application pins.
     ///
-    /// Each anchor must be a CA certificate, one whose `basicConstraints` say `cA`: whoever
-    /// holds the key of an anchor can issue certificates this resolver accepts, so a
-    /// certificate that signs credentials is refused as an anchor. A resolver without anchors
+    /// Each anchor must be a CA certificate, one whose `basicConstraints` say `cA` and whose
+    /// `keyUsage`, if it has one, asserts `keyCertSign`: whoever holds the key of an anchor
+    /// can issue certificates this resolver accepts, so a certificate that signs credentials
+    /// is refused as an anchor. A resolver without anchors
     /// refuses every chain.
     ///
     /// # Errors
@@ -133,7 +156,7 @@ impl X509Resolver {
                     .map_err(|e| X509Error::invalid_certificate(index, e))?;
                 webpki::anchor_from_trusted_cert(&der)
                     .map_err(|e| X509Error::invalid_certificate(index, e))?;
-                if !certificate.is_ca() {
+                if !certificate.may_issue() {
                     return Err(X509Error::TrustAnchorNotCa { index });
                 }
                 Ok(Anchor {
@@ -183,16 +206,17 @@ impl X509Resolver {
                 max: Self::MAX_CHAIN_LENGTH,
             });
         }
-        let leaf = X509Certificate::from_der(leaf_der)?;
+        let certificates = chain
+            .iter()
+            .enumerate()
+            .map(|(index, certificate)| {
+                X509Certificate::parse(certificate)
+                    .map_err(|e| X509Error::invalid_certificate(index, e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let leaf = &certificates[0];
         if leaf.is_self_issued() {
             return Err(X509Error::SelfSigned);
-        }
-        if let Some(index) = chain.iter().position(|certificate| {
-            self.anchors
-                .iter()
-                .any(|anchor| anchor.der.as_ref() == certificate.as_slice())
-        }) {
-            return Err(X509Error::TrustAnchorInChain { index });
         }
 
         let time = u64::try_from(now)
@@ -204,10 +228,22 @@ impl X509Resolver {
             .map(|anchor| webpki::anchor_from_trusted_cert(&anchor.der))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| X509Error::PathValidation(Box::new(e)))?;
-        // `rustls-webpki` reads a trust anchor as a name and a key, without a validity period.
-        // A path is accepted only when a certificate of its anchor, among those configured
-        // with that name and key, is valid now; otherwise path building tries another one.
-        let anchor_is_current = |path: &webpki::VerifiedPath<'_>| {
+        // What `rustls-webpki` leaves to its caller, for each path it has verified; an error
+        // makes path building try another one.
+        let check_path = |path: &webpki::VerifiedPath<'_>| {
+            // A CA certificate with a `keyUsage` that lacks `keyCertSign` issues nothing.
+            for intermediate in path.intermediate_certificates() {
+                let der = intermediate.der();
+                let may_issue = certificates
+                    .iter()
+                    .find(|certificate| certificate.der == der.as_ref())
+                    .is_some_and(X509Certificate::may_issue);
+                if !may_issue {
+                    return Err(webpki::Error::EndEntityUsedAsCa);
+                }
+            }
+            // A trust anchor is read as a name and a key, without a validity period: one of
+            // the certificates configured with that name and key must be valid now.
             let used = path.anchor();
             let mut error = webpki::Error::UnknownIssuer;
             for (anchor, configured) in anchors.iter().zip(&self.anchors) {
@@ -238,14 +274,11 @@ impl X509Resolver {
                 time,
                 AnyExtendedKeyUsage,
                 None,
-                Some(&anchor_is_current),
+                Some(&check_path),
             )
             .map_err(|e| X509Error::PathValidation(Box::new(e)))?;
 
-        if leaf
-            .key_usage
-            .is_some_and(|usage| !usage.digital_signature || usage.key_cert_sign)
-        {
+        if !leaf.may_sign_tokens() {
             return Err(X509Error::KeyUsage);
         }
         leaf.public_key()
@@ -329,6 +362,7 @@ impl ExtendedKeyUsageValidator for AnyExtendedKeyUsage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Usage {
     digital_signature: bool,
+    non_repudiation: bool,
     key_cert_sign: bool,
 }
 
@@ -402,6 +436,7 @@ impl X509Certificate {
             .map(|identifier| identifier.as_bytes().to_vec());
         let key_usage = tbs.get_extension::<KeyUsage>()?.map(|(_, usage)| Usage {
             digital_signature: usage.digital_signature(),
+            non_repudiation: usage.non_repudiation(),
             key_cert_sign: usage.key_cert_sign(),
         });
         let ca = tbs
@@ -500,24 +535,59 @@ impl X509Certificate {
         jwk_from_spki(&self.public_key)
     }
 
-    /// Whether this certificate binds `identifier`, the `iss` of a token it signed, through
-    /// its Subject Alternative Name extension: a `uniformResourceIdentifier` equal to
-    /// `identifier`, or, for an `https` URL, a `dNSName` equal to its host, ignoring case.
-    /// Wildcard names bind nothing.
+    /// Whether this certificate binds `identifier`, the `iss` of a token it signed: an `https`
+    /// URL whose host is one of the `dNSName` entries of the Subject Alternative Name
+    /// extension.
+    ///
+    /// The URL must be written the one way every parser reads alike, since the `iss` goes on
+    /// to other components as a string: no credentials, query or fragment, a domain name
+    /// rather than an IP address as host, in lower case and, when internationalized, in its
+    /// ASCII form, with nothing a URL parser would normalize away. A port and a path are the
+    /// issuer's own. Wildcard names bind nothing.
+    ///
+    /// A `uniformResourceIdentifier` entry binds nothing, an `https` URL or a DID alike: name
+    /// constraints on DNS names, which is how a CA is usually confined to its domains, do not
+    /// reach URIs, so a confined CA could certify any. [`uris`](Self::uris) has them for an
+    /// application that trusts its CAs with that.
     pub fn binds(&self, identifier: &str) -> bool {
-        if self.uris.iter().any(|uri| uri == identifier) {
-            return true;
-        }
         let Ok(url) = url::Url::parse(identifier) else {
             return false;
         };
-        if url.scheme() != "https" {
+        if url.scheme() != "https"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
             return false;
         }
-        url.host_str().is_some_and(|host| {
-            self.dns_names
+        let Some(url::Host::Domain(host)) = url.host() else {
+            return false;
+        };
+        // The parser accepts and repairs much that is not the URL it returns (white space,
+        // backslashes, an upper-case or percent-encoded host); only what it returns unchanged
+        // is bound, give or take the `/` of an empty path.
+        let canonical = url.as_str();
+        let written_canonically = identifier == canonical
+            || (url.path() == "/" && canonical.strip_suffix('/') == Some(identifier));
+        written_canonically
+            && self
+                .dns_names
                 .iter()
                 .any(|name| !name.contains('*') && name.eq_ignore_ascii_case(host))
+    }
+
+    /// Whether this certificate may issue others: a CA whose `keyUsage`, if it has one,
+    /// asserts `keyCertSign` (RFC 5280 §4.2.1.3, §6.1.4).
+    fn may_issue(&self) -> bool {
+        self.ca && self.key_usage.is_none_or(|usage| usage.key_cert_sign)
+    }
+
+    /// Whether this certificate's `keyUsage`, if it has one, lets its key sign a token:
+    /// `digitalSignature` or `nonRepudiation`, and not `keyCertSign`.
+    fn may_sign_tokens(&self) -> bool {
+        self.key_usage.is_none_or(|usage| {
+            (usage.digital_signature || usage.non_repudiation) && !usage.key_cert_sign
         })
     }
 }
@@ -622,16 +692,11 @@ pub enum X509Error {
     /// The PEM text does not hold certificates.
     #[error("invalid PEM: {0}")]
     InvalidPem(String),
-    /// The first certificate is self-signed: its subject is its issuer. HAIP forbids it, and
-    /// a certificate is not a trust anchor because a token carries it.
+    /// The first certificate is self-issued: its subject is its issuer, as in a self-signed
+    /// certificate. HAIP forbids it, and a certificate is not a trust anchor because a token
+    /// carries it.
     #[error("the signing certificate is self-signed")]
     SelfSigned,
-    /// A certificate of the chain is one of the trust anchors, which HAIP forbids.
-    #[error("certificate {index} of the chain is a trust anchor")]
-    TrustAnchorInChain {
-        /// The index of the certificate in the chain.
-        index: usize,
-    },
     /// The validation time is before the Unix epoch.
     #[error("the validation time {0} is before 1970")]
     InvalidTime(i64),
@@ -639,14 +704,14 @@ pub enum X509Error {
     /// wrong signature, an expired certificate, a CA constraint. The source says which.
     #[error("the certificate chain does not validate: {0}")]
     PathValidation(#[source] Box<dyn Error + Send + Sync>),
-    /// A trust anchor is not a CA certificate.
+    /// A trust anchor is not a CA certificate, or its `keyUsage` lacks `keyCertSign`.
     #[error("trust anchor {index} is not a CA certificate")]
     TrustAnchorNotCa {
         /// The index of the anchor among those given.
         index: usize,
     },
     /// The first certificate has a `keyUsage` extension that does not allow signing a token:
-    /// it lacks `digitalSignature`, or asserts `keyCertSign`.
+    /// it has neither `digitalSignature` nor `nonRepudiation`, or asserts `keyCertSign`.
     #[error("the signing certificate's key usage does not allow signing a token")]
     KeyUsage,
     /// The first certificate's key is of a kind no JWS algorithm of this crate uses.
@@ -684,6 +749,143 @@ mod tests {
             outside_validity(201, 100, 200),
             Some(webpki::Error::CertExpired { .. })
         ));
+    }
+
+    /// A certificate with the names `dns_names` and `uris`, and the key usage `usage`.
+    fn certificate(dns_names: &[&str], uris: &[&str], usage: Option<Usage>) -> X509Certificate {
+        X509Certificate {
+            der: Vec::new(),
+            subject: "CN=example".to_owned(),
+            issuer: "CN=ca".to_owned(),
+            self_issued: false,
+            ca: false,
+            dns_names: dns_names.iter().map(|&name| name.to_owned()).collect(),
+            uris: uris.iter().map(|&uri| uri.to_owned()).collect(),
+            not_before: 0,
+            not_after: 0,
+            subject_key_identifier: None,
+            authority_key_identifier: None,
+            key_usage: usage,
+            public_key: Vec::new(),
+        }
+    }
+
+    /// An `iss` binds only as a URL every parser reads the same way.
+    #[test]
+    fn binds_only_canonical_https_urls() {
+        let named = certificate(&["issuer.example", "xn--mnchen-3ya.example"], &[], None);
+        for bound in [
+            "https://issuer.example",
+            "https://issuer.example/",
+            "https://issuer.example/tenant/1",
+            "https://issuer.example:8443/tenant/",
+            "https://xn--mnchen-3ya.example",
+        ] {
+            assert!(named.binds(bound), "{bound}");
+        }
+        for unbound in [
+            // Another host, however the URL is dressed up.
+            "https://victim.example",
+            "https://issuer.example.victim.example",
+            "https://victim.example@issuer.example",
+            "https://victim.example:pw@issuer.example/",
+            "https://issuer.example\\@victim.example",
+            "https://issuer.example?x=https://victim.example",
+            "https://issuer.example#https://victim.example",
+            // The right host, written as a parser would not write it.
+            " https://issuer.example",
+            "https://issuer.example ",
+            "https:issuer.example",
+            "https:\\\\issuer.example",
+            "https://issuer.exam\tple",
+            "https://ISSUER.example",
+            "HTTPS://issuer.example",
+            "https://issuer.example.",
+            "https://issuer.example:443",
+            "https://%69ssuer.example",
+            "https://\u{ff49}ssuer.example",
+            "https://m\u{fc}nchen.example",
+            // Not an `https` URL at all.
+            "http://issuer.example",
+            "issuer.example",
+            "did:web:issuer.example",
+            "",
+        ] {
+            assert!(!named.binds(unbound), "{unbound:?}");
+        }
+        // An IP address written as a DNS name binds no way of writing that address.
+        let address = certificate(&["192.168.1.1"], &[], None);
+        for unbound in [
+            "https://192.168.1.1",
+            "https://0xc0.0xa8.1.1",
+            "https://3232235777",
+        ] {
+            assert!(!address.binds(unbound), "{unbound}");
+        }
+        // Wildcards bind nothing, and neither does an empty name.
+        let wild = certificate(&["*.issuer.example", "*", ""], &[], None);
+        for unbound in [
+            "https://a.issuer.example",
+            "https://*.issuer.example",
+            "https://",
+        ] {
+            assert!(!wild.binds(unbound), "{unbound}");
+        }
+    }
+
+    /// A URI name binds nothing: name constraints on DNS names do not reach it.
+    #[test]
+    fn uri_names_bind_nothing() {
+        let certificate = certificate(
+            &[],
+            &["https://victim.example", "did:web:victim.example", ""],
+            None,
+        );
+        for uri in certificate.uris() {
+            assert!(!certificate.binds(uri), "{uri:?}");
+        }
+    }
+
+    /// RFC 5280 §4.2.1.3: `digitalSignature` and `nonRepudiation` are for signatures "other
+    /// than signatures on certificates", `keyCertSign` for those on certificates.
+    #[test]
+    fn key_usage_decides_what_a_key_signs() {
+        let usage = |digital_signature, non_repudiation, key_cert_sign| {
+            Some(Usage {
+                digital_signature,
+                non_repudiation,
+                key_cert_sign,
+            })
+        };
+        let leaf = |usage| certificate(&[], &[], usage);
+        for signs in [
+            None,
+            usage(true, false, false),
+            usage(false, true, false),
+            usage(true, true, false),
+        ] {
+            assert!(leaf(signs).may_sign_tokens(), "{signs:?}");
+        }
+        for refused in [
+            usage(false, false, false),
+            usage(true, false, true),
+            usage(false, true, true),
+            usage(false, false, true),
+        ] {
+            assert!(!leaf(refused).may_sign_tokens(), "{refused:?}");
+        }
+
+        let ca = |usage| X509Certificate {
+            ca: true,
+            ..certificate(&[], &[], usage)
+        };
+        assert!(ca(None).may_issue());
+        assert!(ca(usage(false, false, true)).may_issue());
+        assert!(ca(usage(true, false, true)).may_issue());
+        assert!(!ca(usage(true, false, false)).may_issue());
+        // Without `cA`, `keyCertSign` is not enough.
+        assert!(!leaf(usage(false, false, true)).may_issue());
+        assert!(!leaf(None).may_issue());
     }
 
     #[test]

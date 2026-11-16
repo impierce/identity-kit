@@ -394,6 +394,15 @@ impl TimeOptions {
         self.now.unwrap_or_else(Utc::now)
     }
 
+    /// These options at the validation time they name now: a validation reads the clock
+    /// once, so that a key and the claims it signed are checked at the same instant.
+    pub(crate) fn pinned(self) -> Self {
+        Self {
+            now: Some(self.now()),
+            ..self
+        }
+    }
+
     /// The leeway as a `chrono` delta, saturated.
     fn delta(&self) -> TimeDelta {
         TimeDelta::from_std(self.leeway).unwrap_or(TimeDelta::MAX)

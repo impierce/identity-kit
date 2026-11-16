@@ -316,8 +316,8 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   (`jwk`, `kid` as an absolute DID URL, `jku`). Resolving a reference says nothing about
   trust: after the signature verifies, a validator checks that the key belongs to the claimed
   party (the DID of a DID URL; `did:jwk` or the RFC 7638 thumbprint of a key by value; the
-  issuer URL of a JWKS; no party, or one a Subject Alternative Name of the first certificate
-  names, for a certificate chain). A token can carry several references, and the verifier's
+  issuer URL of a JWKS; no party, or an `https` URL whose host is a `dNSName` of the first
+  certificate, for a certificate chain). A token can carry several references, and the verifier's
   policy picks the mechanism (SD-JWT VC §3.5): `candidates` lists them all and a validator
   takes the first its resolver handles, so the configured resolvers are the policy. `Jku` is in
   the enum and resolves to `Unsupported` until implemented.
@@ -326,12 +326,13 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   HAIP 1.0 mandates (§6.1.1 for SD-JWT VCs, §6.1 for Status List Tokens). The application
   supplies the trust anchors, CA certificates only. `rustls-webpki` builds and validates the
   path (RFC 5280 §6) at the validation time, which the validators pass through
-  `KeyResolver::resolve_key_at`; the resolver adds HAIP's rules (the signing certificate is
-  not self-signed, the chain leaves out the trust anchor), the validity of the anchor itself,
-  the leaf's `keyUsage` and a 2048-bit floor for RSA. Revocation and certificate policies are
+  `KeyResolver::resolve_key_at`; the resolver adds HAIP's rule that the signing
+  certificate is not self-signed, the validity of the anchor itself, `keyUsage` (`keyCertSign`
+  for a CA, `digitalSignature` or `nonRepudiation` for the leaf) and a 2048-bit floor for RSA. Revocation and certificate policies are
   not checked, and any extended key usage is accepted. The issuer of such a token is the
   subject of the first certificate, read with `X509Certificate`; `iss` is optional for an
-  SD-JWT VC signed this way and binds only through a Subject Alternative Name. An issuer signs
+  SD-JWT VC signed this way and binds only as an `https` URL whose host is a `dNSName` of that
+  certificate, never as a DID. An issuer signs
   with `jose::CertifiedSigner`, which carries its chain (`Signer::x5c`) into the `x5c` header
   that `JwsHeader::for_signer` writes.
 - Plain JWTs: `JwtValidator` validates a JWT that is not a credential (an OAuth 2.0 access
