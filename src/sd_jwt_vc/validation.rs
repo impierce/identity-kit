@@ -348,7 +348,8 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
                 .iter()
                 .map(CredentialStatus::StatusClaim)
                 .collect(),
-            options,
+            options.status,
+            time,
         )
         .await?;
 
@@ -386,6 +387,12 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         credential: SdJwtCredentialV2,
         options: &SdJwtValidationOptions,
     ) -> Result<ValidatedSdJwtCredentialV2, SdJwtValidationError> {
+        // One validation time for the key, the claims and the status.
+        let time = options.time.pinned();
+        let options = &SdJwtValidationOptions {
+            time,
+            ..options.clone()
+        };
         let validated = self
             .validate_credential_v2_unchecked_status(credential, options)
             .await?;
@@ -397,7 +404,8 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
                 .map(CredentialStatus::Vcdm)
                 .chain(credential.status().map(CredentialStatus::StatusClaim))
                 .collect(),
-            options,
+            options.status,
+            time,
         )
         .await?;
         Ok(validated)
@@ -567,20 +575,15 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         Ok((claims, holder_key))
     }
 
-    /// Checks every status entry with this validator's check, per the policy, at the
-    /// validation time.
+    /// Checks every status entry with this validator's check, per `policy`, at `time`, the
+    /// time the credential was validated at.
     async fn check_status(
         &self,
         statuses: Vec<CredentialStatus<'_>>,
-        options: &SdJwtValidationOptions,
+        policy: StatusPolicy,
+        time: TimeOptions,
     ) -> Result<(), SdJwtValidationError> {
-        Ok(check_statuses(
-            self.status.as_deref(),
-            statuses,
-            options.status,
-            options.time,
-        )
-        .await?)
+        Ok(check_statuses(self.status.as_deref(), statuses, policy, time).await?)
     }
 }
 

@@ -334,8 +334,10 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
                 SdJwtCredentialV2::from_sd_jwt_with(sd_jwt, &options.credentials.additional_typ)
                     .map_err(crate::sd_jwt_vc::SdJwtValidationError::from)?;
             // No status policy here: the status is checked below, for both kinds of entry.
+            // One validation time for the key, the claims and the status.
+            let time = options.credentials.time.pinned();
             let sd_jwt_options = SdJwtValidationOptions {
-                time: options.credentials.time,
+                time,
                 key_binding: options.key_binding.clone(),
                 ..SdJwtValidationOptions::default()
             };
@@ -355,7 +357,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
                         .chain(credential.status().map(CredentialStatus::StatusClaim))
                         .collect(),
                     options.credentials.status,
-                    options.credentials.time,
+                    time,
                 )
                 .await?;
             check_subject_holder(

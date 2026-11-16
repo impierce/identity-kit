@@ -844,7 +844,7 @@ mod tests {
             "",
         ];
         let without_dns_names = certificate(&[], &uris, None);
-        for uri in without_dns_names.uris() {
+        for uri in uris {
             assert!(!without_dns_names.binds(uri), "{uri:?}");
         }
         let with_dns_name = certificate(&["issuer.example"], &uris, None);
