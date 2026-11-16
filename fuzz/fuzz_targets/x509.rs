@@ -18,7 +18,10 @@ fuzz_target!(|data: &[u8]| {
     let certificate = X509Certificate::from_der(data);
     if let Ok(certificate) = &certificate {
         assert_eq!(certificate.der(), data);
-        assert_eq!(X509Certificate::from_der(certificate.der()).as_ref().ok(), Some(certificate));
+        assert_eq!(
+            X509Certificate::from_der(certificate.der()).as_ref().ok(),
+            Some(certificate)
+        );
         assert!(certificate.not_before() >= 0 && certificate.not_after() >= 0);
         let _ = (
             certificate.subject(),
@@ -31,9 +34,18 @@ fuzz_target!(|data: &[u8]| {
             certificate.public_key(),
             format!("{certificate:?}"),
         );
-        // A URI name binds nothing, and a DNS name at most its own `https` origin.
+        // Only a DNS name binds, and only an `https` URL on it: a URI name is bound when a
+        // DNS name of the certificate is its host, never for being a name of the certificate.
         for uri in certificate.uris() {
-            assert!(!certificate.binds(uri));
+            if certificate.binds(uri) {
+                let on_a_dns_name = certificate.dns_names().iter().any(|name| {
+                    uri.strip_prefix("https://").is_some_and(|rest| {
+                        rest.get(..name.len())
+                            .is_some_and(|host| host.eq_ignore_ascii_case(name))
+                    })
+                });
+                assert!(on_a_dns_name, "{uri} is bound by no DNS name");
+            }
         }
         for name in certificate.dns_names() {
             let _ = certificate.binds(&format!("https://{name}"));
@@ -50,7 +62,9 @@ fuzz_target!(|data: &[u8]| {
     let resolver = X509Resolver::new([ROOT.to_vec()]).expect("the root is a CA certificate");
     let chain = vec![data.to_vec(), INTERMEDIATE.to_vec()];
     if let Ok(key) = resolver.validate(&chain, NOW) {
-        let leaf = certificate.as_ref().expect("a validated leaf is a certificate");
+        let leaf = certificate
+            .as_ref()
+            .expect("a validated leaf is a certificate");
         assert_eq!(leaf.public_key().ok(), Some(key));
         assert!(!leaf.is_self_issued() && !leaf.is_ca());
     }

@@ -833,16 +833,24 @@ mod tests {
         }
     }
 
-    /// A URI name binds nothing: name constraints on DNS names do not reach it.
+    /// A URI name binds nothing: name constraints on DNS names do not reach it. An `https`
+    /// URL the certificate also has as a URI name is bound by the DNS name of its host alone.
     #[test]
     fn uri_names_bind_nothing() {
-        let certificate = certificate(
-            &[],
-            &["https://victim.example", "did:web:victim.example", ""],
-            None,
-        );
-        for uri in certificate.uris() {
-            assert!(!certificate.binds(uri), "{uri:?}");
+        let uris = [
+            "https://victim.example",
+            "did:web:victim.example",
+            "https://issuer.example/tenant",
+            "",
+        ];
+        let without_dns_names = certificate(&[], &uris, None);
+        for uri in without_dns_names.uris() {
+            assert!(!without_dns_names.binds(uri), "{uri:?}");
+        }
+        let with_dns_name = certificate(&["issuer.example"], &uris, None);
+        assert!(with_dns_name.binds("https://issuer.example/tenant"));
+        for unbound in ["https://victim.example", "did:web:victim.example", ""] {
+            assert!(!with_dns_name.binds(unbound), "{unbound:?}");
         }
     }
 
