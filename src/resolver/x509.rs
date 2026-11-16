@@ -7,7 +7,7 @@ use std::error::Error;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustls_pki_types::pem::PemObject as _;
-use rustls_pki_types::{CertificateDer, UnixTime};
+use rustls_pki_types::{CertificateDer, TrustAnchor, UnixTime};
 use sha2::{Digest as _, Sha256};
 use webpki::{EndEntityCert, ExtendedKeyUsageValidator, KeyPurposeIdIter};
 use x509_cert::Certificate;
@@ -242,22 +242,7 @@ impl X509Resolver {
                     return Err(webpki::Error::EndEntityUsedAsCa);
                 }
             }
-            // A trust anchor is read as a name and a key, without a validity period: one of
-            // the certificates configured with that name and key must be valid now.
-            let used = path.anchor();
-            let mut error = webpki::Error::UnknownIssuer;
-            for (anchor, configured) in anchors.iter().zip(&self.anchors) {
-                if anchor.subject != used.subject
-                    || anchor.subject_public_key_info != used.subject_public_key_info
-                {
-                    continue;
-                }
-                match outside_validity(now, configured.not_before, configured.not_after) {
-                    None => return Ok(()),
-                    Some(outside) => error = outside,
-                }
-            }
-            Err(error)
+            anchor_validity(path.anchor(), anchors.iter().zip(&self.anchors), now)
         };
         let intermediates: Vec<CertificateDer<'_>> = intermediates
             .iter()
@@ -321,6 +306,34 @@ impl KeyResolver for X509Resolver {
             other => Err(KeyResolutionError::unsupported(other)),
         }
     }
+}
+
+/// Whether a certificate configured as the trust anchor `used` is valid at `now`; the error
+/// of the last one that is not, otherwise.
+///
+/// `rustls-webpki` reads a trust anchor as a name, a key and name constraints, without a
+/// validity period, so `used` stands for every configured certificate with those three alike.
+/// A certificate with the same name and key and other constraints is another anchor, which
+/// the path was not verified under: it lends this one no validity.
+fn anchor_validity<'a>(
+    used: &TrustAnchor<'_>,
+    configured: impl IntoIterator<Item = (&'a TrustAnchor<'a>, &'a Anchor)>,
+    now: i64,
+) -> Result<(), webpki::Error> {
+    let mut error = webpki::Error::UnknownIssuer;
+    for (anchor, certificate) in configured {
+        if anchor.subject != used.subject
+            || anchor.subject_public_key_info != used.subject_public_key_info
+            || anchor.name_constraints != used.name_constraints
+        {
+            continue;
+        }
+        match outside_validity(now, certificate.not_before, certificate.not_after) {
+            None => return Ok(()),
+            Some(outside) => error = outside,
+        }
+    }
+    Err(error)
 }
 
 /// Why a certificate valid from `not_before` to `not_after`, both inclusive and in seconds
@@ -748,6 +761,53 @@ mod tests {
         assert!(matches!(
             outside_validity(201, 100, 200),
             Some(webpki::Error::CertExpired { .. })
+        ));
+    }
+
+    /// A CA reissued with the same name and key is one trust anchor when its name
+    /// constraints are the same, and the validity of either certificate is the anchor's. With
+    /// other constraints it is another anchor: an expired certificate without constraints is
+    /// not valid again because a constrained one with its name and key is.
+    #[test]
+    fn anchor_validity_is_that_of_the_anchor_the_path_was_verified_under() {
+        use rustls_pki_types::Der;
+
+        let anchor = |constraints: Option<&'static [u8]>| TrustAnchor {
+            subject: Der::from_slice(b"subject"),
+            subject_public_key_info: Der::from_slice(b"key"),
+            name_constraints: constraints.map(Der::from_slice),
+        };
+        let valid = |not_before, not_after| Anchor {
+            der: CertificateDer::from(Vec::new()),
+            not_before,
+            not_after,
+        };
+        let (unconstrained, constrained) = (anchor(None), anchor(Some(b"allowed.example")));
+        let (expired, current) = (valid(100, 200), valid(150, 300));
+        let now = 250;
+
+        let configured = [(&unconstrained, &expired), (&constrained, &current)];
+        assert!(matches!(
+            anchor_validity(&unconstrained, configured, now),
+            Err(webpki::Error::CertExpired { .. })
+        ));
+        assert!(anchor_validity(&constrained, configured, now).is_ok());
+
+        // The same anchor twice: the certificate that is valid decides, in either order.
+        for configured in [
+            [(&unconstrained, &expired), (&unconstrained, &current)],
+            [(&unconstrained, &current), (&unconstrained, &expired)],
+        ] {
+            assert!(anchor_validity(&unconstrained, configured, now).is_ok());
+        }
+        // An anchor that is not configured, by its name or by its key.
+        let other = TrustAnchor {
+            subject: Der::from_slice(b"other"),
+            ..anchor(None)
+        };
+        assert!(matches!(
+            anchor_validity(&other, configured, now),
+            Err(webpki::Error::UnknownIssuer)
         ));
     }
 
