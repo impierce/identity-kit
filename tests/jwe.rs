@@ -392,6 +392,31 @@ fn encryption_refuses_keys_and_headers_that_do_not_fit() {
     let mut with_zip = header();
     with_zip.additional.insert("zip".to_owned(), json!("DEF"));
     assert!(invalid_header(with_zip));
+    // What decoding refuses, encryption does not produce: `crit`, even empty, and a field
+    // shadowed by an additional parameter of its name.
+    let mut with_crit = header();
+    with_crit.crit = Some(Vec::new());
+    assert!(invalid_header(with_crit));
+    for name in ["alg", "enc", "kid", "epk", "apu", "crit"] {
+        let mut shadowed = header();
+        shadowed
+            .additional
+            .insert(name.to_owned(), json!("A256GCM"));
+        assert!(invalid_header(shadowed), "{name}");
+    }
+    // Other additional parameters are kept.
+    let mut extended = header();
+    extended
+        .additional
+        .insert("x-request".to_owned(), json!("r1"));
+    let jwe = CompactJwe::encrypt(extended, b"{}", &public).unwrap();
+    assert_eq!(
+        CompactJwe::decode(jwe.as_str())
+            .unwrap()
+            .header()
+            .additional["x-request"],
+        "r1"
+    );
 
     // The same `kid` is no conflict.
     let jwe = CompactJwe::encrypt(header().with_kid("ac"), b"{}", &public).unwrap();

@@ -24,6 +24,12 @@ const IV_LEN: usize = 12;
 /// The length of an AES-GCM Authentication Tag, 128 bits (RFC 7518 §5.3).
 const TAG_LEN: usize = 16;
 
+/// The header parameters [`JweHeader`] has fields for: a member of `additional` by one of these
+/// names would be serialized next to the field, and read back in its place.
+const REGISTERED: [&str; 9] = [
+    "alg", "enc", "kid", "typ", "cty", "epk", "apu", "apv", "crit",
+];
+
 /// A JWE key management algorithm (`alg`, RFC 7518 §4.1) this crate implements.
 ///
 /// # Examples
@@ -331,8 +337,8 @@ impl CompactJwe {
     ///
     /// [`JweError::InvalidKey`] when `recipient` is not an `EC` P-256 public key, or its `use`
     /// is not `enc` or its `alg` not the header's, [`JweError::InvalidHeader`] when `header`
-    /// already has an `epk`, a `zip` or a `kid` other than the recipient's, or malformed `apu`
-    /// or `apv`, [`JweError::PlaintextTooLong`] past 2^36 bytes of plaintext, and
+    /// already has an `epk`, has `zip` or `crit`, a `kid` other than the recipient's, malformed
+    /// `apu` or `apv`, or a field's name among its `additional` parameters, [`JweError::PlaintextTooLong`] past 2^36 bytes of plaintext, and
     /// [`JweError::Random`] when the operating system has no randomness to give.
     pub fn encrypt(header: JweHeader, plaintext: &[u8], recipient: &Jwk) -> Result<Self, JweError> {
         let ephemeral = random_secret_key()?;
@@ -355,6 +361,20 @@ impl CompactJwe {
         }
         if header.additional.contains_key("zip") {
             return Err(JweError::invalid_header("`zip` is not supported"));
+        }
+        // A header this crate would refuse to decode is not one to encrypt under.
+        if header.crit.is_some() {
+            return Err(JweError::invalid_header(
+                "`crit` names extensions no recipient of this crate understands",
+            ));
+        }
+        if let Some(name) = REGISTERED
+            .iter()
+            .find(|name| header.additional.contains_key(**name))
+        {
+            return Err(JweError::invalid_header(&format!(
+                "`{name}` is a field of the header, not an additional parameter"
+            )));
         }
         match (&header.kid, recipient.kid()) {
             (None, Some(kid)) => header.kid = Some(kid.to_owned()),
