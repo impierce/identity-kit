@@ -27,12 +27,13 @@
 //!    Signed any other way, it needs one.
 //! 3. `nbf`, `exp` and `iat` hold at the validation time, and so do `validFrom` and
 //!    `validUntil` of a VCDM 2.0 credential.
-//! 4. When the options require key binding (RFC 9901 §7.3): the SD-JWT+KB carries a key
-//!    binding JWT with `typ: kb+jwt`, signed by the holder's key, for the expected audience
-//!    and nonce, issued within the window, with an `sd_hash` over the presented SD-JWT. The
-//!    holder's key is `cnf.jwk`, used as it is since the issuer signed it, or else the key
-//!    `cnf.kid` names, an absolute DID URL resolved for [`KeyRole::Subject`]
-//!    (`authentication`); see [`KeyReference::from_confirmation`].
+//! 4. When key binding is required (RFC 9901 §7.3), as the [`KeyBindingPolicy`] decides from
+//!    the options and the credential's `cnf`: the SD-JWT+KB carries a key binding JWT with
+//!    `typ: kb+jwt`, signed by the holder's key, for the expected audience and nonce, issued
+//!    within the window, with an `sd_hash` over the presented SD-JWT. The holder's key is
+//!    `cnf.jwk`, used as it is since the issuer signed it, or else the key `cnf.kid` names, an
+//!    absolute DID URL resolved for [`KeyRole::Subject`] (`authentication`); see
+//!    [`KeyReference::from_confirmation`].
 //! 5. `status` (as [`CredentialStatus::StatusClaim`]) and the `credentialStatus` entries of a VCDM
 //!    2.0 credential (as [`CredentialStatus::Vcdm`]) pass the [`StatusCheck`], per the
 //!    [`StatusPolicy`].
@@ -107,14 +108,40 @@ impl KeyBindingOptions {
     }
 }
 
+/// When key binding is required (RFC 9901 §7.3, step 1): the Verifier's policy, decided
+/// before looking at whether a key binding JWT is present.
+///
+/// A key binding JWT that is not required is not verified, and does not fail validation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum KeyBindingPolicy {
+    /// Whenever [`SdJwtValidationOptions::key_binding`] is given, and never otherwise: key
+    /// binding is required of every credential then, and one without `cnf` fails
+    /// ([`SdJwtValidationError::NoHolderKey`]). Suits a Holder validating a credential it was
+    /// issued, which has `cnf` and no key binding JWT yet, and a Verifier that only accepts
+    /// credentials bound to a key.
+    #[default]
+    WhenRequested,
+    /// Whenever the credential has `cnf`, as HAIP §6.1.1.1 requires of a presented SD-JWT VC
+    /// bound to a key: [`SdJwtValidationOptions::key_binding`] must be
+    /// given ([`SdJwtValidationError::KeyBindingOptionsMissing`] otherwise) and the key binding
+    /// JWT present and valid. A credential without `cnf` is validated without key binding,
+    /// even when `key_binding` is given.
+    WhenCnf,
+}
+
 /// Options of [`SdJwtCredentialValidator`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SdJwtValidationOptions {
     /// The validation time and leeway of the issuer-signed JWT.
     pub time: TimeOptions,
-    /// The key binding required, if any; a key binding JWT is not verified otherwise.
+    /// What a key binding JWT must prove, when the
+    /// [`key_binding_policy`](Self::key_binding_policy) requires one; a key binding JWT is not
+    /// verified otherwise.
     pub key_binding: Option<KeyBindingOptions>,
+    /// When key binding is required: [`KeyBindingPolicy::WhenRequested`] by default.
+    pub key_binding_policy: KeyBindingPolicy,
     /// What to do about `status` (and `credentialStatus`).
     pub status: StatusPolicy,
     /// Whether to reject the pre-standard `typ: vc+sd-jwt` on an SD-JWT VC.
@@ -126,8 +153,9 @@ pub struct SdJwtValidationOptions {
 }
 
 impl SdJwtValidationOptions {
-    /// Default options: validate now without leeway, no key binding required,
-    /// [`StatusPolicy::Strict`], `vc+sd-jwt` accepted.
+    /// Default options: validate now without leeway, no key binding required
+    /// ([`KeyBindingPolicy::WhenRequested`] without `key_binding`), [`StatusPolicy::Strict`],
+    /// `vc+sd-jwt` accepted.
     pub fn new() -> Self {
         Self::default()
     }
@@ -139,10 +167,18 @@ impl SdJwtValidationOptions {
         self
     }
 
-    /// These options requiring `key_binding`.
+    /// These options requiring `key_binding`, when the
+    /// [`key_binding_policy`](Self::key_binding_policy) requires key binding.
     #[must_use]
     pub fn with_key_binding(mut self, key_binding: KeyBindingOptions) -> Self {
         self.key_binding = Some(key_binding);
+        self
+    }
+
+    /// These options with `policy` deciding when key binding is required.
+    #[must_use]
+    pub fn with_key_binding_policy(mut self, policy: KeyBindingPolicy) -> Self {
+        self.key_binding_policy = policy;
         self
     }
 
@@ -188,6 +224,12 @@ pub enum SdJwtValidationError {
     /// Key binding is required and the SD-JWT carries no key binding JWT.
     #[error("key binding is required, but the SD-JWT has no key binding JWT")]
     KeyBindingRequired,
+    /// The credential has `cnf`, so [`KeyBindingPolicy::WhenCnf`] requires key binding, but
+    /// the options give no [`KeyBindingOptions`] to check it with.
+    #[error(
+        "the credential has `cnf`, so key binding is required, but no key binding options were given"
+    )]
+    KeyBindingOptionsMissing,
     /// Key binding is required and `cnf` names no key this crate can look for: there is no
     /// `cnf`, or [`KeyReference::from_confirmation`] refuses it.
     #[error("key binding is required, but `cnf` carries no usable key reference: {0}")]
@@ -332,15 +374,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         time_claims.iat = claims.iat;
         time.check_claims(&time_claims)?;
 
-        let (key_binding, holder_key) = match &options.key_binding {
-            Some(required) => {
-                let (claims, holder_key) = self
-                    .check_key_binding(credential.sd_jwt(), credential.confirmation(), required)
-                    .await?;
-                (Some(claims), Some(holder_key))
-            }
-            None => (None, None),
-        };
+        let (key_binding, holder_key) = self
+            .key_binding(credential.sd_jwt(), credential.confirmation(), options)
+            .await?;
 
         self.check_status(
             claims
@@ -428,15 +464,9 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         check_issuer(Some(issuer), &issuer_key, &key)?;
         time.check_claims(credential.claims())?;
         time.check(vc.valid_from, vc.valid_until, None)?;
-        let (key_binding, holder_key) = match &options.key_binding {
-            Some(required) => {
-                let (claims, holder_key) = self
-                    .check_key_binding(credential.sd_jwt(), credential.confirmation(), required)
-                    .await?;
-                (Some(claims), Some(holder_key))
-            }
-            None => (None, None),
-        };
+        let (key_binding, holder_key) = self
+            .key_binding(credential.sd_jwt(), credential.confirmation(), options)
+            .await?;
         Ok(ValidatedSdJwtCredentialV2 {
             credential,
             issuer_key,
@@ -490,6 +520,32 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
                 })?,
         };
         Ok((reference, key))
+    }
+
+    /// RFC 9901 §7.3, steps 1, 2 and 5: whether `options` require key binding of a credential
+    /// with `cnf`, and if so the claims of the key binding JWT of `sd_jwt` and the holder's key
+    /// that verified it.
+    async fn key_binding(
+        &self,
+        sd_jwt: &SdJwt,
+        cnf: Option<&Confirmation>,
+        options: &SdJwtValidationOptions,
+    ) -> Result<(Option<JwtClaims>, Option<(KeyReference, Jwk)>), SdJwtValidationError> {
+        let required = match (options.key_binding_policy, cnf) {
+            (KeyBindingPolicy::WhenRequested, _) => options.key_binding.as_ref(),
+            (KeyBindingPolicy::WhenCnf, None) => None,
+            (KeyBindingPolicy::WhenCnf, Some(_)) => Some(
+                options
+                    .key_binding
+                    .as_ref()
+                    .ok_or(SdJwtValidationError::KeyBindingOptionsMissing)?,
+            ),
+        };
+        let Some(required) = required else {
+            return Ok((None, None));
+        };
+        let (claims, holder_key) = self.check_key_binding(sd_jwt, cnf, required).await?;
+        Ok((Some(claims), Some(holder_key)))
     }
 
     /// RFC 9901 §7.3, step 5: the key binding JWT of `sd_jwt`, signed by the key `cnf` names;

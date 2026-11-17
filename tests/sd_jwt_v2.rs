@@ -26,10 +26,10 @@ use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::resolver::Resolver;
 use identity_kit::sd_jwt_vc::{
-    Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, SdJwt, SdJwtBuilder,
-    SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error, SdJwtCredentialValidator,
-    SdJwtError, SdJwtValidationError, SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder,
-    SdJwtVcError,
+    Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, KeyBindingPolicy, SdJwt,
+    SdJwtBuilder, SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
+    SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtValidationOptions, SdJwtVc,
+    SdJwtVcBuilder, SdJwtVcError,
 };
 use identity_kit::status_list::{Status, StatusListRef};
 use identity_kit::vc::validation::{
@@ -1155,6 +1155,89 @@ async fn presentation_with_sd_jwt_and_jwt_credentials_validates() {
     assert_eq!(unverified.presentation, decoded.presentation);
     assert_eq!(unverified.credentials[0].as_sd_jwt(), Some(&presented));
     assert_eq!(unverified.credentials[1].credential(), &plain);
+}
+
+/// `KeyBindingPolicy::WhenCnf` (HAIP §6.1.1.1) for a VCDM 2.0 credential secured with SD-JWT,
+/// alone and enveloped in a presentation.
+#[tokio::test]
+async fn key_binding_policy_when_cnf() {
+    let issuer = issuer();
+    let holder = holder();
+    let issued = issue().await;
+    let presented = present(&issued).await;
+    let when_cnf = || with_key_binding().with_key_binding_policy(KeyBindingPolicy::WhenCnf);
+    let forgotten = options().with_key_binding_policy(KeyBindingPolicy::WhenCnf);
+
+    let validated = validator()
+        .validate_v2(presented.sd_jwt(), &when_cnf())
+        .await
+        .unwrap();
+    assert!(validated.key_binding.is_some());
+    assert!(validated.holder_key.is_some());
+    assert!(matches!(
+        validator()
+            .validate_v2(issued.sd_jwt(), &when_cnf())
+            .await
+            .unwrap_err(),
+        SdJwtValidationError::KeyBindingRequired
+    ));
+    assert!(matches!(
+        validator()
+            .validate_v2(presented.sd_jwt(), &forgotten)
+            .await
+            .unwrap_err(),
+        SdJwtValidationError::KeyBindingOptionsMissing
+    ));
+    let unbound = SdJwtCredentialV2Builder::new(credential(&issuer.did, &holder.did))
+        .with_kid(issuer.kid.as_str())
+        .sign(&issuer.signer)
+        .await
+        .unwrap();
+    let validated = validator()
+        .validate_v2(unbound.sd_jwt(), &when_cnf())
+        .await
+        .unwrap();
+    assert_eq!(validated.key_binding, None);
+
+    // Enveloped: the presented credential passes, the issued one fails for lack of a key
+    // binding JWT, and without key binding options any credential with `cnf` fails.
+    let (_, vp) = present_vp([
+        EnvelopedVc::from_sd_jwt(presented.sd_jwt()),
+        EnvelopedVc::from_sd_jwt(issued.sd_jwt()),
+        EnvelopedVc::from_sd_jwt(unbound.sd_jwt()),
+    ])
+    .await;
+    let all_errors = || {
+        presentation_options()
+            .with_fail_fast(FailFast::AllErrors)
+            .with_key_binding_policy(KeyBindingPolicy::WhenCnf)
+    };
+    let errors = credential_errors(
+        presentation_validator()
+            .validate_v2(&vp, &all_errors().with_key_binding(key_binding_options()))
+            .await
+            .unwrap_err(),
+    );
+    assert!(matches!(
+        errors.as_slice(),
+        [(1, ValidationError::SdJwt(error))]
+            if matches!(**error, SdJwtValidationError::KeyBindingRequired)
+    ));
+    let errors = credential_errors(
+        presentation_validator()
+            .validate_v2(&vp, &all_errors())
+            .await
+            .unwrap_err(),
+    );
+    assert_eq!(errors.len(), 2);
+    for (index, error) in [0, 1].into_iter().zip(&errors) {
+        assert!(matches!(
+            error,
+            (i, ValidationError::SdJwt(error))
+                if *i == index
+                    && matches!(**error, SdJwtValidationError::KeyBindingOptionsMissing)
+        ));
+    }
 }
 
 #[tokio::test]
