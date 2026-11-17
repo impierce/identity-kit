@@ -40,8 +40,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | ES256K verification via `k256`                                         |   ✅   | `secp256k1`   | [RFC 8812][rfc8812]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | RSA algorithms (RS256, PS256), verification only ([ADR 0001](adr/0001-rsa-verification-only.md)) |   ✅   | `rsa`         | [RFC 7518 §3.3, §3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.3) | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | `JwtClaims` and `OneOrMany` moved down from `vc` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7519][rfc7519]                                                   | [#54](https://github.com/impierce/identity-kit/issues/54) |
-| `CompactJwe`: decode, encrypt and decrypt in the compact serialization with `ECDH-ES` on P-256 (Concat KDF) and `A128GCM`/`A256GCM`, for encrypted responses ([ADR 0009](adr/0009-jwe-for-encrypted-responses.md)) |   ✅   | `jwe`         | [RFC 7516][rfc7516], [RFC 7518 §4.6, §5.3][rfc7518], [OID4VP §8.3][oid4vp], [HAIP §5][haip] | — |
-| `JweDecrypter` trait for the recipient's key, `EcdhKey` for a per-request P-256 key kept as a private JWK |   ✅   | `jwe`         | [RFC 7518 §4.6][rfc7518], [HAIP §5][haip]                             | — |
+| `CompactJwe`: decode, encrypt and decrypt in the compact serialization with `ECDH-ES` on P-256 (Concat KDF) and `A128GCM`/`A256GCM`, for encrypted responses ([ADR 0009](adr/0009-jwe-for-encrypted-responses.md)) |   ✅   | `jwe`         | [RFC 7516][rfc7516], [RFC 7518 §4.6, §5.3][rfc7518], [OID4VP §8.3][oid4vp], [HAIP §5][haip] | [#183](https://github.com/impierce/identity-kit/issues/183) |
+| `JweDecrypter` trait for the recipient's key, `EcdhKey` for a per-request P-256 key kept as a private JWK |   ✅   | `jwe`         | [RFC 7518 §4.6][rfc7518], [HAIP §5][haip]                             | [#183](https://github.com/impierce/identity-kit/issues/183) |
 
 ### `keys`: key stores
 
