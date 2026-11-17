@@ -199,11 +199,10 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 8785: JSON Canonicalization Scheme][rfc8785] | IETF   | `methods::jwk`                            |
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
-| [OpenID4VP 1.0][oid4vp]                      | OIDF        | `vc` (`ClaimPath`), `jose` (`jwe`)        |
-| [OpenID4VC HAIP 1.0][haip]                   | OIDF        | `resolver` (`x509`), `jose` (`jwe`)       |
+| [OpenID4VP 1.0][oid4vp]                      | OpenID Foundation | `vc` (`ClaimPath`), `jose` (`jwe`)  |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
 | [Token Status List][status-list] (draft 21)  | IETF draft  | `status_list`                             |
-| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`) |
+| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`; `CompactJwe`, `jwe`) |
 | [PKCS #11 v3.1][pkcs11]                      | OASIS       | `keys::pkcs11`                            |
 | [multicodec][multicodec], [multibase][multibase] | Multiformats | `methods::key`                        |
 

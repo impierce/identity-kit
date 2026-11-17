@@ -230,6 +230,13 @@ fn malformed_serializations_are_refused() {
             "{part}"
         );
     }
+    // base64url without padding is strict: unused trailing bits must be zero.
+    let tag = RESPONSE.rsplit('.').next().unwrap();
+    let non_canonical = format!("{}R", &tag[..tag.len() - 1]);
+    assert!(matches!(
+        decode_err(&with_part(RESPONSE, 4, &non_canonical)),
+        JweError::InvalidBase64Url { part: "tag" }
+    ));
     // ECDH-ES in the Direct Key Agreement mode has an empty JWE Encrypted Key.
     assert!(matches!(
         decode_err(&with_part(RESPONSE, 1, "AAAA")),
@@ -301,6 +308,29 @@ fn headers_this_crate_cannot_honour_are_refused() {
         header.insert("exp".to_owned(), json!(1));
     });
     assert!(matches!(decode_err(&crit), JweError::UnsupportedCritical(names) if names == ["exp"]));
+    // `crit` in any form: an empty list names no extension but is not allowed (RFC 7516
+    // §4.1.13), and `null` is not a list.
+    let empty_crit = with_header(|header| {
+        header.insert("crit".to_owned(), json!([]));
+    });
+    assert!(
+        matches!(decode_err(&empty_crit), JweError::UnsupportedCritical(names) if names.is_empty())
+    );
+    let null_crit = with_header(|header| {
+        header.insert("crit".to_owned(), Value::Null);
+    });
+    assert!(matches!(
+        decode_err(&null_crit),
+        JweError::InvalidHeader { .. }
+    ));
+    // A hostile value is repeated in the error only in part.
+    let long_alg = with_header(|header| {
+        header.insert("alg".to_owned(), json!("A".repeat(100_000)));
+    });
+    assert!(matches!(
+        decode_err(&long_alg),
+        JweError::UnsupportedAlgorithm(alg) if alg.chars().count() == 65 && alg.ends_with('…')
+    ));
     let zip = with_header(|header| {
         header.insert("zip".to_owned(), json!("DEF"));
     });
@@ -372,6 +402,14 @@ fn encryption_refuses_keys_and_headers_that_do_not_fit() {
     };
     assert!(refused(&public.clone().with_key_use("sig")));
     assert!(refused(&public.clone().with_alg("ECDH-ES+A128KW")));
+    // "The alg parameter MUST be present in the JWKs" (OpenID4VP §8.3).
+    let mut without_alg = serde_json::to_value(&public).unwrap();
+    without_alg.as_object_mut().unwrap().remove("alg");
+    assert!(refused(&serde_json::from_value(without_alg).unwrap()));
+    // A Verifier that published its private key gets no response encrypted to it.
+    assert!(refused(&verifier_jwk()));
+    assert!(refused(&public.clone().with_key_ops(["sign", "verify"])));
+    assert!(!refused(&public.clone().with_key_ops(["deriveBits"])));
     let x25519: Jwk = serde_json::from_value(json!({
         "kty": "OKP", "kid": "jc", "use": "enc", "crv": "X25519", "alg": "ECDH-ES",
         "x": "WPX7wnwq10hFNK9aDSyG1QlLswE_CJY14LdhcFUIVVc"
@@ -386,6 +424,21 @@ fn encryption_refuses_keys_and_headers_that_do_not_fit() {
         )
     };
     assert!(invalid_header(header().with_kid("another key")));
+    // A `kid` names the recipient's key: with a recipient key that has none, it would name
+    // another.
+    let mut without_kid = serde_json::to_value(&public).unwrap();
+    without_kid.as_object_mut().unwrap().remove("kid");
+    let without_kid: Jwk = serde_json::from_value(without_kid).unwrap();
+    assert!(matches!(
+        CompactJwe::encrypt(header().with_kid("ac"), b"{}", &without_kid),
+        Err(JweError::InvalidHeader { .. })
+    ));
+    assert_eq!(
+        CompactJwe::encrypt(header(), b"{}", &without_kid)
+            .unwrap()
+            .kid(),
+        None
+    );
     let mut with_epk = header();
     with_epk.epk = Some(public.clone());
     assert!(invalid_header(with_epk));
@@ -439,6 +492,9 @@ fn private_keys_must_be_whole_and_consistent() {
     }))
     .unwrap();
     assert!(invalid(&x25519));
+    // A key published for signing is not reused for key agreement.
+    assert!(invalid(&verifier_jwk().with_key_use("sig")));
+    assert!(invalid(&verifier_jwk().with_alg("ES256")));
 }
 
 /// A key kept elsewhere, an HSM say, is a `JweDecrypter` of its own; its failure reaches the
@@ -451,6 +507,16 @@ async fn decrypters_behind_pointers_and_of_other_backends() {
     impl JweDecrypter for Hsm {
         async fn shared_secret(&self, epk: &Jwk) -> Result<Zeroizing<Vec<u8>>, JweError> {
             self.0.shared_secret(epk).await
+        }
+    }
+
+    /// Returns the whole shared point, where the `x` coordinate is due.
+    struct WholePoint;
+
+    #[async_trait::async_trait]
+    impl JweDecrypter for WholePoint {
+        async fn shared_secret(&self, _: &Jwk) -> Result<Zeroizing<Vec<u8>>, JweError> {
+            Ok(Zeroizing::new(vec![4; 65]))
         }
     }
 
@@ -468,6 +534,13 @@ async fn decrypters_behind_pointers_and_of_other_backends() {
     assert!(jwe.decrypt(&boxed).await.is_ok());
     assert!(jwe.decrypt(&Arc::new(verifier())).await.is_ok());
     assert!(jwe.decrypt(&&verifier()).await.is_ok());
+    // A backend that returns the whole shared point instead of its `x` coordinate is caught as
+    // a key agreement failure, not mistaken for an altered JWE.
+    assert!(matches!(
+        jwe.decrypt(&WholePoint).await,
+        Err(JweError::KeyAgreement(_))
+    ));
+
     let error = jwe.decrypt(&Offline).await.unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -482,6 +555,7 @@ fn names_and_errors() {
         JweEncryption::A128Gcm
     );
     assert_eq!(JweEncryption::A256Gcm.to_string(), "A256GCM");
+    assert_eq!(JweAlgorithm::EcdhEs.to_string(), "ECDH-ES");
     assert_eq!(JweEncryption::A128Gcm.key_len(), 16);
     assert_eq!(JweEncryption::A256Gcm.key_len(), 32);
     assert!(matches!(

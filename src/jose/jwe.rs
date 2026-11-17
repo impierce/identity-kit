@@ -24,6 +24,13 @@ const IV_LEN: usize = 12;
 /// The length of an AES-GCM Authentication Tag, 128 bits (RFC 7518 §5.3).
 const TAG_LEN: usize = 16;
 
+/// The length of a P-256 ECDH shared secret, the `x` coordinate of the shared point.
+const P256_SHARED_SECRET_LEN: usize = 32;
+
+/// How much of an unsupported header value an error repeats: enough to name it, not so much
+/// that a hostile header fills a log.
+const SHOWN_LEN: usize = 64;
+
 /// The header parameters [`JweHeader`] has fields for: a member of `additional` by one of these
 /// names would be serialized next to the field, and read back in its place.
 const REGISTERED: [&str; 9] = [
@@ -71,7 +78,7 @@ impl FromStr for JweAlgorithm {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "ECDH-ES" => Ok(Self::EcdhEs),
-            other => Err(JweError::UnsupportedAlgorithm(other.to_owned())),
+            other => Err(JweError::UnsupportedAlgorithm(shown(other))),
         }
     }
 }
@@ -133,7 +140,7 @@ impl FromStr for JweEncryption {
         match s {
             "A128GCM" => Ok(Self::A128Gcm),
             "A256GCM" => Ok(Self::A256Gcm),
-            other => Err(JweError::UnsupportedEncryption(other.to_owned())),
+            other => Err(JweError::UnsupportedEncryption(shown(other))),
         }
     }
 }
@@ -330,15 +337,18 @@ impl CompactJwe {
     /// with ECDH-ES and the Concat KDF (RFC 7518 §4.6) over `apu` and `apv` as the header has
     /// them, and encrypts with a random IV.
     ///
-    /// When `recipient` has a `kid` and `header` none, the header takes the recipient's, as
-    /// OpenID4VP §8.3 requires.
+    /// The header's `kid` is the recipient's: taken from `recipient` when the header has none,
+    /// as OpenID4VP §8.3 requires, and refused when it names another key or `recipient` has
+    /// none.
     ///
     /// # Errors
     ///
-    /// [`JweError::InvalidKey`] when `recipient` is not an `EC` P-256 public key, or its `use`
-    /// is not `enc` or its `alg` not the header's, [`JweError::InvalidHeader`] when `header`
-    /// already has an `epk`, has `zip` or `crit`, a `kid` other than the recipient's, malformed
-    /// `apu` or `apv`, or a field's name among its `additional` parameters, [`JweError::PlaintextTooLong`] past 2^36 bytes of plaintext, and
+    /// [`JweError::InvalidKey`] when `recipient` is not an `EC` P-256 public key, has no `alg`
+    /// or another than the header's (OpenID4VP §8.3 requires one), a `use` other than `enc`,
+    /// `key_ops` without `deriveKey` or `deriveBits`, or private parameters,
+    /// [`JweError::InvalidHeader`] when `header` already has an `epk`, has `zip` or `crit`, a
+    /// `kid` that is not the recipient's, malformed `apu` or `apv`, or a field's name among its
+    /// `additional` parameters, [`JweError::PlaintextTooLong`] past 2^36 bytes of plaintext, and
     /// [`JweError::Random`] when the operating system has no randomness to give.
     pub fn encrypt(header: JweHeader, plaintext: &[u8], recipient: &Jwk) -> Result<Self, JweError> {
         let ephemeral = random_secret_key()?;
@@ -383,6 +393,11 @@ impl CompactJwe {
                     "`kid` differs from the `kid` of the recipient's key",
                 ));
             }
+            (Some(_), None) => {
+                return Err(JweError::invalid_header(
+                    "`kid` names a key, but the recipient's key has no `kid`",
+                ));
+            }
             _ => {}
         }
         header.epk = Some(Jwk::from_p256_key(&ephemeral.public_key()));
@@ -418,7 +433,8 @@ impl CompactJwe {
     /// # Errors
     ///
     /// [`JweError::InvalidKey`] when `epk` is not a P-256 public key, an error of `recipient`,
-    /// and [`JweError::DecryptionFailed`] when the tag does not verify: the JWE was altered, or
+    /// [`JweError::KeyAgreement`] when `recipient` returns a shared secret of other than 32
+    /// bytes, and [`JweError::DecryptionFailed`] when the tag does not verify: the JWE was altered, or
     /// was encrypted to another key. The error says no more than that, on purpose.
     pub async fn decrypt<D>(&self, recipient: &D) -> Result<Vec<u8>, JweError>
     where
@@ -430,6 +446,18 @@ impl CompactJwe {
             .as_ref()
             .ok_or_else(|| JweError::invalid_header("missing `epk`"))?;
         let shared = recipient.shared_secret(epk).await?;
+        // A P-256 shared secret is the 32-byte `x` coordinate of the shared point; anything
+        // else is a decrypter that returned the wrong value, not an altered JWE.
+        if shared.len() != P256_SHARED_SECRET_LEN {
+            return Err(JweError::KeyAgreement(
+                format!(
+                    "the shared secret is {} bytes, not the {P256_SHARED_SECRET_LEN} of a P-256 \
+                     `x` coordinate",
+                    shared.len()
+                )
+                .into(),
+            ));
+        }
         let cek = derive_cek(&shared, &self.header)?;
         open(
             self.header.enc,
@@ -557,9 +585,22 @@ impl EcdhKey {
     ///
     /// # Errors
     ///
-    /// [`JweError::InvalidKey`] when `jwk` is not an `EC` P-256 key, has no valid `d`, or has
-    /// a `d` that does not belong to its `x` and `y`.
+    /// [`JweError::InvalidKey`] when `jwk` is not an `EC` P-256 key, has no valid `d`, has a
+    /// `d` that does not belong to its `x` and `y`, or has a `use` other than `enc` or an `alg`
+    /// other than `ECDH-ES`.
     pub fn from_jwk(jwk: &Jwk) -> Result<Self, JweError> {
+        // A key published for another purpose is not reused for key agreement.
+        if jwk.key_use().is_some_and(|key_use| key_use != "enc") {
+            return Err(JweError::invalid_key("the key is not for encryption"));
+        }
+        if jwk
+            .alg()
+            .is_some_and(|alg| alg != JweAlgorithm::EcdhEs.name())
+        {
+            return Err(JweError::invalid_key(
+                "the key is for another algorithm than `ECDH-ES`",
+            ));
+        }
         let public = jwk.p256_public_key().map_err(JweError::key)?;
         let d = jwk
             .private
@@ -593,7 +634,8 @@ impl EcdhKey {
     /// between the request and the response. It holds the private key: store it as a secret.
     pub fn to_jwk(&self) -> Jwk {
         let mut jwk = self.public_jwk();
-        jwk.private.d = Some(base64url::encode(&self.secret.to_bytes()));
+        let d = Zeroizing::new(<[u8; 32]>::from(self.secret.to_bytes()));
+        jwk.private.d = Some(base64url::encode(d.as_slice()));
         jwk
     }
 }
@@ -650,20 +692,21 @@ pub enum JweError {
         /// The JSON error.
         source: Option<serde_json::Error>,
     },
-    /// The header `alg` is missing or not a [`JweAlgorithm`].
+    /// The header `alg` is not a [`JweAlgorithm`]. The value is cut to 64 characters.
     #[error("unsupported JWE algorithm {0:?}")]
     UnsupportedAlgorithm(String),
-    /// The header `enc` is missing or not a [`JweEncryption`].
+    /// The header `enc` is not a [`JweEncryption`]. The value is cut to 64 characters.
     #[error("unsupported JWE content encryption {0:?}")]
     UnsupportedEncryption(String),
     /// The header has a `crit` member; this crate understands no extensions, so it must reject
-    /// every one of them (RFC 7516 §4.1.13).
+    /// every one of them (RFC 7516 §4.1.13). The first eight names are kept, each cut to 64
+    /// characters.
     #[error("unsupported critical header parameters {0:?}")]
     UnsupportedCritical(Vec<String>),
     /// The header has a `zip` member; compressed plaintext is not supported, and a recipient
-    /// must not ignore it (RFC 7516 §4.1.3).
-    #[error("unsupported JWE compression {0}")]
-    UnsupportedCompression(Value),
+    /// must not ignore it (RFC 7516 §4.1.3). The value is cut to 64 characters.
+    #[error("unsupported JWE compression {0:?}")]
+    UnsupportedCompression(String),
     /// The JWE Encrypted Key is not empty, as ECDH-ES in the Direct Key Agreement mode requires
     /// (RFC 7518 §4.6).
     #[error("JWE Encrypted Key must be empty for `ECDH-ES`")]
@@ -734,24 +777,42 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
         Some(Value::String(alg)) => {
             alg.parse::<JweAlgorithm>()?;
         }
-        Some(other) => return Err(JweError::UnsupportedAlgorithm(other.to_string())),
+        Some(other) => return Err(JweError::UnsupportedAlgorithm(shown(&other.to_string()))),
         None => return Err(JweError::invalid_header("missing `alg`")),
     }
     match object.get("enc") {
         Some(Value::String(enc)) => {
             enc.parse::<JweEncryption>()?;
         }
-        Some(other) => return Err(JweError::UnsupportedEncryption(other.to_string())),
+        Some(other) => return Err(JweError::UnsupportedEncryption(shown(&other.to_string()))),
         None => return Err(JweError::invalid_header("missing `enc`")),
     }
     if let Some(zip) = object.get("zip") {
-        return Err(JweError::UnsupportedCompression(zip.clone()));
+        let zip = zip.as_str().map_or_else(|| zip.to_string(), str::to_owned);
+        return Err(JweError::UnsupportedCompression(shown(&zip)));
+    }
+    // Read from the JSON itself: `"crit": null` deserializes as no `crit` at all, and an
+    // array is the only form RFC 7516 §4.1.13 allows.
+    match object.get("crit") {
+        None => {}
+        Some(Value::Array(names)) => {
+            let names = names
+                .iter()
+                .take(8)
+                .map(|name| {
+                    shown(
+                        &name
+                            .as_str()
+                            .map_or_else(|| name.to_string(), str::to_owned),
+                    )
+                })
+                .collect();
+            return Err(JweError::UnsupportedCritical(names));
+        }
+        Some(_) => return Err(JweError::invalid_header("`crit` is not an array")),
     }
     let header: JweHeader = serde_json::from_value(value)
         .map_err(|e| JweError::invalid_header_json("a member is malformed", e))?;
-    if let Some(crit) = &header.crit {
-        return Err(JweError::UnsupportedCritical(crit.clone()));
-    }
     let epk = header
         .epk
         .as_ref()
@@ -767,6 +828,14 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
     Ok(header)
 }
 
+/// At most the first [`SHOWN_LEN`] characters of `value`, with `…` when there were more.
+fn shown(value: &str) -> String {
+    match value.char_indices().nth(SHOWN_LEN) {
+        Some((end, _)) => format!("{}…", &value[..end]),
+        None => value.to_owned(),
+    }
+}
+
 /// The sender's ephemeral public key: an `EC` P-256 key with only public parameters
 /// (RFC 7518 §4.6.1.1), a point on the curve.
 fn ephemeral_public_key(epk: &Jwk) -> Result<p256::PublicKey, JweError> {
@@ -776,18 +845,40 @@ fn ephemeral_public_key(epk: &Jwk) -> Result<p256::PublicKey, JweError> {
     epk.p256_public_key().map_err(JweError::key)
 }
 
-/// The recipient's public key for encryption with `alg`: an `EC` P-256 key whose `use`, when
-/// present, is `enc` and whose `alg`, when present, is `alg` (OpenID4VP §8.3).
+/// The recipient's public key for encryption with `alg`: an `EC` P-256 public key whose `alg`
+/// is `alg` (OpenID4VP §8.3: "The alg parameter MUST be present in the JWKs"), meant for key
+/// agreement by its `use` and `key_ops` when it has them.
 fn recipient_public_key(recipient: &Jwk, alg: JweAlgorithm) -> Result<p256::PublicKey, JweError> {
+    if recipient.is_private() {
+        return Err(JweError::invalid_key(
+            "the recipient's key has private parameters: it was published by mistake",
+        ));
+    }
+    match recipient.alg() {
+        Some(key_alg) if key_alg == alg.name() => {}
+        Some(_) => {
+            return Err(JweError::invalid_key(&format!(
+                "the recipient's key is for another algorithm than `{alg}`"
+            )));
+        }
+        None => {
+            return Err(JweError::invalid_key(
+                "the recipient's key has no `alg`, which OpenID4VP §8.3 requires",
+            ));
+        }
+    }
     if recipient.key_use().is_some_and(|key_use| key_use != "enc") {
         return Err(JweError::invalid_key(
             "the recipient's key is not for encryption",
         ));
     }
-    if recipient.alg().is_some_and(|key_alg| key_alg != alg.name()) {
-        return Err(JweError::invalid_key(&format!(
-            "the recipient's key is for another algorithm than `{alg}`"
-        )));
+    if recipient
+        .key_ops()
+        .is_some_and(|ops| !ops.iter().any(|op| op == "deriveKey" || op == "deriveBits"))
+    {
+        return Err(JweError::invalid_key(
+            "the recipient's `key_ops` allow no key agreement",
+        ));
     }
     recipient.p256_public_key().map_err(JweError::key)
 }
@@ -801,49 +892,48 @@ fn derive_cek(z: &[u8], header: &JweHeader) -> Result<Zeroizing<Vec<u8>>, JweErr
     };
     let apu = decode("apu", header.apu.as_deref())?;
     let apv = decode("apv", header.apv.as_deref())?;
-    concat_kdf(z, header.enc, &apu, &apv)
+    // In the Direct Key Agreement mode the `AlgorithmID` is the `enc` value (RFC 7518 §4.6.2).
+    concat_kdf(z, header.enc.name(), header.enc.key_len(), &apu, &apv)
 }
 
-/// The Concat KDF of NIST SP 800-56A §5.8.1 with SHA-256, as ECDH-ES in the Direct Key
-/// Agreement mode parameterizes it (RFC 7518 §4.6.2): the key for `enc`, with `enc` as the
-/// `AlgorithmID`, `apu` and `apv` as `PartyUInfo` and `PartyVInfo`, the key length in bits as
-/// `SuppPubInfo`, and no `SuppPrivInfo`.
+/// The Concat KDF of NIST SP 800-56A §5.8.1 with SHA-256, as ECDH-ES parameterizes it
+/// (RFC 7518 §4.6.2): a key of `key_len` bytes, at most 32 so that one round gives it, with `algorithm_id` as the `AlgorithmID`,
+/// `apu` and `apv` as `PartyUInfo` and `PartyVInfo`, the key length in bits as `SuppPubInfo`,
+/// and no `SuppPrivInfo`.
 fn concat_kdf(
     z: &[u8],
-    enc: JweEncryption,
+    algorithm_id: &str,
+    key_len: usize,
     apu: &[u8],
     apv: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, JweError> {
-    let key_len = enc.key_len();
     let length = |data: &[u8]| {
         u32::try_from(data.len())
             .map(u32::to_be_bytes)
             .map_err(|_| JweError::invalid_header("`apu` or `apv` is too long"))
     };
-    let key_bits: u32 = match enc {
-        JweEncryption::A128Gcm => 128,
-        JweEncryption::A256Gcm => 256,
-    };
+    if key_len > 32 {
+        return Err(JweError::invalid_header("a key of more than 256 bits"));
+    }
+    let key_bits =
+        u32::try_from(key_len * 8).map_err(|_| JweError::invalid_header("the key is too long"))?;
     let mut other_info = Vec::new();
-    for data in [enc.name().as_bytes(), apu, apv] {
+    for data in [algorithm_id.as_bytes(), apu, apv] {
         other_info.extend_from_slice(&length(data)?);
         other_info.extend_from_slice(data);
     }
     other_info.extend_from_slice(&key_bits.to_be_bytes());
 
-    let mut key = Zeroizing::new(Vec::with_capacity(key_len + 32));
-    let mut round: u32 = 1;
-    while key.len() < key_len {
-        let digest = Sha256::new()
-            .chain_update(round.to_be_bytes())
+    // Round 1 alone: every key here is at most 256 bits, one SHA-256 output. The digest is
+    // wiped once copied; for A256GCM it is the key itself.
+    let digest = Zeroizing::new(<[u8; 32]>::from(
+        Sha256::new()
+            .chain_update(1_u32.to_be_bytes())
             .chain_update(z)
             .chain_update(&other_info)
-            .finalize();
-        key.extend_from_slice(&digest);
-        round += 1;
-    }
-    key.truncate(key_len);
-    Ok(key)
+            .finalize(),
+    ));
+    Ok(Zeroizing::new(digest[..key_len].to_vec()))
 }
 
 /// Encrypts `plaintext` with AES-GCM: the ciphertext and the authentication tag.
@@ -988,7 +1078,7 @@ mod tests {
         assert_eq!(*bob_key.shared_secret(&alice.public()).await.unwrap(), Z);
         assert_eq!(*alice_key.shared_secret(&bob.public()).await.unwrap(), Z);
 
-        let key = concat_kdf(&Z, JweEncryption::A128Gcm, b"Alice", b"Bob").unwrap();
+        let key = concat_kdf(&Z, "A128GCM", 16, b"Alice", b"Bob").unwrap();
         assert_eq!(*key, decode("VqqN6vgjbSBcIijNcacQGg"));
         assert_eq!(
             *key,
@@ -1083,8 +1173,14 @@ mod tests {
             .with_apv(b"Bob");
         // RFC 7520 §5.6's IV.
         let iv: [u8; IV_LEN] = decode("refa467QzzKx6QAB").try_into().unwrap();
-        let jwe =
-            CompactJwe::encrypt_with(header, b"plaintext", &bob.public(), &ephemeral, iv).unwrap();
+        let jwe = CompactJwe::encrypt_with(
+            header,
+            b"plaintext",
+            &bob.public().with_alg("ECDH-ES"),
+            &ephemeral,
+            iv,
+        )
+        .unwrap();
 
         assert_eq!(jwe.header().epk.as_ref(), Some(&alice.public()));
         assert_eq!(jwe.header().apu.as_deref(), Some("QWxpY2U"));
@@ -1109,15 +1205,45 @@ mod tests {
         assert_eq!(decoded.decrypt(&bob_key).await.unwrap(), b"plaintext");
     }
 
+    /// Every byte of an IV comes from its own random draw: across many IVs, each position
+    /// takes more than one value and no two positions always agree.
     #[test]
-    fn concat_kdf_without_party_info_and_with_a_256_bit_key() {
-        // One SHA-256 round gives 256 bits: the A256GCM key is the whole digest.
-        let key = concat_kdf(&Z, JweEncryption::A256Gcm, b"", b"").unwrap();
-        let mut input = vec![0, 0, 0, 1];
-        input.extend_from_slice(&Z);
-        input.extend_from_slice(&[0, 0, 0, 7]);
-        input.extend_from_slice(b"A256GCM");
-        input.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
-        assert_eq!(*key, Sha256::digest(&input).to_vec());
+    fn ivs_are_random_in_every_byte() {
+        let ivs: Vec<[u8; IV_LEN]> = (0..64).map(|_| random_iv().unwrap()).collect();
+        for position in 0..IV_LEN {
+            assert!(
+                ivs.iter().any(|iv| iv[position] != ivs[0][position]),
+                "{position}"
+            );
+            for other in position + 1..IV_LEN {
+                assert!(
+                    ivs.iter().any(|iv| iv[position] != iv[other]),
+                    "{position} and {other}"
+                );
+            }
+        }
+    }
+
+    /// RFC 7520 §5.5: the static key of Figure 120 and the ephemeral key of Figure 122 agree
+    /// on the 256-bit CEK of Figure 123, with no `apu` or `apv`. The `enc` there is
+    /// `A128CBC-HS256`, which only names the `AlgorithmID` here.
+    #[tokio::test]
+    async fn ecdh_es_derives_the_256_bit_key_of_rfc7520_section_5_5() {
+        let recipient = jwk(r#"{"kty":"EC","kid":"meriadoc.brandybuck@buckland.example",
+            "use":"enc","crv":"P-256",
+            "x":"Ze2loSV3wrroKUN_4zhwGhCqo3Xhu1td4QjeQ5wIVR0",
+            "y":"HlLtdXARY_f55A3fnzQbPcm6hgr34Mp8p-nuzQCE0Zw",
+            "d":"r_kHyZ-a06rmxM3yESK84r1otSg-aQcVStkRhA-iCM8"}"#);
+        let ephemeral = jwk(r#"{"kty":"EC","crv":"P-256",
+            "x":"mPUKT_bAWGHIhg0TpjjqVsP1rXWQu_vwVOHHtNkdYoA",
+            "y":"8BQAsImGeAS46fyWw5MhYfGTT0IjBpFw2SS34Dv4Irs",
+            "d":"AtH35vJsQ9SGjYfOsjUxYXQKrPH3FjZHmEtSKoSN8cM"}"#);
+        let z = EcdhKey::from_jwk(&recipient)
+            .unwrap()
+            .shared_secret(&ephemeral.public())
+            .await
+            .unwrap();
+        let key = concat_kdf(&z, "A128CBC-HS256", 32, b"", b"").unwrap();
+        assert_eq!(*key, decode("hzHdlfQIAEehb8Hrd_mFRhKsKLEzPfshfXs9l6areCc"));
     }
 }

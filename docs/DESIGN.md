@@ -198,8 +198,9 @@ pub struct EcdhKey { .. }                       // P-256 in memory: generate, pu
 
 Decoding refuses an unsupported `alg` or `enc`, `crit`, `zip`, a non-empty JWE Encrypted Key, an
 `epk` that is not a public P-256 point, and IVs and tags of other than the AES-GCM lengths; a tag
-that does not verify is one error. Encryption takes the `kid` of the recipient's key and refuses a
-key whose `use` or `alg` does not fit.
+that does not verify is one error. Encryption takes the `kid` of the recipient's key, requires its
+`alg` (OpenID4VP §8.3), and refuses a key whose `alg`, `use` or `key_ops` do not fit or that
+carries private parameters.
 
 ## `keys` module
 
