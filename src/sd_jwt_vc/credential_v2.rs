@@ -558,8 +558,9 @@ impl SdJwtCredentialV2Builder {
         claims
     }
 
-    /// The credential, signed with `signer` under `alg`, `typ: vc+sd-jwt` and the `kid` given
-    /// or the signer's.
+    /// The credential, signed with `signer` under `alg`, `typ: vc+sd-jwt` and what names the
+    /// signer's key ([`JwsHeader::for_signer`]): its certificate chain in `x5c`, or else its
+    /// `kid`. A `kid` given to the builder is set either way.
     ///
     /// # Errors
     ///
@@ -578,8 +579,8 @@ impl SdJwtCredentialV2Builder {
         else {
             unreachable!("a struct serializes to an object")
         };
-        let mut header = JwsHeader::new(signer.alg()).with_typ(SdJwtCredentialV2::TYP);
-        header.kid = self.kid.or_else(|| signer.kid().map(str::to_owned));
+        let mut header = JwsHeader::for_signer(signer).with_typ(SdJwtCredentialV2::TYP);
+        header.kid = self.kid.or(header.kid);
         let mut builder = SdJwtBuilder::new(claims)
             .with_decoys(self.decoys)
             .with_hash_algorithm(self.alg);

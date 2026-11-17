@@ -1,6 +1,7 @@
 //! Keys and signers shared by the integration tests: the RFC 8037 Appendix A.1 Ed25519 key and
 //! the RFC 7515 Appendix A.3 P-256 key, behind `Signer`; the parties and resolvers built on them
-//! ([`fixtures`]); and an `HttpClient` serving fixed responses ([`http`]).
+//! ([`fixtures`]); an `HttpClient` serving fixed responses ([`http`]); and doubles recording the
+//! validation time they are handed ([`time`]).
 //!
 //! Each test binary uses part of this module only.
 #![allow(dead_code)]
@@ -8,6 +9,8 @@
 pub(crate) mod fixtures;
 #[cfg(feature = "did-web")]
 pub(crate) mod http;
+#[cfg(feature = "vc")]
+pub(crate) mod time;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
