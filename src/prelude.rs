@@ -21,13 +21,13 @@ pub use crate::did::{
     VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 pub use crate::identity::{Identifier, Identity, IdentityError, IdentityKind, KeyStoreIdentity};
+pub use crate::jose::{
+    CertifiedSigner, CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier,
+    JwtClaims, KeyType, Signer, encode_compact,
+};
 #[cfg(feature = "jwe")]
 #[cfg_attr(docsrs, doc(cfg(feature = "jwe")))]
 pub use crate::jose::{CompactJwe, EcdhKey, JweAlgorithm, JweDecrypter, JweEncryption, JweHeader};
-pub use crate::jose::{
-    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, JwtClaims, KeyType,
-    Signer, encode_compact,
-};
 #[cfg(feature = "in-memory")]
 #[cfg_attr(docsrs, doc(cfg(feature = "in-memory")))]
 pub use crate::keys::InMemoryKeyStore;
@@ -53,6 +53,9 @@ pub use crate::resolver::{
     JwtValidator, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
     MethodCapabilities, ProduceError, Resolver, ResolverBuilder,
 };
+#[cfg(feature = "x509")]
+#[cfg_attr(docsrs, doc(cfg(feature = "x509")))]
+pub use crate::resolver::{X509Certificate, X509Resolver};
 
 /// The upper layer's prelude: credentials and presentations as JWTs (feature `vc`), SD-JWT
 /// VCs (feature `sd-jwt`), domain linkage (feature `domain-linkage`) and linked presentations

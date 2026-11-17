@@ -14,6 +14,7 @@
 
 mod common;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone as _, Utc};
@@ -35,6 +36,7 @@ use identity_kit::vc::{CredentialError, Jwt, JwtClaims};
 use serde_json::json;
 
 use common::fixtures::{Issuer, expires_at, issued_at, issuer};
+use common::time::{RecordedTimes, TimedResolver, assert_one_validation_time};
 use common::{Es256Signer, unsigned_jwt};
 
 const VCT: &str = "https://credentials.example.com/identity_credential";
@@ -554,6 +556,35 @@ async fn validity_period() {
             .await,
         Err(SdJwtValidationError::LegacyTyp)
     ));
+}
+
+/// A validation without a fixed time reads the clock once: the status is checked at the time
+/// the key was resolved and the claims were checked at, not at a later one.
+#[tokio::test]
+async fn status_is_checked_at_the_validation_time() {
+    let issuer = issuer();
+    // No `exp`, so the credential validates at the current time.
+    let credential = SdJwtVcBuilder::new(VCT)
+        .with_issuer(issuer.did.as_str())
+        .with_kid(issuer.kid.as_str())
+        .with_status(Status::status_list(StatusListRef::new(
+            "https://example.com/statuslists/1",
+            2,
+        )))
+        .sign(&issuer.signer)
+        .await
+        .unwrap();
+    let resolver = Arc::new(TimedResolver::new(
+        Resolver::builder().with(DidKey::default()).build(),
+    ));
+    let check = Arc::new(RecordedTimes::default());
+    let started = Utc::now();
+    SdJwtCredentialValidator::new(Arc::clone(&resolver), DefaultVerifier)
+        .with_status_check(Arc::clone(&check))
+        .validate(credential.sd_jwt(), &SdJwtValidationOptions::new())
+        .await
+        .unwrap();
+    assert_one_validation_time(&resolver, &check, 1, started);
 }
 
 /// A status check answering from a fixed status list.

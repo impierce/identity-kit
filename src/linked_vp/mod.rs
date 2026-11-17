@@ -963,8 +963,14 @@ fn check_linking_did(jwt: &Jwt, did: &Did) -> Result<(), LinkedVpError> {
     let jws = jwt
         .decode()
         .map_err(|e| PresentationValidationError::presentation(e.into()))?;
-    if let Ok(reference) = KeyReference::from_jws(&jws, Some(did.as_str())) {
-        let of_did = match &reference {
+    if let Ok(candidates) = KeyReference::candidates(&jws, Some(did.as_str())) {
+        // A certificate chain is validated without resolving anything, so what could send the
+        // resolver to another DID's document is the first reference that is not one.
+        let reference = candidates
+            .iter()
+            .find(|reference| !matches!(reference, KeyReference::X509Chain(_)))
+            .unwrap_or(&candidates[0]);
+        let of_did = match reference {
             KeyReference::DidUrl(url) => url.did() == did,
             KeyReference::Jwk(jwk) => reference.binds_to(Some(did.as_str()), jwk),
             _ => false,
@@ -973,7 +979,7 @@ fn check_linking_did(jwt: &Jwt, did: &Did) -> Result<(), LinkedVpError> {
             return Err(PresentationValidationError::presentation(
                 ValidationError::HolderMismatch {
                     holder: did.clone().into(),
-                    key: Box::new(reference),
+                    key: Box::new(reference.clone()),
                 },
             )
             .into());

@@ -8,8 +8,17 @@ use chrono::{DateTime, Utc};
 use crate::cause::cause;
 use crate::did::{OneOrMany, Uri};
 use crate::jose::{JwsError, VerificationError};
-use crate::resolver::{KeyReference, KeyReferenceError, KeyResolutionError};
+use crate::resolver::{JwsKeyError, KeyReference, KeyReferenceError, KeyResolutionError};
 use crate::vc::CredentialError;
+
+impl From<JwsKeyError> for ValidationError {
+    fn from(error: JwsKeyError) -> Self {
+        match error {
+            JwsKeyError::Reference(error) => Self::KeyReference(error),
+            JwsKeyError::Resolution { key, source } => Self::KeyResolution { key, source },
+        }
+    }
+}
 
 /// Why a credential or presentation JWT did not validate.
 #[derive(Debug, thiserror::Error)]
