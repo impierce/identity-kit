@@ -336,9 +336,7 @@ impl CompactJwe {
     /// [`JweError::Random`] when the operating system has no randomness to give.
     pub fn encrypt(header: JweHeader, plaintext: &[u8], recipient: &Jwk) -> Result<Self, JweError> {
         let ephemeral = random_secret_key()?;
-        let mut iv = [0u8; IV_LEN];
-        fill_random(&mut iv)?;
-        Self::encrypt_with(header, plaintext, recipient, &ephemeral, iv)
+        Self::encrypt_with(header, plaintext, recipient, &ephemeral, random_iv()?)
     }
 
     /// [`encrypt`](Self::encrypt) with the ephemeral key and the IV given.
@@ -906,6 +904,21 @@ fn fill_random(buf: &mut [u8]) -> Result<(), JweError> {
     getrandom::fill(buf).map_err(|e| JweError::Random(Box::new(e)))
 }
 
+/// A random 96-bit IV, drawn as two numbers from the operating system's random number
+/// generator.
+fn random_iv() -> Result<[u8; IV_LEN], JweError> {
+    let failed = |e: getrandom::Error| JweError::Random(Box::new(e));
+    let high = getrandom::u64().map_err(failed)?.to_be_bytes();
+    let low = getrandom::u32().map_err(failed)?.to_be_bytes();
+    Ok(core::array::from_fn(|i| {
+        if i < high.len() {
+            high[i]
+        } else {
+            low[i - high.len()]
+        }
+    }))
+}
+
 /// A random P-256 private key.
 fn random_secret_key() -> Result<p256::SecretKey, JweError> {
     let mut bytes = Zeroizing::new([0u8; 32]);
@@ -1008,18 +1021,14 @@ mod tests {
     #[test]
     fn a256gcm_of_rfc7516_appendix_a1() {
         let plaintext = b"The true sign of intelligence is not knowledge but imagination.";
-        let cek = [
-            177, 161, 244, 128, 84, 143, 225, 115, 63, 180, 3, 255, 107, 154, 212, 246, 138, 7,
-            110, 91, 112, 46, 34, 105, 47, 130, 203, 46, 122, 234, 64, 252,
-        ];
-        let iv = [227, 197, 117, 252, 2, 219, 233, 68, 180, 225, 77, 219];
+        // The CEK, which the appendix gives as octets, base64url-encoded.
+        let cek = decode("saH0gFSP4XM_tAP_a5rU9ooHbltwLiJpL4LLLnrqQPw");
+        let iv: [u8; IV_LEN] = decode("48V1_ALb6US04U3b").try_into().unwrap();
         let aad = b"eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00ifQ";
         let ciphertext = decode(
             "5eym8TW_c8SuK0ltJ3rpYIzOeDQz7TALvtu6UG9oMo4vpzs9tX_EFShS8iB7j6jiSdiwkIr3ajwQzaBtQD_A",
         );
-        let tag = [
-            92, 80, 104, 49, 133, 25, 161, 215, 173, 101, 219, 211, 136, 91, 210, 145,
-        ];
+        let tag: [u8; TAG_LEN] = decode("XFBoMYUZodetZdvTiFvSkQ").try_into().unwrap();
 
         let sealed = seal(JweEncryption::A256Gcm, &cek, &iv, aad, plaintext);
         assert_eq!(sealed.unwrap(), (ciphertext.clone(), tag));
@@ -1052,7 +1061,8 @@ mod tests {
         let header = JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm)
             .with_apu(b"Alice")
             .with_apv(b"Bob");
-        let iv = [7; IV_LEN];
+        // RFC 7520 §5.6's IV.
+        let iv: [u8; IV_LEN] = decode("refa467QzzKx6QAB").try_into().unwrap();
         let jwe =
             CompactJwe::encrypt_with(header, b"plaintext", &bob.public(), &ephemeral, iv).unwrap();
 
