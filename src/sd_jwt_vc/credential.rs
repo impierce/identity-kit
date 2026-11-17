@@ -611,8 +611,9 @@ impl SdJwtVcBuilder {
         Ok(())
     }
 
-    /// The credential, signed with `signer` under `alg`, `typ: dc+sd-jwt` and the `kid`
-    /// given or the signer's.
+    /// The credential, signed with `signer` under `alg`, `typ: dc+sd-jwt` and what names the
+    /// signer's key ([`JwsHeader::for_signer`]): its certificate chain in `x5c`, or else its
+    /// `kid`. A `kid` given to the builder is set either way.
     ///
     /// # Errors
     ///
@@ -621,8 +622,8 @@ impl SdJwtVcBuilder {
     pub async fn sign(self, signer: &dyn Signer) -> Result<SdJwtVc, SdJwtVcError> {
         self.claims.check()?;
         self.check_concealed()?;
-        let mut header = JwsHeader::new(signer.alg()).with_typ(TYP);
-        header.kid = self.kid.or_else(|| signer.kid().map(str::to_owned));
+        let mut header = JwsHeader::for_signer(signer).with_typ(TYP);
+        header.kid = self.kid.or(header.kid);
         let mut builder = SdJwtBuilder::new(self.claims.to_map())
             .with_decoys(self.decoys)
             .with_hash_algorithm(self.alg);

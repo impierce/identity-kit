@@ -18,6 +18,7 @@ mod common;
 
 use std::collections::BTreeSet;
 use std::error::Error as _;
+use std::sync::Arc;
 
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
@@ -44,6 +45,7 @@ use identity_kit::vc::{
 use serde_json::{Value, json};
 
 use common::fixtures::{AUDIENCE, NONCE, RefusingRole, holder, issuer, now, resolver};
+use common::time::{RecordedTimes, TimedResolver, assert_one_validation_time};
 
 // The W3C VC-JOSE-COSE test suite's SD-JWT credential inputs.
 
@@ -1328,6 +1330,54 @@ async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
         ),
         "{errors:?}"
     );
+}
+
+/// A validation without a fixed time reads the clock once: both status entries are checked
+/// at the time the key was resolved and the claims were checked at, whether the credential
+/// is validated on its own or enveloped in a presentation.
+#[tokio::test]
+async fn statuses_are_checked_at_the_validation_time() {
+    let (issuer, holder) = (issuer(), holder());
+    // No `validUntil` and no `exp`, so the credential validates at the current time.
+    let credential = SdJwtCredentialV2Builder::new(
+        CredentialV2::new(&issuer.did, Subject::new(&holder.did)).with_status(
+            TypedObject::new("BitstringStatusListEntry")
+                .with_id(Uri::parse("https://university.example/status/3#94567").unwrap()),
+        ),
+    )
+    .with_kid(issuer.kid.as_str())
+    .with_status(Status::status_list(StatusListRef::new(
+        "https://university.example/status/sd-jwt",
+        7,
+    )))
+    .sign(&issuer.signer)
+    .await
+    .unwrap();
+
+    let timed = Arc::new(TimedResolver::new(resolver()));
+    let check = Arc::new(RecordedTimes::default());
+    let started = Utc::now();
+    SdJwtCredentialValidator::new(Arc::clone(&timed), DefaultVerifier)
+        .with_status_check(Arc::clone(&check))
+        .validate_v2(credential.sd_jwt(), &SdJwtValidationOptions::new())
+        .await
+        .unwrap();
+    assert_one_validation_time(&timed, &check, 2, started);
+
+    // The presentation at its own fixed time, its credential at the current one.
+    let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(credential.sd_jwt())]).await;
+    let timed = Arc::new(TimedResolver::new(resolver()));
+    let check = Arc::new(RecordedTimes::default());
+    let started = Utc::now();
+    JwtPresentationValidator::new(Arc::clone(&timed), DefaultVerifier)
+        .with_status_check(Arc::clone(&check))
+        .validate_v2(
+            &vp,
+            &presentation_options().with_credentials(CredentialValidationOptions::new()),
+        )
+        .await
+        .unwrap();
+    assert_one_validation_time(&timed, &check, 2, started);
 }
 
 #[tokio::test]

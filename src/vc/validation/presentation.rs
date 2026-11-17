@@ -334,8 +334,10 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
                 SdJwtCredentialV2::from_sd_jwt_with(sd_jwt, &options.credentials.additional_typ)
                     .map_err(crate::sd_jwt_vc::SdJwtValidationError::from)?;
             // No status policy here: the status is checked below, for both kinds of entry.
+            // One validation time for the key, the claims and the status.
+            let time = options.credentials.time.pinned();
             let sd_jwt_options = SdJwtValidationOptions {
-                time: options.credentials.time,
+                time,
                 key_binding: options.key_binding.clone(),
                 ..SdJwtValidationOptions::default()
             };
@@ -355,7 +357,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
                         .chain(credential.status().map(CredentialStatus::StatusClaim))
                         .collect(),
                     options.credentials.status,
-                    options.credentials.time,
+                    time,
                 )
                 .await?;
             check_subject_holder(
@@ -437,17 +439,20 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
         claims: &JwtClaims,
         options: &PresentationValidationOptions,
     ) -> Result<(), ValidationError> {
+        // One validation time for the key and the claims.
+        let time = options.time.pinned();
         let (reference, key) = self
             .credentials
             .verify(
                 jws,
                 KeyRole::Subject,
                 holder.map(|holder| holder.id().as_str()),
+                time,
             )
             .await?;
         let holder = holder.ok_or(CredentialError::MissingClaim(missing))?;
         check_controller(holder, &reference, &key, "holder")?;
-        options.time.check_claims(claims)?;
+        time.check_claims(claims)?;
         if let Some(expected) = &options.audience
             && !claims.audiences().any(|aud| aud == expected)
         {

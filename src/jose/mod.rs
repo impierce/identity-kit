@@ -48,7 +48,7 @@ pub use algorithm::{JwsAlgorithm, UnknownAlgorithm};
 pub use claims::JwtClaims;
 #[cfg(feature = "status-list")]
 pub(crate) use claims::numeric_date;
-pub use compact::{CompactJws, JwsHeader, Signer, encode_compact};
+pub use compact::{CertifiedSigner, CompactJws, JwsHeader, Signer, encode_compact};
 pub use ecdsa::{ecdsa_signature_from_der, normalize_ecdsa_signature};
 pub use error::{EcdsaSignatureError, JwkError, JwsError, SignError, VerificationError};
 pub use jwk::{Jwk, KeyType};

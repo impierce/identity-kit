@@ -22,6 +22,7 @@ One file per target in [`fuzz_targets/`](fuzz_targets/); the doc comment at the 
 | `sd_jwt`             | `Disclosure`, `SdJwt`, `SdJwtVc` parsing, `select` and `disclose`                                         | an SD-JWT, a disclosure or a digest                          |
 | `sd_jwt_roundtrip`   | `SdJwtBuilder`: arbitrary claims concealed along arbitrary paths process back to the same claims          | structured, derived from the bytes with `arbitrary`          |
 | `sd_jwt_vc_metadata` | type metadata, integrity metadata, status lists, claim paths, DID configuration resources                 | a JSON document, a status list token or an integrity string  |
+| `x509`               | `X509Certificate` reading, `X509Resolver` trust anchors and chain validation: a key only for a chain that validates, and then the leaf's own | a DER certificate                                            |
 
 ## Layout
 
@@ -41,6 +42,7 @@ libFuzzer starts from whatever inputs it is given and mutates from there, so a s
 The seeds in `seeds/<target>/` are the specification examples the integration tests run against (`tests/vectors/` and the inline vectors of `tests/`), plus a few hand-made edge cases.
 Every file is named after what it holds, so it can be read and reviewed: `rfc9901-simple-issuance.txt` is the issued SD-JWT of RFC 9901 §5, `did-core-example-20.json` is example 20 of DID Core, `empty-arrays-and-extension.json` is a hand-made document with every array empty and an extension property.
 The names are for people; libFuzzer reads only the bytes.
+The seeds of `x509` are certificates of the x509-limbo testcases the tests vendor (`tests/x509-limbo`, Apache License 2.0); the target builds its chain on two of them, `intermediate.der` and `root.der`.
 
 A target whose input is structured (`sd_jwt_roundtrip`, which derives a claims set and concealment paths from the bytes with `arbitrary`) has no seeds: no hand-written file means anything there, and the fuzzer builds its corpus from scratch within seconds.
 

@@ -22,7 +22,8 @@ Add it to a project with `cargo add identity-kit`. The API reference is on [docs
 - ✅ PKCS#11 key store backend, tested against SoftHSM2
 - ✅ `Identity` trait for the signing party: the identifier, `kid` and signer for a negotiated identifier kind and algorithm, with `KeyStoreIdentity` over any key store
 - ✅ `DidResolver` and `DidProducer` traits with a `Resolver` registry, document cache and DID URL dereferencing
-- ✅ `KeyReference` and `KeyResolver`: a token's key found from a DID URL `kid`, a `#fragment` relative to a DID `iss`, a `jwk` header, `cnf`, or the JWT VC issuer metadata of an HTTPS `iss`
+- ✅ `KeyReference` and `KeyResolver`: a token's key found from a DID URL `kid`, a `#fragment` relative to a DID `iss`, a `jwk` header, `cnf`, the JWT VC issuer metadata of an HTTPS `iss`, or an `x5c` certificate chain
+- ✅ X.509 for the [OpenID4VC High Assurance Interoperability Profile](https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html): SD-JWT VCs and Status List Tokens issued with and validated under an `x5c` certificate chain against your trust anchors
 - ✅ `did:key`, `did:jwk` and `did:web` methods, with a hardened HTTPS client for `did:web`
 - ✅ Verifiable credentials and presentations as JWTs: the [VCDM 1.1](https://www.w3.org/TR/vc-data-model/) JWT profile, [VCDM 2.0](https://www.w3.org/TR/vc-data-model-2.0/) with [VC-JOSE-COSE](https://www.w3.org/TR/vc-jose-cose/) envelopes, and validators over any DID method
 - ✅ SD-JWT (RFC 9901), SD-JWT VC and VCDM 2.0 credentials secured with SD-JWT (`vc+sd-jwt`): issuing with selective disclosure, presenting with key binding, validating over any DID method, and type metadata
@@ -55,6 +56,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
 | `jwks`           |         | `resolver::JwksResolver`: the keys of an HTTPS issuer from its JWT VC issuer metadata; implies `did-web` |
+| `x509`           |         | `resolver::X509Resolver`: the key of an `x5c` certificate chain validated against your trust anchors, as HAIP requires; pulls in `rustls-webpki` and `x509-cert` |
 | `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `JwsAlgorithm`, `Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp`, `DomainLinkageConfiguration`, `ClaimPath`, `Jwt`, `SdJwt`, `TypeMetadata` and `StatusType` |
 | `test-vectors`   |         | `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the specification vectors |
 
