@@ -228,7 +228,7 @@ impl Jwk {
         Ok(Self::from_p256_key(&key))
     }
 
-    fn from_p256_key(key: &p256::PublicKey) -> Self {
+    pub(crate) fn from_p256_key(key: &p256::PublicKey) -> Self {
         use p256::elliptic_curve::sec1::ToSec1Point as _;
         let point = key.to_sec1_point(false);
         let mut jwk = Self::with_kty("EC");

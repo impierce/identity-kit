@@ -18,6 +18,7 @@ Add it to a project with `cargo add identity-kit`. The API reference is on [docs
 - ✅ `Did`, `DidUrl` and `DidMethod` parsing and validation per [W3C DID Core](https://www.w3.org/TR/did-core/)
 - ✅ `DidDocument` data model and [DID Resolution](https://www.w3.org/TR/did-resolution/) types
 - ✅ JWK and compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) with EdDSA, ECDSA and RSA verification
+- ✅ Compact JWE ([RFC 7516](https://www.rfc-editor.org/rfc/rfc7516)) with ECDH-ES on P-256 and AES-GCM, for the encrypted responses the [OpenID4VC High Assurance Interoperability Profile](https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html) requires
 - ✅ `KeyStore` trait designed for remote signers, with in-memory and file-based backends
 - ✅ PKCS#11 key store backend, tested against SoftHSM2
 - ✅ `Identity` trait for the signing party: the identifier, `kid` and signer for a negotiated identifier kind and algorithm, with `KeyStoreIdentity` over any key store
@@ -55,6 +56,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |
 | `linked-vp`      |   ✅    | DIF Linked Verifiable Presentation (`linked_vp`); implies `vc` and `did-web`             |
 | `jwks`           |         | `resolver::JwksResolver`: the keys of an HTTPS issuer from its JWT VC issuer metadata; implies `did-web` |
+| `jwe`            |         | `jose::CompactJwe`: JWE with ECDH-ES on P-256 and AES-GCM, for encrypted responses; pulls in `aes-gcm` |
 | `utoipa`         |         | OpenAPI schemas (`utoipa::ToSchema`) for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `JwsAlgorithm`, `Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp`, `DomainLinkageConfiguration`, `ClaimPath`, `Jwt`, `SdJwt`, `TypeMetadata` and `StatusType` |
 | `test-vectors`   |         | `keys::testsuite`, the behavioural suite every key store must pass, and `vectors`, the specification vectors |
 

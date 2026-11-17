@@ -1,5 +1,5 @@
-//! JSON Object Signing and Encryption: keys, algorithms, signature verification and the compact
-//! JWS serialization.
+//! JSON Object Signing and Encryption: keys, algorithms, signature verification, the compact
+//! JWS serialization and, with `jwe`, the compact JWE serialization.
 //!
 //! This is the crate's signature layer. Everything above it (DID documents, credentials) carries a
 //! [`Jwk`] and a [`JwsAlgorithm`] and hands signing input to a [`JwsVerifier`] or a [`Signer`]:
@@ -24,11 +24,15 @@
 //!   [`CompactJws::claims`] reads a payload as one, unverified; `JwtValidator` of
 //!   [`resolver`](crate::resolver) validates one, its signer's key resolved by a `KeyResolver`.
 //!
-//! JWE is out of scope.
+//! - With the `jwe` feature, [`CompactJwe`] decodes, encrypts and decrypts a compact JWE with
+//!   ECDH-ES on P-256 and AES-GCM, what the OpenID4VC High Assurance Interoperability Profile
+//!   requires of an encrypted response, and nothing more (ADR 0009). [`EcdhKey`] is the
+//!   Verifier's per-request key; [`JweDecrypter`] lets a key kept elsewhere decrypt.
 //!
 //! # Cargo features
 //!
 //! - `secp256k1` (default): ES256K and secp256k1 keys, via `k256`.
+//! - `jwe`: [`CompactJwe`] and its types, via `aes-gcm` and `p256`'s ECDH.
 //! - `rsa`: RS256 and PS256, via `rsa`, with keys of at least 2048 bits (RFC 7518 §3.3,
 //!   §3.5).
 
@@ -38,6 +42,8 @@ mod claims;
 mod compact;
 mod ecdsa;
 mod error;
+#[cfg(feature = "jwe")]
+mod jwe;
 mod jwk;
 mod multikey;
 mod one_or_many;
@@ -51,6 +57,11 @@ pub(crate) use claims::numeric_date;
 pub use compact::{CompactJws, JwsHeader, Signer, encode_compact};
 pub use ecdsa::{ecdsa_signature_from_der, normalize_ecdsa_signature};
 pub use error::{EcdsaSignatureError, JwkError, JwsError, SignError, VerificationError};
+#[cfg(feature = "jwe")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwe")))]
+pub use jwe::{
+    CompactJwe, EcdhKey, JweAlgorithm, JweDecrypter, JweEncryption, JweError, JweHeader,
+};
 pub use jwk::{Jwk, KeyType};
 pub use multikey::KeyCodec;
 pub use one_or_many::OneOrMany;

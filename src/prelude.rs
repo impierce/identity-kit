@@ -21,6 +21,9 @@ pub use crate::did::{
     VerificationMaterial, VerificationMethod, VerificationRelationship,
 };
 pub use crate::identity::{Identifier, Identity, IdentityError, IdentityKind, KeyStoreIdentity};
+#[cfg(feature = "jwe")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwe")))]
+pub use crate::jose::{CompactJwe, EcdhKey, JweAlgorithm, JweDecrypter, JweEncryption, JweHeader};
 pub use crate::jose::{
     CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier, JwtClaims, KeyType,
     Signer, encode_compact,
