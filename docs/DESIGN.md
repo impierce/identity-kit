@@ -393,10 +393,11 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   VC, `validate_v2` a VCDM 2.0 credential: issuer key from the token's `KeyReference` under
   `assertionMethod`, `iss` or `issuer` bound to the party it names, time claims and validity
   period, key binding with `KeyBindingOptions` and the holder key from `cnf` (`jwk` or `kid`)
-  under `authentication`, the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
+  under `authentication`, required as the `KeyBindingPolicy` decides: whenever the options are
+  given (the default), or whenever the credential has `cnf` (HAIP), the `vc` `StatusCheck` with a `StatusPolicy` for `status` and
   `credentialStatus`). `JwtPresentationValidator::validate_v2` unwraps `vc+sd-jwt` envelopes
   next to `vc+jwt` ones (`PresentedCredentialV2`), with key binding required per
-  `PresentationValidationOptions`.
+  `PresentationValidationOptions` and its `KeyBindingPolicy`.
 - `status_list` (`status-list`): the IETF Token Status List (draft 21), which the draft defines for
   any JWT (§6.1), so it serves JWT and SD-JWT credentials alike and needs no SD-JWT code:
   `Status`/`StatusListRef`/`StatusMechanism` for the `status` claim, `StatusType`, `StatusList`
