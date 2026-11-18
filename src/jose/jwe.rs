@@ -304,9 +304,19 @@ impl CompactJwe {
     /// or `zip`, the JWE Encrypted Key is not empty as ECDH-ES requires, or the IV or the tag
     /// is not of the AES-GCM length.
     pub fn decode(token: &str) -> Result<Self, JweError> {
-        let parts: Vec<&str> = token.split('.').collect();
-        let &[header_b64, encrypted_key, iv, ciphertext, tag] = parts.as_slice() else {
-            return Err(JweError::InvalidFormat { parts: parts.len() });
+        // Five parts read in place: a token of many `.` costs no memory to refuse.
+        let mut parts = token.splitn(6, '.');
+        let (Some(header_b64), Some(encrypted_key), Some(iv), Some(ciphertext), Some(tag), None) = (
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+            parts.next(),
+        ) else {
+            return Err(JweError::InvalidFormat {
+                parts: token.split('.').count(),
+            });
         };
         let header_json = base64url::decode(header_b64)
             .map_err(|_| JweError::InvalidBase64Url { part: "header" })?;
@@ -345,10 +355,11 @@ impl CompactJwe {
     ///
     /// [`JweError::InvalidKey`] when `recipient` is not an `EC` P-256 public key, has no `alg`
     /// or another than the header's (OpenID4VP §8.3 requires one), a `use` other than `enc`,
-    /// `key_ops` without `deriveKey` or `deriveBits`, or private parameters,
-    /// [`JweError::InvalidHeader`] when `header` already has an `epk`, has `zip` or `crit`, a
-    /// `kid` that is not the recipient's, malformed `apu` or `apv`, or a field's name among its
-    /// `additional` parameters, [`JweError::PlaintextTooLong`] past 2^36 bytes of plaintext, and
+    /// `key_ops` without `deriveKey` or `deriveBits` or with `sign` or `verify`, or private
+    /// parameters, [`JweError::InvalidHeader`] when `header` already has an `epk`, has `zip` or
+    /// `crit`, a `kid` that is not the recipient's, malformed or equal `apu` and `apv`, a
+    /// field's name among its `additional` parameters, or anything else decoding refuses,
+    /// [`JweError::PlaintextTooLong`] past 2^36 − 32 bytes of plaintext, and
     /// [`JweError::Random`] when the operating system has no randomness to give.
     pub fn encrypt(header: JweHeader, plaintext: &[u8], recipient: &Jwk) -> Result<Self, JweError> {
         let ephemeral = random_secret_key()?;
@@ -406,6 +417,9 @@ impl CompactJwe {
         let cek = derive_cek(shared.raw_secret_bytes(), &header)?;
         let header_json = serde_json::to_vec(&header)
             .map_err(|e| JweError::invalid_header_json("cannot be serialized", e))?;
+        // A header decoding refuses (nested past the JSON parser's limit, equal `apu` and
+        // `apv`) is not one to encrypt under.
+        parse_header(&header_json)?;
         let header_b64 = base64url::encode(&header_json);
         let (ciphertext, tag) = seal(header.enc, &cek, &iv, header_b64.as_bytes(), plaintext)?;
         let token = format!(
@@ -586,8 +600,9 @@ impl EcdhKey {
     /// # Errors
     ///
     /// [`JweError::InvalidKey`] when `jwk` is not an `EC` P-256 key, has no valid `d`, has a
-    /// `d` that does not belong to its `x` and `y`, or has a `use` other than `enc` or an `alg`
-    /// other than `ECDH-ES`.
+    /// `d` that does not belong to its `x` and `y`, or has a `use` other than `enc`, an `alg`
+    /// other than `ECDH-ES`, or `key_ops` without `deriveKey` or `deriveBits` or with `sign` or
+    /// `verify`.
     pub fn from_jwk(jwk: &Jwk) -> Result<Self, JweError> {
         // A key published for another purpose is not reused for key agreement.
         if jwk.key_use().is_some_and(|key_use| key_use != "enc") {
@@ -601,6 +616,7 @@ impl EcdhKey {
                 "the key is for another algorithm than `ECDH-ES`",
             ));
         }
+        check_agreement_key_ops(jwk, "the key's")?;
         let public = jwk.p256_public_key().map_err(JweError::key)?;
         let d = jwk
             .private
@@ -723,7 +739,7 @@ pub enum JweError {
     /// A [`JweDecrypter`] backend failed to compute the shared secret.
     #[error("key agreement failed: {0}")]
     KeyAgreement(#[source] Box<dyn Error + Send + Sync>),
-    /// The plaintext is longer than AES-GCM can encrypt under one IV, 2^36 bytes.
+    /// The plaintext is longer than AES-GCM can encrypt under one IV, 2^36 − 32 bytes.
     #[error("the plaintext is too long for AES-GCM")]
     PlaintextTooLong,
     /// The operating system's random number generator failed.
@@ -818,12 +834,22 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
         .as_ref()
         .ok_or_else(|| JweError::invalid_header("missing `epk`"))?;
     ephemeral_public_key(epk)?;
-    for (name, value) in [("apu", &header.apu), ("apv", &header.apv)] {
+    let mut party_info = [None, None];
+    for (slot, (name, value)) in party_info
+        .iter_mut()
+        .zip([("apu", &header.apu), ("apv", &header.apv)])
+    {
         if let Some(value) = value {
-            base64url::decode(value).map_err(|_| {
+            *slot = Some(base64url::decode(value).map_err(|_| {
                 JweError::invalid_header(&format!("`{name}` is not valid base64url"))
-            })?;
+            })?);
         }
+    }
+    // "The "apu" and "apv" values MUST be distinct, when used" (RFC 7518 §4.6.2).
+    if let [Some(apu), Some(apv)] = &party_info
+        && apu == apv
+    {
+        return Err(JweError::invalid_header("`apu` and `apv` are equal"));
     }
     Ok(header)
 }
@@ -872,15 +898,28 @@ fn recipient_public_key(recipient: &Jwk, alg: JweAlgorithm) -> Result<p256::Publ
             "the recipient's key is not for encryption",
         ));
     }
-    if recipient
-        .key_ops()
-        .is_some_and(|ops| !ops.iter().any(|op| op == "deriveKey" || op == "deriveBits"))
-    {
-        return Err(JweError::invalid_key(
-            "the recipient's `key_ops` allow no key agreement",
-        ));
-    }
+    check_agreement_key_ops(recipient, "the recipient's")?;
     recipient.p256_public_key().map_err(JweError::key)
+}
+
+/// `key_ops`, when `jwk` has them, allow key agreement (`deriveKey` or `deriveBits`) and no
+/// signature operation, which would contradict a key meant for encryption (RFC 7517 §4.3:
+/// `use` and `key_ops` "MUST be consistent").
+fn check_agreement_key_ops(jwk: &Jwk, whose: &str) -> Result<(), JweError> {
+    let Some(ops) = jwk.key_ops() else {
+        return Ok(());
+    };
+    if !ops.iter().any(|op| op == "deriveKey" || op == "deriveBits") {
+        return Err(JweError::invalid_key(&format!(
+            "{whose} `key_ops` allow no key agreement"
+        )));
+    }
+    if ops.iter().any(|op| op == "sign" || op == "verify") {
+        return Err(JweError::invalid_key(&format!(
+            "{whose} `key_ops` make it a signature key too"
+        )));
+    }
+    Ok(())
 }
 
 /// The Content Encryption Key for `header` from the shared secret `z`.
@@ -936,6 +975,12 @@ fn concat_kdf(
     Ok(Zeroizing::new(digest[..key_len].to_vec()))
 }
 
+/// Whether AES-GCM encrypts a plaintext of `len` bytes under one IV: at most 2^36 − 32
+/// (NIST SP 800-38D §5.2.1.1). Checked before the plaintext is copied.
+fn fits_aes_gcm(len: usize) -> bool {
+    u64::try_from(len).is_ok_and(|len| len <= aes_gcm::P_MAX)
+}
+
 /// Encrypts `plaintext` with AES-GCM: the ciphertext and the authentication tag.
 fn seal(
     enc: JweEncryption,
@@ -957,12 +1002,15 @@ fn seal(
             .ok()?;
         tag.as_slice().try_into().ok()
     }
+    if !fits_aes_gcm(plaintext.len()) {
+        return Err(JweError::PlaintextTooLong);
+    }
     let mut buffer = plaintext.to_vec();
     let tag = match enc {
         JweEncryption::A128Gcm => run::<Aes128Gcm>(cek, iv, aad, &mut buffer),
         JweEncryption::A256Gcm => run::<Aes256Gcm>(cek, iv, aad, &mut buffer),
     };
-    // With a key of the right length, AES-GCM fails only past 2^36 bytes of plaintext.
+    // With a key of the right length, AES-GCM fails only on a plaintext too long.
     let tag = tag.ok_or(JweError::PlaintextTooLong)?;
     Ok((buffer, tag))
 }
@@ -1203,6 +1251,17 @@ mod tests {
         let decoded = CompactJwe::decode(jwe.as_str()).unwrap();
         let bob_key = EcdhKey::from_jwk(&bob).unwrap();
         assert_eq!(decoded.decrypt(&bob_key).await.unwrap(), b"plaintext");
+    }
+
+    /// AES-GCM's plaintext limit, 2^36 − 32 bytes, checked without a plaintext that long.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn plaintext_limit_is_that_of_aes_gcm() {
+        let limit = usize::try_from(aes_gcm::P_MAX).unwrap();
+        assert_eq!(limit, (1 << 36) - 32);
+        assert!(fits_aes_gcm(0));
+        assert!(fits_aes_gcm(limit));
+        assert!(!fits_aes_gcm(limit + 1));
     }
 
     /// Every byte of an IV comes from its own random draw: across many IVs, each position

@@ -44,7 +44,8 @@ second JOSE implementation, with its own key types, for one operation in each di
    secret `Z` with the sender's `epk`; the crate derives the Content Encryption Key and
    decrypts. `EcdhKey` is a P-256 key in memory: generated per request, published with
    `use: enc` and `alg: ECDH-ES`, and written to and read from a private JWK between the request
-   and the response; a JWK whose `use` or `alg` says it is for something else is not read. `KeyStore` gains no key agreement: HAIP's encryption keys live for one
+   and the response; a JWK whose `use`, `alg` or `key_ops` says it is for something else is not
+   read. `KeyStore` gains no key agreement: HAIP's encryption keys live for one
    request, and an operation on that trait is one every backend has to answer. A key kept in an
    HSM implements `JweDecrypter` instead.
 
@@ -52,17 +53,22 @@ second JOSE implementation, with its own key types, for one operation in each di
    cannot fill a log; `crit` in any form and `zip` are refused, as a recipient must not ignore
    them; the JWE Encrypted Key must be empty; `epk` must be a public
    P-256 point on the curve, which rules out invalid-curve attacks; the IV is 96 bits and the tag
-   128. The protected header is authenticated as received. A shared secret of other than 32
+   128; `apu` and `apv`, when both are present, must differ (RFC 7518 §4.6.2). A protected
+   header that repeats a member name is read with its last value, as RFC 7515 §4 allows; it is
+   authenticated as the bytes received, so no other reading of it decrypts. The protected
+   header is authenticated as received. A shared secret of other than 32
    bytes from a `JweDecrypter` is a key agreement error, so a faulty backend is not mistaken
    for an altered JWE. A tag that does not verify gives one error, which says nothing about
    why.
 
 6. **Encryption follows OpenID4VP §8.3.** The recipient key must have an `alg`, the header's
    ("The alg parameter MUST be present in the JWKs"); a key with a `use` other than `enc`,
-   `key_ops` that allow no key agreement, or private parameters is refused. The JWE takes the
+   `key_ops` that allow no key agreement or also allow `sign` or `verify` (RFC 7517 §4.3), or
+   private parameters is refused. The JWE takes the
    key's `kid` when the header has none, and refuses a `kid` that is not the key's, a key
    without one included. A header decoding would refuse (`crit`, `zip`, an additional
-   parameter named like a field) is refused too.
+   parameter named like a field, equal `apu` and `apv`, JSON nested past the parser's limit) is
+   refused too: the serialized header is decoded before it is sealed.
 
 ## Consequences
 

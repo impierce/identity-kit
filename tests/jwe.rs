@@ -217,6 +217,11 @@ fn malformed_serializations_are_refused() {
         decode_err(&format!("{RESPONSE}.x")),
         JweError::InvalidFormat { parts: 6 }
     ));
+    // Counted, not collected.
+    assert!(matches!(
+        decode_err(&".".repeat(100_000)),
+        JweError::InvalidFormat { parts: 100_001 }
+    ));
     assert!(matches!(
         decode_err(&with_part(RESPONSE, 0, "e30=")),
         JweError::InvalidBase64Url { part: "header" }
@@ -347,6 +352,19 @@ fn headers_this_crate_cannot_honour_are_refused() {
         decode_err(&bad_apu),
         JweError::InvalidHeader { .. }
     ));
+    let equal_party_info = with_header(|header| {
+        header.insert("apu".to_owned(), json!("c2Vzc2lvbg"));
+        header.insert("apv".to_owned(), json!("c2Vzc2lvbg"));
+    });
+    assert!(matches!(
+        decode_err(&equal_party_info),
+        JweError::InvalidHeader { .. }
+    ));
+    let distinct_party_info = with_header(|header| {
+        header.insert("apu".to_owned(), json!("c2Vzc2lvbg"));
+        header.insert("apv".to_owned(), json!("dmVyaWZpZXI"));
+    });
+    assert!(CompactJwe::decode(&distinct_party_info).is_ok());
 }
 
 /// RFC 7518 §4.6.1.1: `epk` is present, public and, for a P-256 recipient, a P-256 point.
@@ -409,7 +427,18 @@ fn encryption_refuses_keys_and_headers_that_do_not_fit() {
     // A Verifier that published its private key gets no response encrypted to it.
     assert!(refused(&verifier_jwk()));
     assert!(refused(&public.clone().with_key_ops(["sign", "verify"])));
-    assert!(!refused(&public.clone().with_key_ops(["deriveBits"])));
+    // `key_ops` that make it a signature key as well contradict `use: enc` (RFC 7517 §4.3).
+    assert!(refused(
+        &public.clone().with_key_ops(["deriveKey", "verify"])
+    ));
+    assert!(
+        CompactJwe::encrypt(
+            header(),
+            b"{}",
+            &public.clone().with_key_ops(["deriveBits"])
+        )
+        .is_ok()
+    );
     let x25519: Jwk = serde_json::from_value(json!({
         "kty": "OKP", "kid": "jc", "use": "enc", "crv": "X25519", "alg": "ECDH-ES",
         "x": "WPX7wnwq10hFNK9aDSyG1QlLswE_CJY14LdhcFUIVVc"
@@ -457,6 +486,15 @@ fn encryption_refuses_keys_and_headers_that_do_not_fit() {
             .insert(name.to_owned(), json!("A256GCM"));
         assert!(invalid_header(shadowed), "{name}");
     }
+    // "The "apu" and "apv" values MUST be distinct, when used" (RFC 7518 §4.6.2).
+    assert!(invalid_header(
+        header().with_apu(b"session").with_apv(b"session")
+    ));
+    // Nested past what the JSON parser of decoding takes.
+    let mut deep = header();
+    let nested = (0..200).fold(json!(1), |value, _| json!([value]));
+    deep.additional.insert("x-deep".to_owned(), nested);
+    assert!(invalid_header(deep));
     // Other additional parameters are kept.
     let mut extended = header();
     extended
@@ -495,6 +533,11 @@ fn private_keys_must_be_whole_and_consistent() {
     // A key published for signing is not reused for key agreement.
     assert!(invalid(&verifier_jwk().with_key_use("sig")));
     assert!(invalid(&verifier_jwk().with_alg("ES256")));
+    assert!(invalid(&verifier_jwk().with_key_ops(["sign"])));
+    assert!(invalid(
+        &verifier_jwk().with_key_ops(["deriveBits", "sign"])
+    ));
+    assert!(EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["deriveKey"])).is_ok());
 }
 
 /// A key kept elsewhere, an HSM say, is a `JweDecrypter` of its own; its failure reaches the
