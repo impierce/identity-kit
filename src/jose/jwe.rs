@@ -827,8 +827,20 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
         }
         Some(_) => return Err(JweError::invalid_header("`crit` is not an array")),
     }
-    let header: JweHeader = serde_json::from_value(value)
-        .map_err(|e| JweError::invalid_header_json("a member is malformed", e))?;
+    // Read from the JSON itself: `null` deserializes as an absent member, but RFC 7516 §4.1 and
+    // RFC 7518 §4.6.1 give these members as strings only.
+    for name in ["kid", "typ", "cty", "apu", "apv"] {
+        if object.get(name).is_some_and(|value| !value.is_string()) {
+            return Err(JweError::invalid_header(&format!(
+                "`{name}` is not a string"
+            )));
+        }
+    }
+    // The JSON error is quoted cut short: it can repeat a string from the token, such as an
+    // `epk` given as one.
+    let header: JweHeader = serde_json::from_value(value).map_err(|e| {
+        JweError::invalid_header(&format!("a member is malformed: {}", shown(&e.to_string())))
+    })?;
     let epk = header
         .epk
         .as_ref()
@@ -867,6 +879,14 @@ fn shown(value: &str) -> String {
 fn ephemeral_public_key(epk: &Jwk) -> Result<p256::PublicKey, JweError> {
     if epk.is_private() {
         return Err(JweError::invalid_key("`epk` has private parameters"));
+    }
+    // Named here, cut short: the JWK error would repeat `kty` and `crv` from the token in full.
+    if epk.kty() != "EC" || epk.crv() != Some("P-256") {
+        return Err(JweError::invalid_key(&format!(
+            "`epk` is not an `EC` P-256 key: `kty` {:?}, `crv` {:?}",
+            shown(epk.kty()),
+            epk.crv().map(shown)
+        )));
     }
     epk.p256_public_key().map_err(JweError::key)
 }

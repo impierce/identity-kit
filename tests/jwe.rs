@@ -367,6 +367,30 @@ fn headers_this_crate_cannot_honour_are_refused() {
     assert!(CompactJwe::decode(&distinct_party_info).is_ok());
 }
 
+/// RFC 7516 §4.1 and RFC 7518 §4.6.1: the string members are strings, `null` included, which
+/// would otherwise read as an absent member; a value of the wrong type is quoted cut short.
+#[test]
+fn header_members_have_their_types() {
+    // Strings only, `null` included, which would otherwise read as an absent member.
+    for name in ["apu", "apv", "kid", "typ", "cty"] {
+        let null = with_header(|header| {
+            header.insert(name.to_owned(), Value::Null);
+        });
+        assert!(
+            matches!(decode_err(&null), JweError::InvalidHeader { .. }),
+            "{name}"
+        );
+    }
+    // A long value the token puts where another type is due is quoted cut short.
+    let long = "A".repeat(100_000);
+    let epk_string = with_header(|header| {
+        header.insert("epk".to_owned(), json!(long));
+    });
+    let error = decode_err(&epk_string);
+    assert!(matches!(error, JweError::InvalidHeader { .. }));
+    assert!(error.to_string().len() < 300, "{error}");
+}
+
 /// RFC 7518 §4.6.1.1: `epk` is present, public and, for a P-256 recipient, a P-256 point.
 #[test]
 fn the_ephemeral_key_is_checked() {
@@ -391,6 +415,14 @@ fn the_ephemeral_key_is_checked() {
         decode_err(&off_curve),
         JweError::InvalidKey { .. }
     ));
+
+    // Another `kty`, named cut short.
+    let long_kty = with_header(|header| {
+        header["epk"]["kty"] = json!("K".repeat(100_000));
+    });
+    let error = decode_err(&long_kty);
+    assert!(matches!(error, JweError::InvalidKey { .. }));
+    assert!(error.to_string().len() < 300, "{error}");
 
     // OpenID4VP §8.3's P-384 key.
     let other_curve = with_header(|header| {

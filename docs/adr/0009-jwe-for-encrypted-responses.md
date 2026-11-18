@@ -49,14 +49,15 @@ second JOSE implementation, with its own key types, for one operation in each di
    request, and an operation on that trait is one every backend has to answer. A key kept in an
    HSM implements `JweDecrypter` instead.
 
-5. **Strict decoding.** An unsupported `alg` or `enc` is named, cut short so a hostile header
-   cannot fill a log; `crit` in any form and `zip` are refused, as a recipient must not ignore
+5. **Strict decoding.** An unsupported `alg` or `enc`, an `epk` of another `kty` or `crv` and a
+   malformed member are named, cut short so a hostile header cannot fill a log; `crit` in any form and `zip` are refused, as a recipient must not ignore
    them; the JWE Encrypted Key must be empty; `epk` must be a public
    P-256 point on the curve, which rules out invalid-curve attacks; the IV is 96 bits and the tag
-   128; `apu` and `apv`, when both are present, must differ (RFC 7518 §4.6.2). A protected
-   header that repeats a member name is read with its last value, as RFC 7515 §4 allows; it is
-   authenticated as the bytes received, so no other reading of it decrypts. The protected
-   header is authenticated as received. A shared secret of other than 32
+   128; `apu` and `apv`, when both are present, must differ (RFC 7518 §4.6.2), and `kid`,
+   `typ`, `cty`, `apu` and `apv` are strings when present, `null` included. The protected
+   header is authenticated as received. A protected header that repeats a member name is read
+   with its last value, as RFC 7515 §4 allows; the tag authenticates the bytes, not a reading
+   of them, so another JOSE parser could take another of the duplicates and still decrypt. A shared secret of other than 32
    bytes from a `JweDecrypter` is a key agreement error, so a faulty backend is not mistaken
    for an altered JWE. A tag that does not verify gives one error, which says nothing about
    why.
