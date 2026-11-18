@@ -23,9 +23,10 @@ use crate::resolver::DidProducer;
 /// The key it publishes, to a producer and from [`public_jwk`](Identity::public_jwk), is the
 /// key's required members, the `alg` the store gives and the RFC 7638 thumbprint as `kid`. A
 /// store's own `kid` is its key id (a label, a cloud key ARN), which a `did:jwk` would make
-/// public and which would give the key another DID in another store; the shipped stores give
-/// an unlabelled key its thumbprint as key id, so its `did:jwk` is the one the store's key
-/// gives.
+/// public and which would give the key another DID in another store, so stores that give the
+/// key the same `alg` give it the same `did:jwk`. The shipped stores give an unlabelled key its
+/// thumbprint as key id, so its `did:jwk` is the one the store's key gives, unless that key
+/// also carries `use`, `key_ops` or another optional member, which the published key drops.
 ///
 /// # Key generation is opt-in
 ///
@@ -441,7 +442,9 @@ impl Identity for KeyStoreIdentity {
 /// A store's `kid` is its own key id (a label, a PKCS #11 object name, a cloud key ARN), which
 /// a `did:jwk` would publish and which changes when the key moves to another store. The
 /// thumbprint follows from the key and is what the shipped stores give a key without a label,
-/// so the `did:jwk` of such a key is the one it had before.
+/// so the `did:jwk` of such a key is the one it had before, unless its JWK also carried `use`,
+/// `key_ops` or another optional member. Stores that give the key the same `alg` give it the
+/// same `did:jwk`.
 fn published(jwk: &Jwk) -> Result<Jwk, IdentityError> {
     let thumbprint = jwk.thumbprint_sha256()?;
     let required: Jwk = serde_json::from_str(&jwk.thumbprint_input()?)
