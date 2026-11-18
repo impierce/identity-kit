@@ -355,9 +355,9 @@ impl CompactJwe {
     ///
     /// [`JweError::InvalidKey`] when `recipient` is not an `EC` P-256 public key, has no `alg`
     /// or another than the header's (OpenID4VP §8.3 requires one), a `use` other than `enc`,
-    /// `key_ops` without `deriveKey` or `deriveBits` or with `sign` or `verify`, or private
-    /// parameters, [`JweError::InvalidHeader`] when `header` already has an `epk`, has `zip` or
-    /// `crit`, a `kid` that is not the recipient's, malformed or equal `apu` and `apv`, a
+    /// `key_ops` with `sign` or `verify`, or private parameters, [`JweError::InvalidHeader`]
+    /// when `header` already has an `epk`, has `zip` or `crit`, a `kid` that is not the
+    /// recipient's, malformed `apu` or `apv` or equal non-empty ones, a
     /// field's name among its `additional` parameters, or anything else decoding refuses,
     /// [`JweError::PlaintextTooLong`] past 2^36 − 32 bytes of plaintext, and
     /// [`JweError::Random`] when the operating system has no randomness to give.
@@ -616,7 +616,7 @@ impl EcdhKey {
                 "the key is for another algorithm than `ECDH-ES`",
             ));
         }
-        check_agreement_key_ops(jwk, "the key's")?;
+        check_agreement_key_ops(jwk, "the key's", true)?;
         let public = jwk.p256_public_key().map_err(JweError::key)?;
         let d = jwk
             .private
@@ -869,8 +869,10 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
             })?);
         }
     }
-    // "The "apu" and "apv" values MUST be distinct, when used" (RFC 7518 §4.6.2).
+    // "The "apu" and "apv" values MUST be distinct, when used" (RFC 7518 §4.6.2); an empty
+    // value is not used, and gives the KDF the same input as an absent one.
     if let [Some(apu), Some(apv)] = &party_info
+        && !apu.is_empty()
         && apu == apv
     {
         return Err(JweError::invalid_header("`apu` and `apv` are equal"));
@@ -907,8 +909,8 @@ fn ephemeral_public_key(epk: &Jwk) -> Result<p256::PublicKey, JweError> {
 }
 
 /// The recipient's public key for encryption with `alg`: an `EC` P-256 public key whose `alg`
-/// is `alg` (OpenID4VP §8.3: "The alg parameter MUST be present in the JWKs"), meant for key
-/// agreement by its `use` and `key_ops` when it has them.
+/// is `alg` (OpenID4VP §8.3: "The alg parameter MUST be present in the JWKs"), meant for
+/// encryption by its `use` and `key_ops` when it has them.
 fn recipient_public_key(recipient: &Jwk, alg: JweAlgorithm) -> Result<p256::PublicKey, JweError> {
     if recipient.is_private() {
         return Err(JweError::invalid_key(
@@ -933,18 +935,20 @@ fn recipient_public_key(recipient: &Jwk, alg: JweAlgorithm) -> Result<p256::Publ
             "the recipient's key is not for encryption",
         ));
     }
-    check_agreement_key_ops(recipient, "the recipient's")?;
+    check_agreement_key_ops(recipient, "the recipient's", false)?;
     recipient.p256_public_key().map_err(JweError::key)
 }
 
-/// `key_ops`, when `jwk` has them, allow key agreement (`deriveKey` or `deriveBits`) and no
-/// signature operation, which would contradict a key meant for encryption (RFC 7517 §4.3:
-/// `use` and `key_ops` "MUST be consistent").
-fn check_agreement_key_ops(jwk: &Jwk, whose: &str) -> Result<(), JweError> {
+/// `key_ops`, when `jwk` has them, allow no signature operation, which would contradict a key
+/// meant for encryption (RFC 7517 §4.3: `use` and `key_ops` "MUST be consistent"); a private
+/// key's must also allow key agreement (`deriveKey` or `deriveBits`). A public key's need not:
+/// in the Web Crypto API the private key holds the agreement usages, and an exported ECDH
+/// public key has `"key_ops": []`.
+fn check_agreement_key_ops(jwk: &Jwk, whose: &str, private: bool) -> Result<(), JweError> {
     let Some(ops) = jwk.key_ops() else {
         return Ok(());
     };
-    if !ops.iter().any(|op| op == "deriveKey" || op == "deriveBits") {
+    if private && !ops.iter().any(|op| op == "deriveKey" || op == "deriveBits") {
         return Err(JweError::invalid_key(&format!(
             "{whose} `key_ops` allow no key agreement"
         )));

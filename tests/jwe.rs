@@ -360,6 +360,11 @@ fn headers_this_crate_cannot_honour_are_refused() {
         decode_err(&equal_party_info),
         JweError::InvalidHeader { .. }
     ));
+    let empty_party_info = with_header(|header| {
+        header.insert("apu".to_owned(), json!(""));
+        header.insert("apv".to_owned(), json!(""));
+    });
+    assert!(CompactJwe::decode(&empty_party_info).is_ok());
     let distinct_party_info = with_header(|header| {
         header.insert("apu".to_owned(), json!("c2Vzc2lvbg"));
         header.insert("apv".to_owned(), json!("dmVyaWZpZXI"));
@@ -373,13 +378,15 @@ fn headers_this_crate_cannot_honour_are_refused() {
 fn header_members_have_their_types() {
     // Strings only, `null` included, which would otherwise read as an absent member.
     for name in ["apu", "apv", "kid", "typ", "cty"] {
-        let null = with_header(|header| {
-            header.insert(name.to_owned(), Value::Null);
-        });
-        assert!(
-            matches!(decode_err(&null), JweError::InvalidHeader { .. }),
-            "{name}"
-        );
+        for value in [Value::Null, json!(7), json!(["x"])] {
+            let wrong = with_header(|header| {
+                header.insert(name.to_owned(), value.clone());
+            });
+            assert!(
+                matches!(decode_err(&wrong), JweError::InvalidHeader { .. }),
+                "{name}: {value}"
+            );
+        }
     }
     // A long value the token puts where another type is due is quoted cut short.
     let long = "A".repeat(100_000);
@@ -391,6 +398,51 @@ fn header_members_have_their_types() {
         matches!(&error, JweError::InvalidHeader { reason, source: None } if reason == "`epk` is not a JSON object"),
         "{error}"
     );
+}
+
+/// A crit list is named in its first eight members.
+#[test]
+fn unsupported_critical_names_are_cut_to_eight() {
+    // Many names: the first eight are kept.
+    let many = with_header(|header| {
+        header.insert(
+            "crit".to_owned(),
+            json!((0..10).map(|i| format!("x{i}")).collect::<Vec<_>>()),
+        );
+    });
+    assert!(matches!(
+        decode_err(&many),
+        JweError::UnsupportedCritical(names) if names == (0..8).map(|i| format!("x{i}")).collect::<Vec<_>>()
+    ));
+}
+
+/// What other implementations produce is accepted: a recipient public key exported by the Web
+/// Crypto API (`"key_ops": []`), and empty `apu` and `apv`, which RFC 7518 §4.6.2 does not
+/// count as used.
+#[test]
+fn what_other_implementations_produce_is_accepted() {
+    let header = || JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
+    let public = verifier_jwk().public();
+    // A public key need not list agreement: WebCrypto exports an ECDH public key with
+    // `"key_ops": []`, its private key holding `deriveBits`.
+    for ops in [&[][..], &["encrypt"][..]] {
+        assert!(
+            CompactJwe::encrypt(
+                header(),
+                b"{}",
+                &public.clone().with_key_ops(ops.iter().copied())
+            )
+            .is_ok(),
+            "{ops:?}"
+        );
+    }
+    assert!(CompactJwe::encrypt(header().with_apu(b"").with_apv(b""), b"{}", &public).is_ok());
+    // A private key must still allow key agreement when it lists `key_ops`.
+    assert!(EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["deriveBits"])).is_ok());
+    assert!(matches!(
+        EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["encrypt"])),
+        Err(JweError::InvalidKey { .. })
+    ));
 }
 
 /// RFC 7518 §4.6.1.1: `epk` is present, public and, for a P-256 recipient, a P-256 point.
