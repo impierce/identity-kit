@@ -205,6 +205,63 @@ async fn rfc8037_key_as_thumbprint_reproduces_the_appendix_a_jws() {
         .unwrap();
 }
 
+/// The `did:jwk` of the RFC 8037 Appendix A key with `"alg": "EdDSA"` and its thumbprint as
+/// `kid`: the base64url of `{"alg":"EdDSA","crv":"Ed25519","kid":"kPrK_…","kty":"OKP","x":"11qY…"}`.
+const RFC8037_DID_JWK: &str = "did:jwk:eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJrUHJLX3FteFZXYVlWQTl3d0JGNkl1bzN2Vnp6N1R4SENUd1hCeWdyUzRrIiwia3R5IjoiT0tQIiwieCI6IjExcVlBWUt4Q3JmVlNfN1R5V1FIT2c3aGN2UGFwaU1scndJYWFQY0hVUm8ifQ";
+
+/// A store's key id stays out of what the identity publishes: the `did:jwk` and the public key
+/// carry the thumbprint as `kid`, so the key has one `did:jwk` whatever store holds it.
+#[tokio::test]
+async fn a_store_label_stays_out_of_the_did_jwk() {
+    const LABEL: &str = "arn:aws:kms:eu-central-1:111122223333:key/example";
+    let dir = tempfile::tempdir().unwrap();
+    let key = |kid: Option<&str>| {
+        let mut jwk: serde_json::Value = serde_json::from_str(RFC8037_A1).unwrap();
+        jwk["alg"] = json!("EdDSA");
+        if let Some(kid) = kid {
+            jwk["kid"] = json!(kid);
+        }
+        jwk
+    };
+    let mut identifiers = Vec::new();
+    for (name, kid, id) in [
+        ("labelled.json", Some(LABEL), LABEL),
+        ("unlabelled.json", None, RFC8037_THUMBPRINT),
+    ] {
+        let path = dir.path().join(name);
+        write_key_set(&path, &json!({ "keys": [key(kid)] }).to_string());
+        let store: Arc<dyn KeyStore> = Arc::new(SoftwareKeyStore::open(&path).unwrap());
+        // The store's own public key keeps its key id: the contract is unchanged.
+        let stored = store.public_jwk(&KeyId::new(id)).await.unwrap();
+        assert_eq!(stored.kid(), Some(id));
+        let identity = KeyStoreIdentity::new(store)
+            .with_producer(DidKey::default())
+            .with_producer(DidJwk);
+        let kind = did_kind("did:jwk");
+        let did = identity
+            .bind(kind.clone(), JwsAlgorithm::EdDSA, KeyId::new(id))
+            .await
+            .unwrap();
+        assert_eq!(did.to_string(), RFC8037_DID_JWK, "{name}");
+        let public = identity
+            .public_jwk(&kind, JwsAlgorithm::EdDSA)
+            .await
+            .unwrap();
+        assert_eq!(public.kid(), Some(RFC8037_THUMBPRINT));
+        assert_eq!(public.alg(), Some("EdDSA"));
+        assert!(!serde_json::to_string(&public).unwrap().contains("arn:"));
+        sign_and_resolve(
+            &identity,
+            &kind,
+            JwsAlgorithm::EdDSA,
+            VerificationRelationship::AssertionMethod,
+        )
+        .await;
+        identifiers.push(did);
+    }
+    assert_eq!(identifiers[0], identifiers[1]);
+}
+
 #[tokio::test]
 async fn rfc7638_key_gives_the_section_3_1_thumbprint() {
     let identity = KeyStoreIdentity::new(Arc::new(PublicOnly));

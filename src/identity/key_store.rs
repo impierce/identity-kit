@@ -20,6 +20,13 @@ use crate::resolver::DidProducer;
 /// method as the `kid`. A DID that no registered producer can make, such as a `did:web` whose
 /// producer needs an origin, is bound with [`bind_did_url`](Self::bind_did_url).
 ///
+/// The key it publishes, to a producer and from [`public_jwk`](Identity::public_jwk), is the
+/// key's required members, the `alg` the store gives and the RFC 7638 thumbprint as `kid`. A
+/// store's own `kid` is its key id (a label, a cloud key ARN), which a `did:jwk` would make
+/// public and which would give the key another DID in another store; the shipped stores give
+/// an unlabelled key its thumbprint as key id, so its `did:jwk` is the one the store's key
+/// gives.
+///
 /// # Key generation is opt-in
 ///
 /// By default an unbound pair is an error, so that a production deployment never mints keys
@@ -68,6 +75,8 @@ pub struct KeyStoreIdentity {
 struct Binding {
     kind: IdentityKind,
     signer: KeySigner<Arc<dyn KeyStore>>,
+    /// The public key as this identity publishes it ([`published`]).
+    public: Jwk,
     identifier: Identifier,
     kid: Option<String>,
 }
@@ -153,11 +162,13 @@ impl KeyStoreIdentity {
             _ => return Err(IdentityError::UnsupportedKind(kind)),
         }
         let signer = self.signer_for(alg, key).await?;
+        let public = published(signer.public_jwk())?;
         let identifier = Identifier::Did(url.did().clone());
         self.insert(
             Binding {
                 kind,
                 signer,
+                public,
                 identifier: identifier.clone(),
                 kid: Some(url.to_string()),
             },
@@ -217,10 +228,10 @@ impl KeyStoreIdentity {
             IdentityKind::JwkThumbprint => None,
         };
         let signer = self.signer_for(alg, key).await?;
-        let public = signer.public_jwk().public();
+        let public = published(signer.public_jwk())?;
         let (identifier, kid) = match (&kind, producer) {
             (IdentityKind::Did(method), Some(producer)) => {
-                let document = producer.produce(&[public], ()).await?;
+                let document = producer.produce(std::slice::from_ref(&public), ()).await?;
                 if !method.matches(&document.id) {
                     return Err(IdentityError::UnsupportedKind(kind));
                 }
@@ -236,6 +247,7 @@ impl KeyStoreIdentity {
         Ok(Binding {
             kind,
             signer,
+            public,
             identifier,
             kid,
         })
@@ -406,7 +418,7 @@ impl Identity for KeyStoreIdentity {
         kind: &IdentityKind,
         alg: JwsAlgorithm,
     ) -> Result<Jwk, IdentityError> {
-        Ok(self.binding(kind, alg).await?.signer.public_jwk().public())
+        Ok(self.binding(kind, alg).await?.public)
     }
 
     async fn signer(
@@ -420,6 +432,25 @@ impl Identity for KeyStoreIdentity {
             kid: binding.kid,
         }))
     }
+}
+
+/// The public key as an identity publishes it, in a DID it derives and from
+/// [`Identity::public_jwk`]: the members its RFC 7638 thumbprint covers, the `alg` the store
+/// gives, and the thumbprint as `kid`.
+///
+/// A store's `kid` is its own key id (a label, a PKCS #11 object name, a cloud key ARN), which
+/// a `did:jwk` would publish and which changes when the key moves to another store. The
+/// thumbprint follows from the key and is what the shipped stores give a key without a label,
+/// so the `did:jwk` of such a key is the one it had before.
+fn published(jwk: &Jwk) -> Result<Jwk, IdentityError> {
+    let thumbprint = jwk.thumbprint_sha256()?;
+    let required: Jwk = serde_json::from_str(&jwk.thumbprint_input()?)
+        .expect("the thumbprint input is a JSON object of string members");
+    let required = required.with_kid(thumbprint);
+    Ok(match jwk.alg() {
+        Some(alg) => required.with_alg(alg),
+        None => required,
+    })
 }
 
 /// A [`KeySigner`] whose [`Signer::kid`] is the verification method of a DID, or `None` for a
