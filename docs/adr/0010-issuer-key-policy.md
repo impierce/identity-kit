@@ -85,10 +85,16 @@ Two facts about the code shape the design:
    not permit an `x5c` chain for `https://bank.example`", and one that carries `x5c` beside a
    `kid` validates through the key set, as SD-JWT VC requires.
 
-   The Issuer is the `iss` as the token writes it, and a policy compares it exactly: the
-   key-set and chain bindings already require an `https` `iss` in the one form every URL parser
-   reads alike (ADR 0008, decision 5), so `https://bank.example` and `https://Bank.example/` are
-   different Issuers to the policy as they are to `binds_to`.
+   The Issuer is the `iss` as the token writes it, matched by exact comparison, after an
+   `https` `iss` that is not written canonically is refused. `binds_to` reads Issuers two ways:
+   a key set binds an `iss` compared as a parsed URL, so `https://Bank.example/` binds the key
+   set of `https://bank.example`, while a chain binds only the canonical form (ADR 0008,
+   decision 5). Matching by exact string alone would let `https://Bank.example/` miss the entry
+   that holds `https://bank.example` to its key set and fall to the fallback, while its key set
+   still bound it. So `IssuerPolicy` refuses an `https` `iss` that a URL parser would rewrite
+   (case, a default port, an empty path, percent-encoding), as a chain binding does, and stores
+   its entries in the canonical form, refusing at construction one that is not. A DID `iss` is
+   compared as written; DID syntax has one form.
 
    Its `resolve_key_at` and `resolve_key`, which carry no Issuer, consult the policy with
    `None`. A wrapper that does not forward `resolve_issuer_key_at` (a cache written before this
@@ -115,9 +121,13 @@ Two facts about the code shape the design:
    certificate (ADR 0008, decision 5). The policy then receives `None` and the chain, and
    decides by the certificate: `IssuerPolicy` matches a chain without `iss` against its
    Issuers by the `dNSName` entries of the leaf (`X509Certificate::binds`, as an `iss` would
-   bind), and treats a chain no entry binds as an unlisted Issuer. Which entry is matched does
-   not authenticate anything: the resolver it selects still validates the chain against that
-   entry's anchors, and `binds_to` still checks the `iss` of a token that has one.
+   bind). It uses an entry only when exactly one entry binds the leaf and that entry permits
+   chains; a leaf whose names bind two or more entries is refused as ambiguous, since their
+   anchors and mechanisms may differ and no rule picks one without letting the certificate
+   choose. A chain no entry binds is an unlisted Issuer. Matching selects anchors and nothing
+   else: the resolver it selects still validates the chain against that entry's anchors, the
+   credential's Issuer is still the subject of the leaf (ADR 0008, decision 5), not the entry,
+   and `binds_to` still checks the `iss` of a token that has one.
 
 5. **Holder keys are not Issuer keys.** The policy also receives the `KeyRole`, so a policy
    applies to `KeyRole::Issuer` and leaves `KeyRole::Subject` (a presentation's holder, a key
@@ -158,7 +168,8 @@ Two facts about the code shape the design:
 - The acceptance criteria of #175 become tests over `PolicyKeyResolver` with `JwksResolver` and
   `X509Resolver`: an Issuer held to its key set rejects a valid chain for its host name and
   accepts its key set; the reverse; an Issuer restricted to one anchor rejects a chain under
-  another; no policy accepts what is accepted today; and each validator that calls
-  `resolve_jws_key` is covered.
+  another; a non-canonical spelling of a listed `iss` is refused rather than falling to the
+  fallback; a chain without `iss` whose leaf binds two entries is refused; no policy accepts
+  what is accepted today; and each validator that calls `resolve_jws_key` is covered.
 - `DESIGN.md`, `FEATURES.md`, the `X509Resolver` documentation and ADR 0008, decision 6, point
   here.
