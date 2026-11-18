@@ -63,6 +63,9 @@
 //! `X509Certificate` reads; an `iss` claim binds only as an `https` URL whose host is a DNS
 //! name of that certificate. An issuer signs with
 //! [`CertifiedSigner`](crate::jose::CertifiedSigner), which puts its chain in the header.
+//! A Wallet selects the credentials that answer an `aki` trusted authorities query of OpenID4VP
+//! §6.1.1.1 with `X509Certificate::chain_matches_authority_key_identifiers`, which reads the
+//! chain without validating it.
 //!
 //! # Plain JWTs
 //!

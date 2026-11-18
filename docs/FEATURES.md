@@ -75,6 +75,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `JwtValidator` for plain JWTs (access tokens): `alg` allow-list, `typ`, signature, key bound to `iss`, `iss`, `aud`, `exp`/`nbf`/`iat` with leeway, required claims | ✅ | | [RFC 7519 §7.2][rfc7519], [RFC 8725][rfc8725], [RFC 9068][rfc9068] | [#121](https://github.com/impierce/identity-kit/issues/121) |
 | `X509Resolver`: the key of an `x5c` certificate chain validated against the application's trust anchors (RFC 5280 path validation by `rustls-webpki`, at the validation time), the signing certificate not self-signed, as HAIP requires; `iss` binds only as an `https` URL whose host is a `dNSName` of that certificate ([ADR 0008](adr/0008-x509-certificate-chains.md)) |   ✅   | `x509`        | [RFC 7515 §4.1.6][rfc7515], [RFC 5280 §6][rfc5280], [SD-JWT VC §3.5][sd-jwt-vc], [HAIP §6.1.1][haip] | [#164](https://github.com/impierce/identity-kit/issues/164) |
 | `X509Certificate`: subject, Subject Alternative Names, validity, key identifiers, SHA-256 thumbprint and public key of a certificate; `binds` an `iss` through a Subject Alternative Name |   ✅   | `x509`        | [RFC 5280 §4][rfc5280], [SD-JWT VC §3.5][sd-jwt-vc] | [#164](https://github.com/impierce/identity-kit/issues/164) |
+| `X509Certificate::chain_matches_authority_key_identifiers`: whether an `x5c` chain matches an `aki` trusted authorities query, an Authority Key Identifier of any of its certificates equal to one of the query's values; the chain read, not validated |   ✅   | `x509`        | [OID4VP §6.1.1.1][oid4vp], [RFC 5280 §4.2.1.1][rfc5280], [HAIP §5][haip] | [#177](https://github.com/impierce/identity-kit/issues/177) |
 | `KeyReference::candidates`: every reference a token carries, the verifier's resolvers choosing the mechanism; `KeyResolver::resolve_key_at` with the validation time |   ✅   |               | [SD-JWT VC §3.5][sd-jwt-vc]      | [#164](https://github.com/impierce/identity-kit/issues/164) |
 | `CertifiedSigner`, `Signer::x5c`, `JwsHeader::with_x5c` and `for_signer`: tokens signed with a certificate chain in `x5c` |   ✅   |               | [RFC 7515 §4.1.6][rfc7515], [HAIP §6.1.1][haip] | [#164](https://github.com/impierce/identity-kit/issues/164) |
 | `jku` key set URLs: in `KeyReference`, resolver to follow                                        |   📋   |               | [RFC 7515 §4.1][rfc7515]         | [#53](https://github.com/impierce/identity-kit/issues/53) |
@@ -202,10 +203,10 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 8785: JSON Canonicalization Scheme][rfc8785] | IETF   | `methods::jwk`                            |
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
-| [OpenID4VP 1.0][oid4vp]                      | OpenID Foundation | `vc` (`ClaimPath`), `jose` (`jwe`)  |
+| [OpenID4VP 1.0][oid4vp]                      | OpenID Foundation | `vc` (`ClaimPath`), `jose` (`jwe`), `resolver` (`X509Certificate`, `x509`) |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
 | [Token Status List][status-list] (draft 21)  | IETF draft  | `status_list`                             |
-| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`; `CompactJwe`, `jwe`), `sd_jwt_vc` (`KeyBindingPolicy`) |
+| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `X509Certificate`, `x509`), `jose` (`CertifiedSigner`; `CompactJwe`, `jwe`), `sd_jwt_vc` (`KeyBindingPolicy`) |
 | [PKCS #11 v3.1][pkcs11]                      | OASIS       | `keys::pkcs11`                            |
 | [multicodec][multicodec], [multibase][multibase] | Multiformats | `methods::key`                        |
 
