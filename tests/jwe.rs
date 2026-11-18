@@ -1,0 +1,792 @@
+//! JWE (feature `jwe`): the encrypted response of OpenID4VP §8.3 decrypted with the Verifier's
+//! key, encryption to a Verifier's key with both content encryption algorithms HAIP §5
+//! requires, and the checks a recipient makes before and while decrypting.
+#![cfg(feature = "jwe")]
+
+use std::sync::Arc;
+
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use identity_kit::jose::{
+    CompactJwe, EcdhKey, JweAlgorithm, JweDecrypter, JweEncryption, JweError, JweHeader, Jwk,
+};
+use serde_json::{Value, json};
+use zeroize::Zeroizing;
+
+/// OpenID4VP §8.3: the response encrypted to the Verifier's key `ac`.
+const RESPONSE: &str = "eyJhbGciOiJFQ0RILUVTIiwiZW5jIjoiQTEyOEdDTSIsImtpZCI6ImFjIiwiZXBrIjp7Imt\
+    0eSI6IkVDIiwieCI6Im5ubVZwbTNWM2piaGNhZlFhUkJrU1ZOSGx3Wkh3dC05ck9wSnVmeVlJdWsiLCJ5I\
+    joicjRmakRxd0p5czlxVU9QLV9iM21SNVNaRy0tQ3dPMm1pYzVWU05UWU45ZyIsImNydiI6IlAtMjU2In1\
+    9..uAYcHRUSSn2X0WPX.yVzlGSYG4qbg0bq18JcUiDRw56yVnbKR8E7S7YlEtzT00RqE3Pw5oTpUG3hdLN\
+    4taHZ9gC1kwak8JOnJgQ.1wR024_3-qtAlx1oFIUpQQ";
+
+/// OpenID4VP §8.3: the Verifier's key, with `d`.
+fn verifier_jwk() -> Jwk {
+    serde_json::from_value(json!({
+        "kty": "EC", "kid": "ac", "use": "enc", "crv": "P-256", "alg": "ECDH-ES",
+        "x": "YO4epjifD-KWeq1sL2tNmm36BhXnkJ0He-WqMYrp9Fk",
+        "y": "Hekpm0zfK7C-YccH5iBjcIXgf6YdUvNUac_0At55Okk",
+        "d": "Et-3ce0omz8_TuZ96Df9lp0GAaaDoUnDe6X-CRO7Aww"
+    }))
+    .unwrap()
+}
+
+fn verifier() -> EcdhKey {
+    EcdhKey::from_jwk(&verifier_jwk()).unwrap()
+}
+
+/// RFC 7518 Appendix C: Bob's key, another P-256 key.
+fn other_jwk() -> Jwk {
+    serde_json::from_value(json!({
+        "kty": "EC", "crv": "P-256",
+        "x": "weNJy2HscCSM6AEDTDg04biOvhFhyyWvOHQfeF_PxMQ",
+        "y": "e8lnCO-AlStT-NJVX-crhB7QRYhiix03illJOVAOyck",
+        "d": "VEmDZpDXXK8p8N0Cndsxs924q6nS1RXFASRl6BfUqdw"
+    }))
+    .unwrap()
+}
+
+/// `token` with part `index` replaced by `part`.
+fn with_part(token: &str, index: usize, part: &str) -> String {
+    let mut parts: Vec<&str> = token.split('.').collect();
+    parts[index] = part;
+    parts.join(".")
+}
+
+/// The OpenID4VP response with its protected header changed by `change`.
+fn with_header(change: impl FnOnce(&mut serde_json::Map<String, Value>)) -> String {
+    let header = RESPONSE.split('.').next().unwrap();
+    let mut value: Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(header).unwrap()).unwrap();
+    change(value.as_object_mut().unwrap());
+    let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&value).unwrap());
+    with_part(RESPONSE, 0, &header)
+}
+
+fn decode_err(token: &str) -> JweError {
+    CompactJwe::decode(token).unwrap_err()
+}
+
+#[tokio::test]
+async fn openid4vp_response_decrypts_with_the_verifier_key() {
+    let jwe = CompactJwe::decode(RESPONSE).unwrap();
+    let header = jwe.header();
+    assert_eq!(header.alg, JweAlgorithm::EcdhEs);
+    assert_eq!(header.enc, JweEncryption::A128Gcm);
+    assert_eq!(jwe.kid(), Some("ac"));
+    let epk = header.epk.as_ref().unwrap();
+    assert_eq!(epk.crv(), Some("P-256"));
+    assert_eq!(epk.x(), Some("nnmVpm3V3jbhcafQaRBkSVNHlwZHwt-9rOpJufyYIuk"));
+    assert_eq!(jwe.as_str(), RESPONSE);
+    assert_eq!(jwe.to_string(), RESPONSE);
+
+    let payload = jwe.decrypt(&verifier()).await.unwrap();
+    let payload: Value = serde_json::from_slice(&payload).unwrap();
+    assert_eq!(
+        payload,
+        json!({"vp_token": {"example_credential_id": ["eyJhb...YMetA"]}})
+    );
+}
+
+/// HAIP §5: a Verifier decrypts both A128GCM and A256GCM; a Wallet encrypts with either.
+#[tokio::test]
+async fn round_trip_with_both_content_encryption_algorithms() {
+    let verifier = EcdhKey::generate().unwrap();
+    let public = verifier.public_jwk().with_kid("request-1");
+    assert_eq!(public.key_use(), Some("enc"));
+    assert_eq!(public.alg(), Some("ECDH-ES"));
+    assert!(!public.is_private());
+
+    for enc in [JweEncryption::A128Gcm, JweEncryption::A256Gcm] {
+        let payload = br#"{"vp_token":{"pid":["eyJ..."]},"state":"s"}"#;
+        let header = JweHeader::new(JweAlgorithm::EcdhEs, enc);
+        let jwe = CompactJwe::encrypt(header, payload, &public).unwrap();
+        // The `kid` of the Verifier's key, as OpenID4VP §8.3 requires, and a fresh `epk`.
+        assert_eq!(jwe.kid(), Some("request-1"));
+        assert_eq!(jwe.header().enc, enc);
+        assert!(jwe.as_str().split('.').nth(1).unwrap().is_empty());
+
+        let received = CompactJwe::decode(jwe.as_str()).unwrap();
+        assert_eq!(received.decrypt(&verifier).await.unwrap(), payload);
+    }
+
+    // Two encryptions of the same payload share neither the ephemeral key nor the IV.
+    let header = JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
+    let first = CompactJwe::encrypt(header.clone(), b"same", &public).unwrap();
+    let second = CompactJwe::encrypt(header, b"same", &public).unwrap();
+    assert_ne!(first.header().epk, second.header().epk);
+    assert_ne!(
+        first.as_str().split('.').nth(2),
+        second.as_str().split('.').nth(2)
+    );
+}
+
+#[tokio::test]
+async fn party_info_and_header_members_are_kept() {
+    let verifier = verifier();
+    let header = JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A256Gcm)
+        .with_typ("oauth-authz-resp+jwt")
+        .with_apu(b"wallet nonce")
+        .with_apv(b"verifier nonce");
+    let jwe = CompactJwe::encrypt(header, b"{}", &verifier.public_jwk()).unwrap();
+    let received = CompactJwe::decode(jwe.as_str()).unwrap();
+    assert_eq!(
+        received.header().typ.as_deref(),
+        Some("oauth-authz-resp+jwt")
+    );
+    assert_eq!(received.header().apu.as_deref(), Some("d2FsbGV0IG5vbmNl"));
+    // The public key carries no `kid`, so neither does the JWE.
+    assert_eq!(received.kid(), None);
+    assert_eq!(received.decrypt(&verifier).await.unwrap(), b"{}");
+}
+
+/// A Verifier keeps its key between the request and the response as a private JWK.
+#[tokio::test]
+async fn a_key_survives_as_a_private_jwk() {
+    let key = EcdhKey::generate().unwrap();
+    let stored = serde_json::to_string(&key.to_jwk()).unwrap();
+    assert!(stored.contains(r#""d":"#));
+    let debug = format!("{key:?}");
+    let d = serde_json::from_str::<Value>(&stored).unwrap()["d"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(!debug.contains(&d), "{debug}");
+
+    let header = JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
+    let jwe = CompactJwe::encrypt(header, b"payload", &key.public_jwk()).unwrap();
+    let restored = EcdhKey::from_jwk(&serde_json::from_str(&stored).unwrap()).unwrap();
+    assert_eq!(jwe.decrypt(&restored).await.unwrap(), b"payload");
+}
+
+#[tokio::test]
+async fn altered_parts_and_other_keys_fail_alike() {
+    let verifier = verifier();
+    let jwe = CompactJwe::decode(RESPONSE).unwrap();
+    let wrong_key = EcdhKey::from_jwk(&other_jwk()).unwrap();
+    assert!(matches!(
+        jwe.decrypt(&wrong_key).await,
+        Err(JweError::DecryptionFailed)
+    ));
+
+    let parts: Vec<&str> = RESPONSE.split('.').collect();
+    let flip = |part: &str| {
+        let mut bytes = URL_SAFE_NO_PAD.decode(part).unwrap();
+        bytes[0] ^= 1;
+        URL_SAFE_NO_PAD.encode(bytes)
+    };
+    for (index, altered) in [
+        (2, flip(parts[2])),
+        (3, flip(parts[3])),
+        (4, flip(parts[4])),
+    ] {
+        let token = with_part(RESPONSE, index, &altered);
+        let error = CompactJwe::decode(&token)
+            .unwrap()
+            .decrypt(&verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, JweError::DecryptionFailed), "part {index}");
+    }
+    // The protected header is authenticated as received: a member added to it, or the same
+    // header encoded otherwise, fails the tag.
+    let with_typ = with_header(|header| {
+        header.insert("typ".to_owned(), json!("JWT"));
+    });
+    let reordered = with_header(|header| {
+        let enc = header.shift_remove("enc").unwrap();
+        header.insert("enc".to_owned(), enc);
+    });
+    for token in [with_typ, reordered] {
+        let error = CompactJwe::decode(&token)
+            .unwrap()
+            .decrypt(&verifier)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, JweError::DecryptionFailed));
+    }
+}
+
+#[test]
+fn malformed_serializations_are_refused() {
+    assert!(matches!(
+        decode_err("a.b.c"),
+        JweError::InvalidFormat { parts: 3 }
+    ));
+    assert!(matches!(
+        decode_err(&format!("{RESPONSE}.x")),
+        JweError::InvalidFormat { parts: 6 }
+    ));
+    // Counted, not collected.
+    assert!(matches!(
+        decode_err(&".".repeat(100_000)),
+        JweError::InvalidFormat { parts: 100_001 }
+    ));
+    assert!(matches!(
+        decode_err(&with_part(RESPONSE, 0, "e30=")),
+        JweError::InvalidBase64Url { part: "header" }
+    ));
+    for (index, part) in [(2, "iv"), (3, "ciphertext"), (4, "tag")] {
+        assert!(
+            matches!(
+                decode_err(&with_part(RESPONSE, index, "!")),
+                JweError::InvalidBase64Url { part: found } if found == part
+            ),
+            "{part}"
+        );
+    }
+    // base64url without padding is strict: unused trailing bits must be zero.
+    let tag = RESPONSE.rsplit('.').next().unwrap();
+    let non_canonical = format!("{}R", &tag[..tag.len() - 1]);
+    assert!(matches!(
+        decode_err(&with_part(RESPONSE, 4, &non_canonical)),
+        JweError::InvalidBase64Url { part: "tag" }
+    ));
+    // ECDH-ES in the Direct Key Agreement mode has an empty JWE Encrypted Key.
+    assert!(matches!(
+        decode_err(&with_part(RESPONSE, 1, "AAAA")),
+        JweError::UnexpectedEncryptedKey
+    ));
+    // AES-GCM has a 96-bit IV and a 128-bit tag.
+    assert!(matches!(
+        decode_err(&with_part(RESPONSE, 2, "AAAAAAAAAAAAAAAAAAAA")),
+        JweError::InvalidLength {
+            part: "iv",
+            expected: 12,
+            found: 15
+        }
+    ));
+    assert!(matches!(
+        decode_err(&with_part(RESPONSE, 4, "AAAAAAAAAAAA")),
+        JweError::InvalidLength {
+            part: "tag",
+            expected: 16,
+            found: 9
+        }
+    ));
+}
+
+#[test]
+fn headers_this_crate_cannot_honour_are_refused() {
+    let unsupported_alg = with_header(|header| {
+        header.insert("alg".to_owned(), json!("RSA-OAEP"));
+    });
+    assert!(
+        matches!(decode_err(&unsupported_alg), JweError::UnsupportedAlgorithm(alg) if alg == "RSA-OAEP")
+    );
+    let key_wrap = with_header(|header| {
+        header.insert("alg".to_owned(), json!("ECDH-ES+A128KW"));
+    });
+    assert!(matches!(
+        decode_err(&key_wrap),
+        JweError::UnsupportedAlgorithm(_)
+    ));
+    let cbc = with_header(|header| {
+        header.insert("enc".to_owned(), json!("A128CBC-HS256"));
+    });
+    assert!(
+        matches!(decode_err(&cbc), JweError::UnsupportedEncryption(enc) if enc == "A128CBC-HS256")
+    );
+    let no_enc = with_header(|header| {
+        header.remove("enc");
+    });
+    assert!(matches!(
+        decode_err(&no_enc),
+        JweError::InvalidHeader { .. }
+    ));
+    let no_alg = with_header(|header| {
+        header.remove("alg");
+    });
+    assert!(matches!(
+        decode_err(&no_alg),
+        JweError::InvalidHeader { .. }
+    ));
+    let numeric_alg = with_header(|header| {
+        header.insert("alg".to_owned(), json!(1));
+    });
+    assert!(matches!(
+        decode_err(&numeric_alg),
+        JweError::UnsupportedAlgorithm(_)
+    ));
+    let crit = with_header(|header| {
+        header.insert("crit".to_owned(), json!(["exp"]));
+        header.insert("exp".to_owned(), json!(1));
+    });
+    assert!(matches!(decode_err(&crit), JweError::UnsupportedCritical(names) if names == ["exp"]));
+    // `crit` in any form: an empty list names no extension but is not allowed (RFC 7516
+    // §4.1.13), and `null` is not a list.
+    let empty_crit = with_header(|header| {
+        header.insert("crit".to_owned(), json!([]));
+    });
+    assert!(
+        matches!(decode_err(&empty_crit), JweError::UnsupportedCritical(names) if names.is_empty())
+    );
+    let null_crit = with_header(|header| {
+        header.insert("crit".to_owned(), Value::Null);
+    });
+    assert!(matches!(
+        decode_err(&null_crit),
+        JweError::InvalidHeader { .. }
+    ));
+    // A hostile value is repeated in the error only in part.
+    let long_alg = with_header(|header| {
+        header.insert("alg".to_owned(), json!("A".repeat(100_000)));
+    });
+    assert!(matches!(
+        decode_err(&long_alg),
+        JweError::UnsupportedAlgorithm(alg) if alg.chars().count() == 65 && alg.ends_with('…')
+    ));
+    let zip = with_header(|header| {
+        header.insert("zip".to_owned(), json!("DEF"));
+    });
+    assert!(matches!(decode_err(&zip), JweError::UnsupportedCompression(zip) if zip == "DEF"));
+    let not_an_object = with_part(RESPONSE, 0, &URL_SAFE_NO_PAD.encode("[]"));
+    assert!(matches!(
+        decode_err(&not_an_object),
+        JweError::InvalidHeader { .. }
+    ));
+    let bad_apu = with_header(|header| {
+        header.insert("apu".to_owned(), json!("not base64url!"));
+    });
+    assert!(matches!(
+        decode_err(&bad_apu),
+        JweError::InvalidHeader { .. }
+    ));
+    let equal_party_info = with_header(|header| {
+        header.insert("apu".to_owned(), json!("c2Vzc2lvbg"));
+        header.insert("apv".to_owned(), json!("c2Vzc2lvbg"));
+    });
+    assert!(matches!(
+        decode_err(&equal_party_info),
+        JweError::InvalidHeader { .. }
+    ));
+    let empty_party_info = with_header(|header| {
+        header.insert("apu".to_owned(), json!(""));
+        header.insert("apv".to_owned(), json!(""));
+    });
+    assert!(CompactJwe::decode(&empty_party_info).is_ok());
+    let distinct_party_info = with_header(|header| {
+        header.insert("apu".to_owned(), json!("c2Vzc2lvbg"));
+        header.insert("apv".to_owned(), json!("dmVyaWZpZXI"));
+    });
+    assert!(CompactJwe::decode(&distinct_party_info).is_ok());
+}
+
+/// RFC 7516 §4.1 and RFC 7518 §4.6.1: the string members are strings, `null` included, which
+/// would otherwise read as an absent member; a value of the wrong type is quoted cut short.
+#[test]
+fn header_members_have_their_types() {
+    // Strings only, `null` included, which would otherwise read as an absent member.
+    for name in ["apu", "apv", "kid", "typ", "cty"] {
+        for value in [Value::Null, json!(7), json!(["x"])] {
+            let wrong = with_header(|header| {
+                header.insert(name.to_owned(), value.clone());
+            });
+            assert!(
+                matches!(decode_err(&wrong), JweError::InvalidHeader { .. }),
+                "{name}: {value}"
+            );
+        }
+    }
+    // A long value the token puts where another type is due is quoted cut short.
+    let long = "A".repeat(100_000);
+    let epk_string = with_header(|header| {
+        header.insert("epk".to_owned(), json!(long));
+    });
+    let error = decode_err(&epk_string);
+    assert!(
+        matches!(&error, JweError::InvalidHeader { reason, source: None } if reason == "`epk` is not a JSON object"),
+        "{error}"
+    );
+}
+
+/// `jwk` is a public key (RFC 7516 §4.1.5): a private one would travel unencrypted.
+#[test]
+fn a_private_jwk_header_is_refused() {
+    let private = serde_json::to_value(other_jwk()).unwrap();
+    let in_token = with_header(|header| {
+        header.insert("jwk".to_owned(), private.clone());
+    });
+    assert!(matches!(
+        decode_err(&in_token),
+        JweError::InvalidHeader { .. }
+    ));
+    let not_an_object = with_header(|header| {
+        header.insert("jwk".to_owned(), json!("key"));
+    });
+    assert!(matches!(
+        decode_err(&not_an_object),
+        JweError::InvalidHeader { .. }
+    ));
+    let public = verifier_jwk().public();
+    let with_jwk = |jwk: Value| {
+        let mut header = JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
+        header.additional.insert("jwk".to_owned(), jwk);
+        CompactJwe::encrypt(header, b"{}", &public)
+    };
+    assert!(matches!(
+        with_jwk(private),
+        Err(JweError::InvalidHeader { .. })
+    ));
+    assert!(with_jwk(serde_json::to_value(other_jwk().public()).unwrap()).is_ok());
+}
+
+/// A value of another type than due is named by its type, not quoted whole.
+#[test]
+fn values_of_other_types_are_named_by_type() {
+    let long = json!(vec!["A".repeat(1000); 100]);
+    let alg = with_header(|header| {
+        header.insert("alg".to_owned(), long.clone());
+    });
+    assert!(matches!(decode_err(&alg), JweError::UnsupportedAlgorithm(alg) if alg == "an array"));
+    let enc = with_header(|header| {
+        header.insert("enc".to_owned(), json!({"a": long.clone()}));
+    });
+    assert!(matches!(decode_err(&enc), JweError::UnsupportedEncryption(enc) if enc == "an object"));
+    let zip = with_header(|header| {
+        header.insert("zip".to_owned(), json!(7));
+    });
+    assert!(matches!(decode_err(&zip), JweError::UnsupportedCompression(zip) if zip == "a number"));
+    let crit = with_header(|header| {
+        header.insert("crit".to_owned(), json!([long, null, true]));
+    });
+    assert!(matches!(
+        decode_err(&crit),
+        JweError::UnsupportedCritical(names) if names == ["an array", "null", "true"]
+    ));
+}
+
+/// A crit list is named in its first eight members.
+#[test]
+fn unsupported_critical_names_are_cut_to_eight() {
+    // Many names: the first eight are kept.
+    let many = with_header(|header| {
+        header.insert(
+            "crit".to_owned(),
+            json!((0..10).map(|i| format!("x{i}")).collect::<Vec<_>>()),
+        );
+    });
+    assert!(matches!(
+        decode_err(&many),
+        JweError::UnsupportedCritical(names) if names == (0..8).map(|i| format!("x{i}")).collect::<Vec<_>>()
+    ));
+}
+
+/// What other implementations produce is accepted: a recipient public key exported by the Web
+/// Crypto API (`"key_ops": []`), and empty `apu` and `apv`, which RFC 7518 §4.6.2 does not
+/// count as used.
+#[test]
+fn what_other_implementations_produce_is_accepted() {
+    let header = || JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
+    let public = verifier_jwk().public();
+    // A public key need not list agreement: WebCrypto exports an ECDH public key with
+    // `"key_ops": []`, its private key holding `deriveBits`. Read from JSON, as it arrives.
+    let mut exported = serde_json::to_value(&public).unwrap();
+    exported["key_ops"] = json!([]);
+    exported["ext"] = json!(true);
+    let exported: Jwk = serde_json::from_value(exported).unwrap();
+    assert_eq!(exported.alg(), Some("ECDH-ES"));
+    assert!(CompactJwe::encrypt(header(), b"{}", &exported).is_ok());
+    for ops in [&[][..], &["encrypt"][..]] {
+        assert!(
+            CompactJwe::encrypt(
+                header(),
+                b"{}",
+                &public.clone().with_key_ops(ops.iter().copied())
+            )
+            .is_ok(),
+            "{ops:?}"
+        );
+    }
+    assert!(CompactJwe::encrypt(header().with_apu(b"").with_apv(b""), b"{}", &public).is_ok());
+    // A private key must still allow key agreement when it lists `key_ops`.
+    assert!(EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["deriveBits"])).is_ok());
+    // "Duplicate key operation values MUST NOT be present in the array" (RFC 7517 §4.3).
+    assert!(matches!(
+        EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["deriveBits", "deriveBits"])),
+        Err(JweError::InvalidKey { .. })
+    ));
+    assert!(matches!(
+        CompactJwe::encrypt(
+            header(),
+            b"{}",
+            &public.clone().with_key_ops(["encrypt", "encrypt"])
+        ),
+        Err(JweError::InvalidKey { .. })
+    ));
+    assert!(matches!(
+        EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["encrypt"])),
+        Err(JweError::InvalidKey { .. })
+    ));
+}
+
+/// RFC 7518 §4.6.1.1: `epk` is present, public and, for a P-256 recipient, a P-256 point.
+#[test]
+fn the_ephemeral_key_is_checked() {
+    let missing = with_header(|header| {
+        header.remove("epk");
+    });
+    assert!(matches!(
+        decode_err(&missing),
+        JweError::InvalidHeader { .. }
+    ));
+
+    let private = with_header(|header| {
+        header["epk"]["d"] = json!("Et-3ce0omz8_TuZ96Df9lp0GAaaDoUnDe6X-CRO7Aww");
+    });
+    assert!(matches!(decode_err(&private), JweError::InvalidKey { .. }));
+    // A private parameter in any form, `null` included, which would otherwise read as absent.
+    for (name, value) in [("d", Value::Null), ("k", json!("AQ")), ("oth", json!([]))] {
+        let private = with_header(|header| {
+            header["epk"][name] = value;
+        });
+        assert!(
+            matches!(decode_err(&private), JweError::InvalidKey { .. }),
+            "{name}"
+        );
+    }
+
+    // A point off the curve, the start of an invalid-curve attack.
+    let off_curve = with_header(|header| {
+        header["epk"]["y"] = json!("Hekpm0zfK7C-YccH5iBjcIXgf6YdUvNUac_0At55Okg");
+    });
+    assert!(matches!(
+        decode_err(&off_curve),
+        JweError::InvalidKey { .. }
+    ));
+
+    // Another `kty`, named cut short.
+    let long_kty = with_header(|header| {
+        header["epk"]["kty"] = json!("K".repeat(100_000));
+    });
+    let error = decode_err(&long_kty);
+    assert!(matches!(error, JweError::InvalidKey { .. }));
+    assert!(error.to_string().len() < 300, "{error}");
+
+    // OpenID4VP §8.3's P-384 key.
+    let other_curve = with_header(|header| {
+        header["epk"] = json!({
+            "kty": "EC", "crv": "P-384",
+            "x": "iHytgLNtXjEyYMAIGwfgjINZRmLfObYbmjPhkaPD8OiTkJtRHjegTNdH31Mxg4nV",
+            "y": "MizXWSqNB7sSt_SNjg3spvaJnmjB-LpxsPpLUaea33rvINL3Mq-gEaANErRQpbLx"
+        });
+    });
+    assert!(matches!(
+        decode_err(&other_curve),
+        JweError::InvalidKey { .. }
+    ));
+}
+
+/// OpenID4VP §8.3: the Wallet encrypts with the `alg` of the Verifier's key, to a key meant
+/// for encryption, under its `kid`.
+#[test]
+fn encryption_refuses_keys_and_headers_that_do_not_fit() {
+    let header = || JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
+    let public = verifier_jwk().public();
+    let refused = |recipient: &Jwk| {
+        matches!(
+            CompactJwe::encrypt(header(), b"{}", recipient),
+            Err(JweError::InvalidKey { .. })
+        )
+    };
+    assert!(refused(&public.clone().with_key_use("sig")));
+    assert!(refused(&public.clone().with_alg("ECDH-ES+A128KW")));
+    // "The alg parameter MUST be present in the JWKs" (OpenID4VP §8.3).
+    let mut without_alg = serde_json::to_value(&public).unwrap();
+    without_alg.as_object_mut().unwrap().remove("alg");
+    assert!(refused(&serde_json::from_value(without_alg).unwrap()));
+    // A Verifier that published its private key gets no response encrypted to it.
+    assert!(refused(&verifier_jwk()));
+    assert!(refused(&public.clone().with_key_ops(["sign", "verify"])));
+    // `key_ops` that make it a signature key as well contradict `use: enc` (RFC 7517 §4.3).
+    assert!(refused(
+        &public.clone().with_key_ops(["deriveKey", "verify"])
+    ));
+    assert!(
+        CompactJwe::encrypt(
+            header(),
+            b"{}",
+            &public.clone().with_key_ops(["deriveBits"])
+        )
+        .is_ok()
+    );
+    let x25519: Jwk = serde_json::from_value(json!({
+        "kty": "OKP", "kid": "jc", "use": "enc", "crv": "X25519", "alg": "ECDH-ES",
+        "x": "WPX7wnwq10hFNK9aDSyG1QlLswE_CJY14LdhcFUIVVc"
+    }))
+    .unwrap();
+    assert!(refused(&x25519));
+
+    let invalid_header = |header: JweHeader| {
+        matches!(
+            CompactJwe::encrypt(header, b"{}", &public),
+            Err(JweError::InvalidHeader { .. })
+        )
+    };
+    assert!(invalid_header(header().with_kid("another key")));
+    // A `kid` names the recipient's key: with a recipient key that has none, it would name
+    // another.
+    let mut without_kid = serde_json::to_value(&public).unwrap();
+    without_kid.as_object_mut().unwrap().remove("kid");
+    let without_kid: Jwk = serde_json::from_value(without_kid).unwrap();
+    assert!(matches!(
+        CompactJwe::encrypt(header().with_kid("ac"), b"{}", &without_kid),
+        Err(JweError::InvalidHeader { .. })
+    ));
+    assert_eq!(
+        CompactJwe::encrypt(header(), b"{}", &without_kid)
+            .unwrap()
+            .kid(),
+        None
+    );
+    let mut with_epk = header();
+    with_epk.epk = Some(public.clone());
+    assert!(invalid_header(with_epk));
+    let mut with_zip = header();
+    with_zip.additional.insert("zip".to_owned(), json!("DEF"));
+    assert!(invalid_header(with_zip));
+    // What decoding refuses, encryption does not produce: `crit`, even empty, and a field
+    // shadowed by an additional parameter of its name.
+    let mut with_crit = header();
+    with_crit.crit = Some(Vec::new());
+    assert!(invalid_header(with_crit));
+    for name in ["alg", "enc", "kid", "epk", "apu", "crit"] {
+        let mut shadowed = header();
+        shadowed
+            .additional
+            .insert(name.to_owned(), json!("A256GCM"));
+        assert!(invalid_header(shadowed), "{name}");
+    }
+    // "The "apu" and "apv" values MUST be distinct, when used" (RFC 7518 §4.6.2).
+    assert!(invalid_header(
+        header().with_apu(b"session").with_apv(b"session")
+    ));
+    // Nested past what the JSON parser of decoding takes.
+    let mut deep = header();
+    let nested = (0..200).fold(json!(1), |value, _| json!([value]));
+    deep.additional.insert("x-deep".to_owned(), nested);
+    assert!(invalid_header(deep));
+    // Other additional parameters are kept.
+    let mut extended = header();
+    extended
+        .additional
+        .insert("x-request".to_owned(), json!("r1"));
+    let jwe = CompactJwe::encrypt(extended, b"{}", &public).unwrap();
+    assert_eq!(
+        CompactJwe::decode(jwe.as_str())
+            .unwrap()
+            .header()
+            .additional["x-request"],
+        "r1"
+    );
+
+    // The same `kid` is no conflict.
+    let jwe = CompactJwe::encrypt(header().with_kid("ac"), b"{}", &public).unwrap();
+    assert_eq!(jwe.kid(), Some("ac"));
+}
+
+#[test]
+fn private_keys_must_be_whole_and_consistent() {
+    let invalid = |jwk: &Jwk| matches!(EcdhKey::from_jwk(jwk), Err(JweError::InvalidKey { .. }));
+    assert!(invalid(&verifier_jwk().public()));
+    let mut mixed = serde_json::to_value(verifier_jwk()).unwrap();
+    mixed["d"] = serde_json::to_value(other_jwk()).unwrap()["d"].clone();
+    assert!(invalid(&serde_json::from_value(mixed).unwrap()));
+    let mut short = serde_json::to_value(verifier_jwk()).unwrap();
+    short["d"] = json!("AQ");
+    assert!(invalid(&serde_json::from_value(short).unwrap()));
+    let x25519: Jwk = serde_json::from_value(json!({
+        "kty": "OKP", "crv": "X25519", "x": "WPX7wnwq10hFNK9aDSyG1QlLswE_CJY14LdhcFUIVVc",
+        "d": "Et-3ce0omz8_TuZ96Df9lp0GAaaDoUnDe6X-CRO7Aww"
+    }))
+    .unwrap();
+    assert!(invalid(&x25519));
+    // A key published for signing is not reused for key agreement.
+    assert!(invalid(&verifier_jwk().with_key_use("sig")));
+    assert!(invalid(&verifier_jwk().with_alg("ES256")));
+    assert!(invalid(&verifier_jwk().with_key_ops(["sign"])));
+    assert!(invalid(
+        &verifier_jwk().with_key_ops(["deriveBits", "sign"])
+    ));
+    assert!(EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["deriveKey"])).is_ok());
+}
+
+/// A key kept elsewhere, an HSM say, is a `JweDecrypter` of its own; its failure reaches the
+/// caller, and the crate does the rest of the decryption.
+#[tokio::test]
+async fn decrypters_behind_pointers_and_of_other_backends() {
+    struct Hsm(EcdhKey);
+
+    #[async_trait::async_trait]
+    impl JweDecrypter for Hsm {
+        async fn shared_secret(&self, epk: &Jwk) -> Result<Zeroizing<Vec<u8>>, JweError> {
+            self.0.shared_secret(epk).await
+        }
+    }
+
+    /// Returns the whole shared point, where the `x` coordinate is due.
+    struct WholePoint;
+
+    #[async_trait::async_trait]
+    impl JweDecrypter for WholePoint {
+        async fn shared_secret(&self, _: &Jwk) -> Result<Zeroizing<Vec<u8>>, JweError> {
+            Ok(Zeroizing::new(vec![4; 65]))
+        }
+    }
+
+    struct Offline;
+
+    #[async_trait::async_trait]
+    impl JweDecrypter for Offline {
+        async fn shared_secret(&self, _: &Jwk) -> Result<Zeroizing<Vec<u8>>, JweError> {
+            Err(JweError::KeyAgreement("the HSM is offline".into()))
+        }
+    }
+
+    let jwe = CompactJwe::decode(RESPONSE).unwrap();
+    let boxed: Box<dyn JweDecrypter> = Box::new(Hsm(verifier()));
+    assert!(jwe.decrypt(&boxed).await.is_ok());
+    assert!(jwe.decrypt(&Arc::new(verifier())).await.is_ok());
+    assert!(jwe.decrypt(&&verifier()).await.is_ok());
+    // A backend that returns the whole shared point instead of its `x` coordinate is caught as
+    // a key agreement failure, not mistaken for an altered JWE.
+    assert!(matches!(
+        jwe.decrypt(&WholePoint).await,
+        Err(JweError::KeyAgreement(_))
+    ));
+
+    let error = jwe.decrypt(&Offline).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "key agreement failed: the HSM is offline"
+    );
+}
+
+#[test]
+fn names_and_errors() {
+    assert_eq!(
+        "A128GCM".parse::<JweEncryption>().unwrap(),
+        JweEncryption::A128Gcm
+    );
+    assert_eq!(JweEncryption::A256Gcm.to_string(), "A256GCM");
+    assert_eq!(JweAlgorithm::EcdhEs.to_string(), "ECDH-ES");
+    assert_eq!(JweEncryption::A128Gcm.key_len(), 16);
+    assert_eq!(JweEncryption::A256Gcm.key_len(), 32);
+    assert!(matches!(
+        "dir".parse::<JweAlgorithm>(),
+        Err(JweError::UnsupportedAlgorithm(alg)) if alg == "dir"
+    ));
+    assert_eq!(
+        JweError::DecryptionFailed.to_string(),
+        "JWE decryption failed"
+    );
+    assert_eq!(
+        decode_err(&with_part(RESPONSE, 1, "AAAA")).to_string(),
+        "JWE Encrypted Key must be empty for `ECDH-ES`"
+    );
+    let debug = format!("{:?}", CompactJwe::decode(RESPONSE).unwrap());
+    assert!(
+        debug.contains("A128Gcm") && !debug.contains("yVzlGSYG"),
+        "{debug}"
+    );
+}

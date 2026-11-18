@@ -18,8 +18,9 @@ implemented; [`FEATURES.md`](FEATURES.md) tracks the status of each feature and 
    `DidProducer` and declares `MethodCapabilities`. A key backend implements `KeyStore` and declares
    `KeyStoreCapabilities`. Adding either is a new module behind a feature plus registration; no
    `match` over a closed enum anywhere in the library.
-3. **JWT/JWS and SD-JWT only.** No JSON-LD processing, no Data Integrity proofs. `@context` is
-   carried as data.
+3. **JWT/JWS and SD-JWT, and JWE for encrypted responses.** No JSON-LD processing, no Data
+   Integrity proofs. `@context` is carried as data. JWE is what HAIP requires of an encrypted
+   response and no more: ECDH-ES on P-256 with AES-GCM, compact serialization (ADR 0009).
 4. **The key store is shaped by remote signers.** Opaque key ids, one algorithm per key, optional
    key generation, declared algorithm support, JWS-ready signatures. A KMS or HSM is the design
    target; in-memory and file-based software keys are the development backends. The crate ships
@@ -50,7 +51,7 @@ identity-kit/
 ├── identity-kit/              # the published crate; lib name `identity_kit`
 │   └── src/
 │       ├── did/               # Did, DidUrl, DidMethod, DidDocument, VerificationMethod, Service, resolution metadata
-│       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode, JwtClaims
+│       ├── jose/              # Jwk, JwsAlgorithm, JwsVerifier, compact JWS encode/decode, JwtClaims, compact JWE (`jwe`)
 │       ├── keys/              # KeyStore, KeySigner, KeyId, KeySpec; backends in_memory, software, pkcs11
 │       ├── identity/          # Identity, IdentityKind, Identifier, KeyStoreIdentity
 │       ├── resolver/          # DidResolver, DidProducer, MethodCapabilities, Resolver, DocumentCache, dereferencing, KeyReference, KeyResolver
@@ -86,6 +87,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `linked-vp`          | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
 | `jwks`               | off     | implies `did-web` (for `HttpClient`); `JwksResolver` over JWT VC issuer metadata |
 | `x509`               | off     | `rustls-webpki` (with `ring`), `rustls-pki-types`, `x509-cert`; `X509Resolver` for `x5c` certificate chains and `X509Certificate` |
+| `jwe`                | off     | `aes-gcm`, `getrandom`, `p256`'s `ecdh`; `CompactJwe` with ECDH-ES on P-256 and AES-GCM (ADR 0009) |
 | `utoipa`             | off     | `utoipa`; OpenAPI schemas for `DidDocument`, `VerificationMethod`, `Service`, `Jwk`, `JwsAlgorithm`, the VCDM 1.1 and 2.0 credentials and presentations (`Credential`, `Presentation`, `CredentialV2`, `PresentationV2`, `EnvelopedVc`, `EnvelopedVp`), `DomainLinkageConfiguration`, `ClaimPath`, `Jwt`, `SdJwt`, `TypeMetadata` and `StatusType` |
 | `test-vectors`       | off     | nothing; `keys::testsuite` and `vectors`, the specification vectors the tests run against |
 
@@ -182,6 +184,23 @@ pub enum OneOrMany<T> { One(T), Many(Vec<T>) }  // `aud`; DID Core `controller` 
 
 `jsonwebtoken` has no ES256K; sign and verify it with `k256` directly. ECDSA signatures are always
 the JWS raw `r || s` form at the trait boundary.
+
+With `jwe` (ADR 0009), the compact JWE of an encrypted response (OpenID4VP §8.3, HAIP §5):
+
+```rust
+pub enum JweAlgorithm { EcdhEs }                // Direct Key Agreement, Concat KDF over SHA-256
+pub enum JweEncryption { A128Gcm, A256Gcm }
+pub struct JweHeader { alg, enc, kid, typ, cty, epk: Option<Jwk>, apu, apv, crit, additional }
+pub struct CompactJwe { .. }                    // decode(token); encrypt(header, plaintext, recipient: &Jwk); async decrypt(&impl JweDecrypter)
+#[async_trait] pub trait JweDecrypter: Send + Sync { async fn shared_secret(&self, epk: &Jwk) -> Result<Zeroizing<Vec<u8>>, JweError>; }
+pub struct EcdhKey { .. }                       // P-256 in memory: generate, public_jwk (use enc, alg ECDH-ES), to_jwk/from_jwk
+```
+
+Decoding refuses an unsupported `alg` or `enc`, `crit`, `zip`, a non-empty JWE Encrypted Key, an
+`epk` that is not a public P-256 point, and IVs and tags of other than the AES-GCM lengths; a tag
+that does not verify is one error. Encryption takes the `kid` of the recipient's key, requires its
+`alg` (OpenID4VP §8.3), and refuses a key whose `alg`, `use` or `key_ops` do not fit or that
+carries private parameters.
 
 ## `keys` module
 
@@ -438,7 +457,7 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   or on a test file for the lints its specification vectors trip, never a bare `allow`.
   `clippy.toml` lists the names `doc_markdown` takes for code but are not (`EdDSA`, `SIOPv2`, …).
 - Fuzzing: `cargo-fuzz` targets in `fuzz/` over every parser (DID syntax and documents, the DID
-  methods, JOSE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata, linked presentations),
+  methods, JOSE, JWE, VC JWTs, SD-JWT and its builder, SD-JWT VC metadata, linked presentations),
   seeded from the specification vectors (`fuzz/seeds/`, one named file per example; the
   generated corpus is cached in CI, not committed), asserting no panics and serialization round
   trips; a minute per target on pull requests, ten minutes nightly. `fuzz/README.md` is the
@@ -454,4 +473,4 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
 - did:web: https://w3c-ccg.github.io/did-method-web/
 - DIF Well Known DID Configuration: https://identity.foundation/.well-known/resources/did-configuration/
 - DIF Linked Verifiable Presentation v1.0.0: https://identity.foundation/linked-vp/spec/v1.0.0/
-- RFC 3986 (URI, percent-encoding), RFC 7515 (JWS), RFC 7517 (JWK), RFC 7638 (JWK thumbprint)
+- RFC 3986 (URI, percent-encoding), RFC 7515 (JWS), RFC 7516 (JWE), RFC 7517 (JWK), RFC 7638 (JWK thumbprint)

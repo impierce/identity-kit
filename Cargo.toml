@@ -42,6 +42,10 @@ jwks = ["did-web"]
 # `resolver::X509Resolver`: the key of an `x5c` certificate chain validated against trust
 # anchors, via `rustls-webpki` with `ring`, and `X509Certificate`, via `x509-cert`.
 x509 = ["dep:rustls-pki-types", "dep:rustls-webpki", "dep:x509-cert"]
+# JWE in the compact serialization with ECDH-ES on P-256 and AES-GCM (`jose::CompactJwe`), as
+# the OpenID4VC High Assurance Interoperability Profile requires for encrypted responses: `aes-gcm`
+# for the content, `p256` for the key agreement, `getrandom` for keys and IVs.
+jwe = ["dep:aes-gcm", "dep:getrandom", "p256/ecdh"]
 # The hardened default `HttpClient` for `did:web`, via `reqwest` with `rustls` and `ring`.
 reqwest = ["did-web", "dep:reqwest", "dep:rustls", "dep:tokio"]
 # Development and tests only: `ReqwestClient::builder` with opt-ins that let the client reach
@@ -63,6 +67,7 @@ linked-vp = ["vc", "did-web"]
 utoipa = ["dep:utoipa"]
 
 [dependencies]
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"], optional = true }
 async-trait = "0.1"
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 bs58 = "0.5"

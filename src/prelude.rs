@@ -25,6 +25,9 @@ pub use crate::jose::{
     CertifiedSigner, CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, JwsVerifier,
     JwtClaims, KeyType, Signer, encode_compact,
 };
+#[cfg(feature = "jwe")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jwe")))]
+pub use crate::jose::{CompactJwe, EcdhKey, JweAlgorithm, JweDecrypter, JweEncryption, JweHeader};
 #[cfg(feature = "in-memory")]
 #[cfg_attr(docsrs, doc(cfg(feature = "in-memory")))]
 pub use crate::keys::InMemoryKeyStore;

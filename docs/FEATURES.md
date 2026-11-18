@@ -26,7 +26,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `ResolutionResult`, document and resolution metadata, error vocabulary                                       |   ✅   |               | [DID Resolution][did-resolution]                                                                  | [#6](https://github.com/impierce/identity-kit/issues/6) |
 | Deterministic JSON representation (`@context` first, empties omitted, insertion order kept)                  |   ✅   |               | [DID Core §6.2](https://www.w3.org/TR/did-core/#json)                                             | [#6](https://github.com/impierce/identity-kit/issues/6) |
 
-### `jose`: JWK and JWS
+### `jose`: JWK, JWS and JWE
 
 | Feature                                                                | Status | Cargo feature | Specification                                                         | Issue                                                   |
 | ---------------------------------------------------------------------- | :----: | ------------- | --------------------------------------------------------------------- | ------------------------------------------------------- |
@@ -40,6 +40,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | ES256K verification via `k256`                                         |   ✅   | `secp256k1`   | [RFC 8812][rfc8812]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | RSA algorithms (RS256, PS256), verification only ([ADR 0001](adr/0001-rsa-verification-only.md)) |   ✅   | `rsa`         | [RFC 7518 §3.3, §3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.3) | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | `JwtClaims` and `OneOrMany` moved down from `vc` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7519][rfc7519]                                                   | [#54](https://github.com/impierce/identity-kit/issues/54) |
+| `CompactJwe`: decode, encrypt and decrypt in the compact serialization with `ECDH-ES` on P-256 (Concat KDF) and `A128GCM`/`A256GCM`, for encrypted responses ([ADR 0009](adr/0009-jwe-for-encrypted-responses.md)) |   ✅   | `jwe`         | [RFC 7516][rfc7516], [RFC 7518 §4.6, §5.3][rfc7518], [OID4VP §8.3][oid4vp], [HAIP §5][haip] | [#183](https://github.com/impierce/identity-kit/issues/183) |
+| `JweDecrypter` trait for the recipient's key, `EcdhKey` for a per-request P-256 key kept as a private JWK |   ✅   | `jwe`         | [RFC 7518 §4.6][rfc7518], [HAIP §5][haip]                             | [#183](https://github.com/impierce/identity-kit/issues/183) |
 
 ### `keys`: key stores
 
@@ -190,6 +192,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 3986: URI generic syntax][rfc3986]      | IETF        | `did`                                     |
 | [RFC 5280: X.509 certificates][rfc5280]      | IETF        | `resolver` (`X509Resolver`, `x509`)       |
 | [RFC 7515: JWS][rfc7515]                     | IETF        | `jose`, `keys`                            |
+| [RFC 7516: JWE][rfc7516]                     | IETF        | `jose` (`jwe`)                            |
 | [RFC 7517: JWK][rfc7517]                     | IETF        | `jose`, `keys::software`                  |
 | [RFC 7518: JWA][rfc7518]                     | IETF        | `jose`                                    |
 | [RFC 7638: JWK thumbprint][rfc7638]          | IETF        | `jose`                                    |
@@ -199,9 +202,10 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 8785: JSON Canonicalization Scheme][rfc8785] | IETF   | `methods::jwk`                            |
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
+| [OpenID4VP 1.0][oid4vp]                      | OpenID Foundation | `vc` (`ClaimPath`), `jose` (`jwe`)  |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
 | [Token Status List][status-list] (draft 21)  | IETF draft  | `status_list`                             |
-| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`), `sd_jwt_vc` (`KeyBindingPolicy`) |
+| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`; `CompactJwe`, `jwe`), `sd_jwt_vc` (`KeyBindingPolicy`) |
 | [PKCS #11 v3.1][pkcs11]                      | OASIS       | `keys::pkcs11`                            |
 | [multicodec][multicodec], [multibase][multibase] | Multiformats | `methods::key`                        |
 
@@ -220,6 +224,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [rfc3986]: https://www.rfc-editor.org/rfc/rfc3986
 [rfc5280]: https://www.rfc-editor.org/rfc/rfc5280
 [rfc7515]: https://www.rfc-editor.org/rfc/rfc7515
+[rfc7516]: https://www.rfc-editor.org/rfc/rfc7516
 [rfc7517]: https://www.rfc-editor.org/rfc/rfc7517
 [rfc7518]: https://www.rfc-editor.org/rfc/rfc7518
 [rfc7638]: https://www.rfc-editor.org/rfc/rfc7638
