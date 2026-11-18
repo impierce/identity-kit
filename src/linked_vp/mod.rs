@@ -100,7 +100,7 @@
 use std::collections::BTreeSet;
 use std::error::Error;
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 use url::Url;
 
 use crate::cause::cause;
@@ -276,15 +276,15 @@ fn invalid_url(service: &Service, uri: &Uri, error: url::ParseError) -> LinkedPr
 ///
 /// ```
 /// # #![allow(deprecated)]
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::did::{Did, Uri};
 /// use identity_kit::linked_vp::LinkedPresentationBuilder;
 ///
 /// let holder = Did::parse("did:example:123")?;
 /// let claims = LinkedPresentationBuilder::new(holder)
 ///     .with_id(Uri::parse("https://bar.example.com/verifiable-presentation.jwt")?)
-///     .with_issued_at(Utc.with_ymd_and_hms(2024, 2, 8, 17, 38, 46).unwrap())
-///     .with_expiration(Utc.with_ymd_and_hms(2029, 2, 8, 17, 38, 46).unwrap())
+///     .with_issued_at("2024-02-08T17:38:46Z".parse::<Timestamp>()?)
+///     .with_expiration("2029-02-08T17:38:46Z".parse::<Timestamp>()?)
 ///     .jwt_claims()?;
 /// assert_eq!(claims.iss.as_deref(), Some("did:example:123"));
 /// assert_eq!(claims.sub, claims.iss);
@@ -306,9 +306,9 @@ pub struct LinkedPresentationBuilder {
     /// The credential JWTs.
     pub credentials: Vec<Jwt>,
     /// `iat` and `nbf`.
-    pub issued_at: DateTime<Utc>,
+    pub issued_at: Timestamp,
     /// `exp`, if the presentation expires.
-    pub expiration: Option<DateTime<Utc>>,
+    pub expiration: Option<Timestamp>,
 }
 
 #[expect(deprecated, reason = "the VCDM 1.1 builder's own implementation")]
@@ -319,7 +319,7 @@ impl LinkedPresentationBuilder {
             holder,
             id: None,
             credentials: Vec::new(),
-            issued_at: Utc::now(),
+            issued_at: Timestamp::now(),
             expiration: None,
         }
     }
@@ -340,7 +340,7 @@ impl LinkedPresentationBuilder {
 
     /// This presentation issued at `issued_at`.
     #[must_use]
-    pub fn with_issued_at(mut self, issued_at: DateTime<Utc>) -> Self {
+    pub fn with_issued_at(mut self, issued_at: Timestamp) -> Self {
         self.issued_at = issued_at;
         self
     }
@@ -348,7 +348,7 @@ impl LinkedPresentationBuilder {
     /// This presentation expiring at `expiration`, which the specification recommends to limit
     /// how long a published presentation stays valid.
     #[must_use]
-    pub fn with_expiration(mut self, expiration: DateTime<Utc>) -> Self {
+    pub fn with_expiration(mut self, expiration: Timestamp) -> Self {
         self.expiration = Some(expiration);
         self
     }
@@ -425,15 +425,15 @@ impl LinkedPresentationBuilder {
 /// # Examples
 ///
 /// ```
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::did::{Did, Uri};
 /// use identity_kit::linked_vp::LinkedPresentationV2Builder;
 ///
 /// let holder = Did::parse("did:example:123")?;
 /// let claims = LinkedPresentationV2Builder::new(holder)
 ///     .with_id(Uri::parse("https://bar.example.com/verifiable-presentation.jwt")?)
-///     .with_issued_at(Utc.with_ymd_and_hms(2024, 2, 8, 17, 38, 46).unwrap())
-///     .with_expiration(Utc.with_ymd_and_hms(2029, 2, 8, 17, 38, 46).unwrap())
+///     .with_issued_at("2024-02-08T17:38:46Z".parse::<Timestamp>()?)
+///     .with_expiration("2029-02-08T17:38:46Z".parse::<Timestamp>()?)
 ///     .jwt_claims();
 /// assert_eq!(claims.iss.as_deref(), Some("did:example:123"));
 /// assert_eq!(claims.additional["holder"], "did:example:123");
@@ -453,9 +453,9 @@ pub struct LinkedPresentationV2Builder {
     /// The enveloped credentials.
     pub credentials: Vec<EnvelopedVc>,
     /// `iat` and `nbf`.
-    pub issued_at: DateTime<Utc>,
+    pub issued_at: Timestamp,
     /// `exp`, if the presentation expires.
-    pub expiration: Option<DateTime<Utc>>,
+    pub expiration: Option<Timestamp>,
 }
 
 impl LinkedPresentationV2Builder {
@@ -465,7 +465,7 @@ impl LinkedPresentationV2Builder {
             holder,
             id: None,
             credentials: Vec::new(),
-            issued_at: Utc::now(),
+            issued_at: Timestamp::now(),
             expiration: None,
         }
     }
@@ -486,7 +486,7 @@ impl LinkedPresentationV2Builder {
 
     /// This presentation issued at `issued_at`.
     #[must_use]
-    pub fn with_issued_at(mut self, issued_at: DateTime<Utc>) -> Self {
+    pub fn with_issued_at(mut self, issued_at: Timestamp) -> Self {
         self.issued_at = issued_at;
         self
     }
@@ -494,7 +494,7 @@ impl LinkedPresentationV2Builder {
     /// This presentation expiring at `expiration`, which the specification recommends to limit
     /// how long a published presentation stays valid.
     #[must_use]
-    pub fn with_expiration(mut self, expiration: DateTime<Utc>) -> Self {
+    pub fn with_expiration(mut self, expiration: Timestamp) -> Self {
         self.expiration = Some(expiration);
         self
     }

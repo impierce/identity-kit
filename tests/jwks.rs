@@ -375,13 +375,13 @@ async fn a_failed_fetch_keeps_its_cause() {
 #[cfg(feature = "sd-jwt")]
 #[tokio::test]
 async fn sd_jwt_vc_issued_by_an_https_issuer() {
-    use chrono::{TimeZone as _, Utc};
     use identity_kit::jose::DefaultVerifier;
     use identity_kit::resolver::{CompositeKeyResolver, Resolver};
     use identity_kit::sd_jwt_vc::{
         KeyBindingOptions, SdJwtCredentialValidator, SdJwtValidationError, SdJwtValidationOptions,
         SdJwtVc,
     };
+    use identity_kit::vc::Timestamp;
     use identity_kit::vc::validation::{TimeOptions, ValidationError};
 
     let presentation = SdJwtVc::parse(
@@ -400,7 +400,7 @@ async fn sd_jwt_vc_issued_by_an_https_issuer() {
         }),
     );
     // The key binding JWT was issued at 1792011060.
-    let now = TimeOptions::at(Utc.timestamp_opt(1792011060, 0).unwrap());
+    let now = TimeOptions::at(Timestamp::from_unix_seconds(1792011060).unwrap());
     let options = SdJwtValidationOptions::new()
         .with_time(now)
         .with_key_binding(

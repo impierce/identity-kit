@@ -20,7 +20,6 @@ use std::collections::BTreeSet;
 use std::error::Error as _;
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
 use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
@@ -32,6 +31,7 @@ use identity_kit::sd_jwt_vc::{
     SdJwtVcBuilder, SdJwtVcError,
 };
 use identity_kit::status_list::{Status, StatusListRef};
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialStatus, CredentialValidationOptions, FailFast, JwtPresentationValidator,
     KeyReference, KeyReferenceError, KeyRole, PresentationValidationError,
@@ -229,8 +229,8 @@ fn credential(issuer: &Did, subject: &Did) -> CredentialV2 {
     .with_context("https://www.w3.org/ns/credentials/examples/v2")
     .with_id(Uri::parse("http://university.example/credentials/3732").unwrap())
     .with_type("ExampleDegreeCredential")
-    .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap())
-    .with_valid_until(Utc.with_ymd_and_hms(2030, 1, 1, 19, 23, 24).unwrap())
+    .with_valid_from("2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap())
+    .with_valid_until("2030-01-01T19:23:24Z".parse::<Timestamp>().unwrap())
 }
 
 /// A builder over the credential, bound to the holder's key: `degree`, `degree.name` and
@@ -240,8 +240,8 @@ fn builder(credential: CredentialV2) -> SdJwtCredentialV2Builder {
     let holder_signer = holder().signer;
     SdJwtCredentialV2Builder::new(credential)
         .with_kid(issuer.kid.as_str())
-        .with_issued_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_expires_at(Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap())
+        .with_issued_at("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_expires_at("2030-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
         .with_holder_key(&holder_signer.public_jwk())
         .conceal(["credentialSubject", "degree"])
         .conceal(["credentialSubject", "degree", "name"])
@@ -681,20 +681,20 @@ async fn issuer_binding_and_time_errors() {
     ));
 
     // The validity period and the time claims hold at the validation time.
-    let at = |time: DateTime<Utc>| options().with_time(TimeOptions::at(time));
+    let at = |time: Timestamp| options().with_time(TimeOptions::at(time));
     assert!(matches!(
         validator()
-            .validate_v2(issued.sd_jwt(), &at(Utc.with_ymd_and_hms(2031, 1, 1, 0, 0, 0).unwrap()))
+            .validate_v2(issued.sd_jwt(), &at("2031-01-01T00:00:00Z".parse::<Timestamp>().unwrap()))
             .await
             .unwrap_err(),
         SdJwtValidationError::Validation(ValidationError::Expired { expired_at, .. })
-            if expired_at == Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap()
+            if expired_at == "2030-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
     ));
     assert!(matches!(
         validator()
             .validate_v2(
                 issued.sd_jwt(),
-                &at(Utc.with_ymd_and_hms(2009, 1, 1, 0, 0, 0).unwrap())
+                &at("2009-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
             )
             .await
             .unwrap_err(),
@@ -702,7 +702,7 @@ async fn issuer_binding_and_time_errors() {
     ));
     let not_yet = builder(
         credential(&issuer.did, &holder.did)
-            .with_valid_from(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+            .with_valid_from("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap()),
     )
     .sign(&issuer.signer)
     .await
@@ -710,11 +710,11 @@ async fn issuer_binding_and_time_errors() {
     assert!(matches!(
         validator().validate_v2(not_yet.sd_jwt(), &options()).await.unwrap_err(),
         SdJwtValidationError::Validation(ValidationError::NotYetValid { not_before, .. })
-            if not_before == Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+            if not_before == "2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
     ));
     let expired = builder(
         credential(&issuer.did, &holder.did)
-            .with_valid_until(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()),
+            .with_valid_until("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap()),
     )
     .sign(&issuer.signer)
     .await
@@ -722,7 +722,7 @@ async fn issuer_binding_and_time_errors() {
     assert!(matches!(
         validator().validate_v2(expired.sd_jwt(), &options()).await.unwrap_err(),
         SdJwtValidationError::Validation(ValidationError::Expired { expired_at, .. })
-            if expired_at == Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
+            if expired_at == "2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
     ));
 }
 
@@ -1035,8 +1035,8 @@ async fn present_vp(credentials: impl IntoIterator<Item = EnvelopedVc>) -> (Pres
         .to_jwt_claims()
         .with_aud(AUDIENCE)
         .with_claim("nonce", NONCE)
-        .with_iat(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_exp(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+        .with_iat("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_exp("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap());
     let header = JwsHeader::new(JwsAlgorithm::ES256)
         .with_typ(PresentationV2::JWT_TYP)
         .with_kid(holder.kid.as_str());
@@ -1393,7 +1393,7 @@ async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
     let holder = holder();
     let later = builder(
         credential(&issuer.did, &holder.did)
-            .with_valid_from(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()),
+            .with_valid_from("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap()),
     )
     .sign(&issuer.signer)
     .await
@@ -1409,7 +1409,7 @@ async fn enveloped_sd_jwt_is_checked_at_the_credential_options_time() {
         matches!(
             errors.as_slice(),
             [(0, ValidationError::NotYetValid { not_before, .. })]
-                if *not_before == Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+                if *not_before == "2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
         ),
         "{errors:?}"
     );
@@ -1439,7 +1439,7 @@ async fn statuses_are_checked_at_the_validation_time() {
 
     let timed = Arc::new(TimedResolver::new(resolver()));
     let check = Arc::new(RecordedTimes::default());
-    let started = Utc::now();
+    let started = Timestamp::now();
     SdJwtCredentialValidator::new(Arc::clone(&timed), DefaultVerifier)
         .with_status_check(Arc::clone(&check))
         .validate_v2(credential.sd_jwt(), &SdJwtValidationOptions::new())
@@ -1451,7 +1451,7 @@ async fn statuses_are_checked_at_the_validation_time() {
     let (_, vp) = present_vp([EnvelopedVc::from_sd_jwt(credential.sd_jwt())]).await;
     let timed = Arc::new(TimedResolver::new(resolver()));
     let check = Arc::new(RecordedTimes::default());
-    let started = Utc::now();
+    let started = Timestamp::now();
     JwtPresentationValidator::new(Arc::clone(&timed), DefaultVerifier)
         .with_status_check(Arc::clone(&check))
         .validate_v2(
@@ -1600,7 +1600,7 @@ async fn builder_setters_and_debug_output() {
     let holder = holder();
     let original = credential(&issuer.did, &holder.did);
     let builder = builder(original.clone())
-        .with_not_before(Utc.with_ymd_and_hms(2024, 6, 1, 0, 0, 0).unwrap())
+        .with_not_before("2024-06-01T00:00:00Z".parse::<Timestamp>().unwrap())
         .with_hash_algorithm(HashAlgorithm::Sha384);
     assert_eq!(*builder.credential(), original);
     let debug = format!("{builder:?}");

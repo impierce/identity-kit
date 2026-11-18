@@ -21,13 +21,13 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl, Uri, VerificationRelationship};
 use identity_kit::jose::{
     DefaultVerifier, Jwk, JwsAlgorithm, JwsError, JwsHeader, VerificationError,
 };
 use identity_kit::methods::DidJwk;
 use identity_kit::resolver::Resolver;
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialStatus, CredentialValidationOptions, FailFast, JwtCredentialValidator,
     JwtPresentationValidator, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
@@ -51,11 +51,11 @@ use common::{RFC8037_X, decode};
 const NBF: i64 = 1541493724;
 const EXP: i64 = 1573029723;
 
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2019, 1, 1, 0, 0, 0).unwrap()
+fn now() -> Timestamp {
+    "2019-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
 }
 
-fn at(now: DateTime<Utc>) -> CredentialValidationOptions {
+fn at(now: Timestamp) -> CredentialValidationOptions {
     CredentialValidationOptions::new().with_time(TimeOptions::at(now))
 }
 
@@ -205,11 +205,11 @@ async fn validity_period_and_leeway() {
     ));
     assert!(validator.validate(&jwt, &at(nbf)).await.is_ok());
     // Leeway covers clock skew in both directions.
-    let leeway = |now: DateTime<Utc>| {
+    let leeway = |now: Timestamp| {
         at(now).with_time(TimeOptions::at(now).with_leeway(Duration::from_mins(1)))
     };
     assert!(validator.validate(&jwt, &leeway(early)).await.is_ok());
-    // A leeway past the range `chrono` represents saturates instead of overflowing.
+    // A leeway past the range of `Timestamp` saturates instead of overflowing.
     let unbounded = at(early).with_time(TimeOptions::at(early).with_leeway(Duration::MAX));
     assert!(validator.validate(&jwt, &unbounded).await.is_ok());
     assert!(
@@ -621,8 +621,8 @@ async fn v2_credential_validates() {
     .with_context("https://www.w3.org/ns/credentials/examples/v2")
     .with_id(Uri::parse("http://university.example/credentials/3732").unwrap())
     .with_type("ExampleDegreeCredential")
-    .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap())
-    .with_valid_until(Utc.with_ymd_and_hms(2020, 1, 1, 19, 23, 24).unwrap());
+    .with_valid_from("2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap())
+    .with_valid_until("2020-01-01T19:23:24Z".parse::<Timestamp>().unwrap());
     let header = JwsHeader::new(JwsAlgorithm::EdDSA)
         .with_typ(CredentialV2::JWT_TYP)
         .with_kid(issuer.kid.as_str());
@@ -647,15 +647,15 @@ async fn v2_credential_validates() {
 
     // The validity period of the credential, and the registered claims, are checked.
     assert!(matches!(
-        validator.validate_v2(&jwt, &at(Utc.with_ymd_and_hms(2021, 1, 1, 0, 0, 0).unwrap())).await,
+        validator.validate_v2(&jwt, &at("2021-01-01T00:00:00Z".parse::<Timestamp>().unwrap())).await,
         Err(ValidationError::Expired { expired_at, .. })
-            if expired_at == Utc.with_ymd_and_hms(2020, 1, 1, 19, 23, 24).unwrap()
+            if expired_at == "2020-01-01T19:23:24Z".parse::<Timestamp>().unwrap()
     ));
     assert!(matches!(
         validator
             .validate_v2(
                 &with_iss,
-                &at(Utc.with_ymd_and_hms(2009, 1, 1, 0, 0, 0).unwrap())
+                &at("2009-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
             )
             .await,
         Err(ValidationError::NotYetValid { .. })
@@ -666,7 +666,7 @@ async fn v2_credential_validates() {
         validator
             .validate_v2(
                 &jwt,
-                &at(Utc.with_ymd_and_hms(2009, 1, 1, 0, 0, 0).unwrap())
+                &at("2009-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
             )
             .await,
         Err(ValidationError::IssuedInFuture { .. })
@@ -1013,7 +1013,7 @@ async fn fail_fast_collects_or_stops() {
     assert!(
         first
             .to_string()
-            .starts_with("credential 0: expired at 2018-12-31T23:59:59+00:00")
+            .starts_with("credential 0: expired at 2018-12-31T23:59:59Z")
     );
 
     let all = validator
@@ -1030,7 +1030,7 @@ async fn fail_fast_collects_or_stops() {
     ));
     assert_eq!(
         all.to_string(),
-        "credential 0: expired at 2018-12-31T23:59:59+00:00 (now is 2019-01-01T00:00:00+00:00); credential 2: signature: signature verification failed"
+        "credential 0: expired at 2018-12-31T23:59:59Z (now is 2019-01-01T00:00:00Z); credential 2: signature: signature verification failed"
     );
     assert_eq!(
         PresentationValidationError::presentation(KeyReferenceError::Missing.into()).to_string(),
@@ -1261,7 +1261,7 @@ mod status_claim {
             Subject::new(&holder.did)
                 .with_property("degree", json!({ "type": "ExampleBachelorDegree" })),
         )
-        .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap());
+        .with_valid_from("2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap());
         let header = JwsHeader::new(JwsAlgorithm::EdDSA)
             .with_typ(CredentialV2::JWT_TYP)
             .with_kid(issuer.kid.as_str());

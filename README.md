@@ -51,7 +51,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `software`       |   ✅    | `SoftwareKeyStore`: private keys in a JWK set file                                       |
 | `in-memory`      |         | `InMemoryKeyStore`: keys in memory, optionally derived from a seed                       |
 | `pkcs11`         |         | `Pkcs11KeyStore`: keys in a PKCS#11 module (an HSM, SoftHSM2), via `cryptoki` and `tokio`'s blocking pool |
-| `vc`             |   ✅    | Verifiable credentials and presentations as JWTs (`vc`); pulls in `chrono`               |
+| `vc`             |   ✅    | Verifiable credentials and presentations as JWTs (`vc`); pulls in `time`                  |
 | `status-list`    |   ✅    | The IETF Token Status List for JWT and SD-JWT credentials (`status_list`); implies `vc`, pulls in `miniz_oxide` |
 | `sd-jwt`         |   ✅    | SD-JWT, SD-JWT VC and `vc+sd-jwt` credentials (`sd_jwt_vc`); implies `vc` and `status-list` |
 | `domain-linkage` |   ✅    | DIF Well Known DID Configuration (`domain_linkage`); implies `vc` and `did-web`          |

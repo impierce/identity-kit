@@ -50,7 +50,7 @@ pub struct DecodedCredentialV2 {
 /// ```
 /// # #[cfg(feature = "did-key")]
 /// # {
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::did::Uri;
 /// use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, SignError, Signer};
 /// use identity_kit::methods::DidKey;
@@ -85,7 +85,7 @@ pub struct DecodedCredentialV2 {
 ///     &issuer,
 ///     Subject::new(Uri::parse("did:example:ebfeb1f712ebc6f1c276e12ec21")?),
 /// )
-/// .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap());
+/// .with_valid_from("2010-01-01T00:00:00Z".parse::<Timestamp>()?);
 /// let header = JwsHeader::new(JwsAlgorithm::EdDSA)
 ///     .with_typ(CredentialV2::JWT_TYP)
 ///     .with_kid(kid.as_str());
@@ -94,7 +94,7 @@ pub struct DecodedCredentialV2 {
 /// let resolver = Resolver::builder().with(DidKey::default()).build();
 /// let validator = JwtCredentialValidator::new(resolver, DefaultVerifier);
 /// let options = CredentialValidationOptions::new()
-///     .with_time(TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()));
+///     .with_time(TimeOptions::at("2024-01-01T00:00:00Z".parse::<Timestamp>()?));
 /// let decoded = validator.validate_v2(&jwt, &options).await?;
 /// assert_eq!(decoded.credential, credential);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -245,7 +245,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtCredentialValidator<R, V> {
         time: TimeOptions,
     ) -> Result<(KeyReference, Jwk), ValidationError> {
         let (reference, key) =
-            resolve_jws_key(&self.resolver, jws, iss, role, time.now().timestamp()).await?;
+            resolve_jws_key(&self.resolver, jws, iss, role, time.now().unix_seconds()).await?;
         jws.verify(&self.verifier, &key)?;
         Ok((reference, key))
     }

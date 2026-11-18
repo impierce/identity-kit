@@ -21,12 +21,12 @@ mod common;
 use std::collections::BTreeSet;
 use std::error::Error as _;
 
-use chrono::{TimeZone as _, Utc};
 use identity_kit::claim_path;
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::sd_jwt_vc::{
     ClaimPath, Disclosure, HashAlgorithm, KB_JWT_TYP, KeyBinding, SdJwt, SdJwtBuilder, SdJwtError,
 };
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::{Jwt, JwtClaims};
 use serde_json::{Map, Value, json};
 
@@ -361,7 +361,7 @@ fn key_binding_jwt_can_be_made_and_checked() {
     let binding = KeyBinding::new(
         "https://verifier.example.org",
         "1234567890",
-        Utc.timestamp_opt(1748536865, 0).unwrap(),
+        Timestamp::from_unix_seconds(1748536865).unwrap(),
     );
     let bound = selected
         .clone()

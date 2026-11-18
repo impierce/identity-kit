@@ -18,8 +18,8 @@ mod common;
 use std::error::Error as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
-use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri};
 use identity_kit::domain_linkage::{
     CONTEXT, CREDENTIAL_TYPE, Credential, DomainLinkageClient, DomainLinkageConfiguration,
@@ -31,6 +31,7 @@ use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
 use identity_kit::methods::web::DidWeb;
 use identity_kit::resolver::Resolver;
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
     KeyRole, TimeOptions, ValidationError,
@@ -61,11 +62,11 @@ fn origin() -> Url {
 }
 
 /// The example credential is valid from 2020-12-04 to 2025-12-04.
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2021, 1, 1, 0, 0, 0).unwrap()
+fn now() -> Timestamp {
+    "2021-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
 }
 
-fn at(now: DateTime<Utc>) -> CredentialValidationOptions {
+fn at(now: Timestamp) -> CredentialValidationOptions {
     CredentialValidationOptions::new().with_time(TimeOptions::at(now))
 }
 
@@ -251,13 +252,10 @@ fn example_jwt_decodes_to_the_published_header_and_payload() {
     assert!(credential.has_type(CREDENTIAL_TYPE));
     assert_eq!(credential.issuer.id().as_str(), DID);
     assert_eq!(credential.id, None);
+    assert_eq!(credential.issuance_date.to_string(), "2020-12-04T20:12:19Z");
     assert_eq!(
-        credential.issuance_date.to_rfc3339(),
-        "2020-12-04T20:12:19+00:00"
-    );
-    assert_eq!(
-        credential.expiration_date.map(|t| t.to_rfc3339()),
-        Some("2025-12-04T20:12:19+00:00".to_owned())
+        credential.expiration_date.map(|t| t.to_string()),
+        Some("2025-12-04T20:12:19Z".to_owned())
     );
     let subject = credential.subject().unwrap();
     assert_eq!(subject.id.as_ref().map(Uri::as_str), Some(DID));
@@ -303,7 +301,7 @@ async fn example_jwt_validates_against_its_did_key() {
             .validate_credential(
                 &example_jwt(),
                 &origin(),
-                &at(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+                &at("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
             )
             .await,
         Err(DomainLinkageError::Validation(
@@ -315,7 +313,7 @@ async fn example_jwt_validates_against_its_did_key() {
             .validate_credential(
                 &example_jwt(),
                 &origin(),
-                &at(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap())
+                &at("2020-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
             )
             .await,
         Err(DomainLinkageError::Validation(
@@ -351,7 +349,7 @@ async fn example_jwt_validates_against_its_did_key() {
         Err(DomainLinkageError::NoCredentialFor(did)) if did == other
     ));
     // Expired: the one JWT entry fails, so the resource does.
-    let expired = at(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+    let expired = at("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap());
     assert!(matches!(
         validator.validate_configuration(&configuration, &origin(), &expired).await,
         Err(DomainLinkageError::NoValidCredential(errors)) if errors.len() == 1 && errors.contains_key(&1)
@@ -382,8 +380,8 @@ fn builder_reproduces_the_example_payload() {
     let builder = DomainLinkageCredentialBuilder::new(
         did.clone(),
         &origin(),
-        Utc.timestamp_opt(1607112739, 0).unwrap(),
-        Utc.timestamp_opt(1764879139, 0).unwrap(),
+        Timestamp::from_unix_seconds(1607112739).unwrap(),
+        Timestamp::from_unix_seconds(1764879139).unwrap(),
     )
     .unwrap();
     assert_eq!(builder.origin, ORIGIN);
@@ -434,8 +432,8 @@ fn builder_for(controller: &Controller) -> DomainLinkageCredentialBuilder {
     DomainLinkageCredentialBuilder::new(
         controller.did.clone(),
         &example_com(),
-        now() - chrono::TimeDelta::days(1),
-        now() + chrono::TimeDelta::days(365),
+        now() - Duration::from_hours(24),
+        now() + Duration::from_hours(8760),
     )
     .unwrap()
 }
@@ -713,7 +711,7 @@ async fn format_rules() {
     // A subject that is not a DID.
     let mut subject = JwtClaims::new()
         .with_nbf(now())
-        .with_exp(now() + chrono::TimeDelta::days(1));
+        .with_exp(now() + Duration::from_hours(24));
     subject.iss = Some(controller.did.as_str().to_owned());
     subject.sub = Some("https://example.com/me".to_owned());
     let credential = Credential::new(
@@ -724,7 +722,7 @@ async fn format_rules() {
     )
     .with_context(CONTEXT)
     .with_type(CREDENTIAL_TYPE)
-    .with_expiration_date(now() + chrono::TimeDelta::days(1));
+    .with_expiration_date(now() + Duration::from_hours(24));
     subject
         .additional
         .insert("vc".to_owned(), serde_json::to_value(&credential).unwrap());
@@ -928,7 +926,7 @@ async fn example_resource_fetched_and_validated() {
         .unwrap();
     assert_eq!(decoded.credential.issuer.id().as_str(), DID);
     // The example credential expired on 2025-12-04.
-    let late = at(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap());
+    let late = at("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap());
     let error = client.validate_origin(&origin(), &late).await.unwrap_err();
     assert!(
         error
@@ -1101,8 +1099,8 @@ async fn origins_of_a_did_web_are_reported_one_by_one() {
     let credential = DomainLinkageCredentialBuilder::new(
         did.clone(),
         &example_com(),
-        now() - chrono::TimeDelta::days(1),
-        now() + chrono::TimeDelta::days(365),
+        now() - Duration::from_hours(24),
+        now() + Duration::from_hours(8760),
     )
     .unwrap()
     .sign(&kid, &controller.signer)
@@ -1360,11 +1358,14 @@ fn example_resource_entries() {
     assert_eq!(linkage.issuer.as_str(), DID);
     // The example JWT writes the origin without its scheme.
     assert_eq!(linkage.origin, ORIGIN);
-    assert_eq!(linkage.not_before.timestamp(), 1607112739);
-    assert_eq!(linkage.expires.map(|t| t.timestamp()), Some(1764879139));
+    assert_eq!(linkage.not_before.unix_seconds(), 1607112739);
+    assert_eq!(
+        linkage.expires.map(Timestamp::unix_seconds),
+        Some(1764879139)
+    );
     assert_eq!(
         configuration.earliest_expiry(),
-        Utc.timestamp_opt(1764879139, 0).single()
+        Timestamp::from_unix_seconds(1764879139)
     );
     assert_eq!(
         UnverifiedLinkage::from_jwt(&example_jwt()).unwrap(),
@@ -1375,12 +1376,12 @@ fn example_resource_entries() {
 #[tokio::test]
 async fn renewing_and_unlinking() {
     let controller = controller();
-    let issue = |origin: &str, days: i64| {
+    let issue = |origin: &str, days: u64| {
         DomainLinkageCredentialBuilder::new(
             controller.did.clone(),
             &Url::parse(origin).unwrap(),
             now(),
-            now() + chrono::TimeDelta::days(days),
+            now() + Duration::from_secs(days * 86_400),
         )
         .unwrap()
     };
@@ -1418,7 +1419,7 @@ async fn renewing_and_unlinking() {
     // Renewal is due when the first credential expires; the unreadable one is ignored.
     assert_eq!(
         configuration.earliest_expiry(),
-        Some(now() + chrono::TimeDelta::days(30))
+        Some(now() + Duration::from_hours(720))
     );
 
     // Unlinking compares normalized origins: no scheme, a path, a trailing slash.
@@ -1440,7 +1441,7 @@ async fn renewing_and_unlinking() {
     );
     assert_eq!(
         configuration.earliest_expiry(),
-        Some(now() + chrono::TimeDelta::days(365))
+        Some(now() + Duration::from_hours(8760))
     );
     assert!(matches!(
         configuration.remove_origin(&Url::parse("mailto:someone@example.com").unwrap()),

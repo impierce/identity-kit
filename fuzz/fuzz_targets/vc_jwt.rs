@@ -5,7 +5,6 @@
 #![no_main]
 #![expect(deprecated, reason = "fuzzes the deprecated VCDM 1.1 JWT profile next to VCDM 2.0")]
 
-use chrono::Timelike as _;
 use identity_kit::vc::validation::{
     decode_credential, decode_credential_v2, decode_presentation, decode_presentation_v2,
 };
@@ -19,9 +18,9 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 /// Whether a date of `credential` has what a `NumericDate` cannot carry: a fraction of a second,
-/// or a leap second (`:60`, RFC 3339 §5.6), which chrono keeps as a nanosecond count of a second
-/// or more. The JWT mapping floors both to whole seconds, so such a credential does not map back
-/// unchanged.
+/// or a leap second (`:60`, RFC 3339 §5.6), which `Timestamp` reads as the last nanosecond of the
+/// second before. The JWT mapping floors both to whole seconds, so such a credential does not map
+/// back unchanged.
 fn has_subsecond_precision(credential: &Credential) -> bool {
     [Some(credential.issuance_date), credential.expiration_date]
         .into_iter()

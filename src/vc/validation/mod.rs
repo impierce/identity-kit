@@ -68,13 +68,11 @@ use core::time::Duration;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeDelta, Utc};
-
 use crate::did::Did;
 pub use crate::resolver::{
     KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
 };
-use crate::vc::{Jwt, JwtClaims, TypedObject, claims};
+use crate::vc::{Jwt, JwtClaims, Timestamp, TypedObject, claims};
 
 pub(crate) mod credential;
 mod error;
@@ -377,20 +375,21 @@ pub enum SubjectHolderRelationship {
 /// ```
 /// use std::time::Duration;
 ///
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::vc::validation::TimeOptions;
 ///
-/// let fixed = TimeOptions::at(Utc.with_ymd_and_hms(2019, 11, 6, 0, 0, 0).unwrap())
+/// let fixed = TimeOptions::at("2019-11-06T00:00:00Z".parse::<Timestamp>()?)
 ///     .with_leeway(Duration::from_secs(60));
-/// assert_eq!(fixed.now().to_rfc3339(), "2019-11-06T00:00:00+00:00");
+/// assert_eq!(fixed.now().to_string(), "2019-11-06T00:00:00Z");
 /// assert_eq!(fixed.leeway, Duration::from_secs(60));
 /// assert!(TimeOptions::default().now() > fixed.now());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TimeOptions {
     /// The validation time; the current time when `None`.
-    pub now: Option<DateTime<Utc>>,
+    pub now: Option<Timestamp>,
     /// How far `nbf`, `exp` and `iat` may miss the validation time and still pass; zero by
     /// default.
     pub leeway: Duration,
@@ -398,7 +397,7 @@ pub struct TimeOptions {
 
 impl TimeOptions {
     /// Options validating at `now`.
-    pub fn at(now: DateTime<Utc>) -> Self {
+    pub fn at(now: Timestamp) -> Self {
         Self {
             now: Some(now),
             leeway: Duration::ZERO,
@@ -413,8 +412,8 @@ impl TimeOptions {
     }
 
     /// The validation time.
-    pub fn now(&self) -> DateTime<Utc> {
-        self.now.unwrap_or_else(Utc::now)
+    pub fn now(&self) -> Timestamp {
+        self.now.unwrap_or_else(Timestamp::now)
     }
 
     /// These options at the validation time they name now: a validation reads the clock
@@ -426,22 +425,12 @@ impl TimeOptions {
         }
     }
 
-    /// The leeway as a `chrono` delta, saturated.
-    fn delta(&self) -> TimeDelta {
-        TimeDelta::from_std(self.leeway).unwrap_or(TimeDelta::MAX)
-    }
-
     /// The validation time, and the earliest and latest times the leeway lets pass for it.
-    pub(crate) fn window(&self) -> (DateTime<Utc>, DateTime<Utc>, DateTime<Utc>) {
+    pub(crate) fn window(&self) -> (Timestamp, Timestamp, Timestamp) {
         let now = self.now();
-        let delta = self.delta();
-        // A leeway past the range `chrono` represents saturates rather than overflowing.
-        let earliest = now
-            .checked_sub_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MIN_UTC);
-        let latest = now
-            .checked_add_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MAX_UTC);
+        // A leeway past the range of `Timestamp` saturates rather than overflowing.
+        let earliest = now.saturating_sub(self.leeway);
+        let latest = now.saturating_add(self.leeway);
         (now, earliest, latest)
     }
 
@@ -454,9 +443,9 @@ impl TimeOptions {
     /// [`ValidationError::IssuedInFuture`].
     pub fn check(
         &self,
-        not_before: Option<DateTime<Utc>>,
-        expires: Option<DateTime<Utc>>,
-        issued_at: Option<DateTime<Utc>>,
+        not_before: Option<Timestamp>,
+        expires: Option<Timestamp>,
+        issued_at: Option<Timestamp>,
     ) -> Result<(), ValidationError> {
         let (now, earliest, latest) = self.window();
         if let Some(not_before) = not_before
@@ -496,7 +485,7 @@ impl TimeOptions {
 fn timestamp(
     value: Option<i64>,
     claim: &'static str,
-) -> Result<Option<DateTime<Utc>>, ValidationError> {
+) -> Result<Option<Timestamp>, ValidationError> {
     value
         .map(|value| {
             JwtClaims::timestamp(value).ok_or_else(|| {

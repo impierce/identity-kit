@@ -2,7 +2,7 @@
 //! JWTs per VC-JOSE-COSE, and the [`EnvelopedVc`] and [`EnvelopedVp`] objects that carry a
 //! secured credential or presentation in a `data:` URL.
 
-use chrono::{DateTime, Utc};
+use super::Timestamp;
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -25,7 +25,7 @@ use super::{CredentialError, Jwt, JwtClaims, Party, Subject, TypedObject, claims
 /// # Examples
 ///
 /// ```
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::did::Uri;
 /// use identity_kit::vc::{CredentialV2, Subject};
 /// use serde_json::json;
@@ -36,7 +36,7 @@ use super::{CredentialError, Jwt, JwtClaims, Party, Subject, TypedObject, claims
 ///         .with_property("degree", json!({ "type": "ExampleBachelorDegree" })),
 /// )
 /// .with_type("ExampleDegreeCredential")
-/// .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap());
+/// .with_valid_from("2010-01-01T19:23:24Z".parse::<Timestamp>()?);
 ///
 /// let claims = credential.to_jwt_claims();
 /// assert_eq!(claims.additional["validFrom"], "2010-01-01T19:23:24Z");
@@ -66,14 +66,14 @@ pub struct CredentialV2 {
     pub issuer: Party,
     /// When the credential becomes valid.
     #[serde(rename = "validFrom", default, skip_serializing_if = "Option::is_none")]
-    pub valid_from: Option<DateTime<Utc>>,
+    pub valid_from: Option<Timestamp>,
     /// When the credential ceases to be valid.
     #[serde(
         rename = "validUntil",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub valid_until: Option<DateTime<Utc>>,
+    pub valid_until: Option<Timestamp>,
     /// `credentialStatus`: where to learn whether the credential is revoked or suspended.
     #[serde(
         rename = "credentialStatus",
@@ -181,14 +181,14 @@ impl CredentialV2 {
 
     /// This credential with its `validFrom` set.
     #[must_use]
-    pub fn with_valid_from(mut self, valid_from: DateTime<Utc>) -> Self {
+    pub fn with_valid_from(mut self, valid_from: Timestamp) -> Self {
         self.valid_from = Some(valid_from);
         self
     }
 
     /// This credential with its `validUntil` set.
     #[must_use]
-    pub fn with_valid_until(mut self, valid_until: DateTime<Utc>) -> Self {
+    pub fn with_valid_until(mut self, valid_until: Timestamp) -> Self {
         self.valid_until = Some(valid_until);
         self
     }

@@ -13,10 +13,10 @@ mod common;
 
 use std::error::Error as _;
 
-use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader};
 use identity_kit::resolver::Resolver;
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, DecodedPresentationV2, FailFast, JwtPresentationValidator,
     KeyReference, KeyReferenceError, KeyResolutionError, KeyRole, PresentationValidationError,
@@ -285,8 +285,8 @@ fn credential(issuer: &Issuer, subject: &Did) -> CredentialV2 {
     .with_context("https://www.w3.org/ns/credentials/examples/v2")
     .with_id(Uri::parse("http://university.example/credentials/3732").unwrap())
     .with_type("ExampleDegreeCredential")
-    .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap())
-    .with_valid_until(Utc.with_ymd_and_hms(2030, 1, 1, 19, 23, 24).unwrap())
+    .with_valid_from("2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap())
+    .with_valid_until("2030-01-01T19:23:24Z".parse::<Timestamp>().unwrap())
 }
 
 /// `credential` signed by the issuer under `typ`.
@@ -317,8 +317,8 @@ fn claims(presentation: &PresentationV2) -> JwtClaims {
         .to_jwt_claims()
         .with_aud(AUDIENCE)
         .with_claim("nonce", NONCE)
-        .with_iat(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_exp(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        .with_iat("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_exp("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
 }
 
 /// `claims` signed by the holder, under `typ` when given, naming `kid` (the holder's own by
@@ -528,7 +528,7 @@ async fn presentation_errors() {
 
     // Expired, and the audience and nonce of another exchange.
     let late = options().with_time(TimeOptions::at(
-        Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap(),
+        "2026-06-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     ));
     let jwt = present(&claims(&presentation), typ, None).await;
     assert!(matches!(

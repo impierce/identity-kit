@@ -29,7 +29,7 @@
 use core::fmt;
 use core::str::FromStr;
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
@@ -352,20 +352,20 @@ pub enum StatusListError {
         uri: String,
     },
     /// The status list token has expired.
-    #[error("status list token expired at {} (now is {})", expired_at.to_rfc3339(), now.to_rfc3339())]
+    #[error("status list token expired at {} (now is {})", expired_at, now)]
     Expired {
         /// Its `exp`.
-        expired_at: DateTime<Utc>,
+        expired_at: Timestamp,
         /// The validation time.
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     /// The status list token was issued after the validation time, beyond the leeway.
-    #[error("status list token issued at {}, after now ({})", issued_at.to_rfc3339(), now.to_rfc3339())]
+    #[error("status list token issued at {}, after now ({})", issued_at, now)]
     NotYetIssued {
         /// Its `iat`.
-        issued_at: DateTime<Utc>,
+        issued_at: Timestamp,
         /// The validation time.
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
 }
 
@@ -594,7 +594,7 @@ impl<'de> Deserialize<'de> for StatusList {
 /// # Examples
 ///
 /// ```
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::status_list::{StatusListRef, StatusListToken, StatusType};
 /// use identity_kit::vc::Jwt;
 /// use identity_kit::vc::validation::TimeOptions;
@@ -610,7 +610,7 @@ impl<'de> Deserialize<'de> for StatusList {
 /// assert_eq!(token.sub, "https://example.com/statuslists/1");
 /// assert_eq!(token.ttl, Some(43200));
 ///
-/// let now = TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
+/// let now = TimeOptions::at("2024-01-01T00:00:00Z".parse::<Timestamp>()?);
 /// let reference = StatusListRef::new("https://example.com/statuslists/1", 0);
 /// assert_eq!(token.status_of(&reference, now)?, StatusType::INVALID);
 /// assert_eq!(token.status_of(&StatusListRef::new(&reference.uri, 1), now)?, StatusType::VALID);
@@ -650,7 +650,7 @@ impl StatusListToken {
     pub const MEDIA_TYPE: &'static str = "application/statuslist+jwt";
 
     /// A token for the list at `sub`, issued at `iat`.
-    pub fn new(sub: impl Into<String>, iat: DateTime<Utc>, status_list: StatusList) -> Self {
+    pub fn new(sub: impl Into<String>, iat: Timestamp, status_list: StatusList) -> Self {
         Self {
             sub: sub.into(),
             iat: JwtClaims::numeric_date(iat),
@@ -663,7 +663,7 @@ impl StatusListToken {
 
     /// This token with `exp`.
     #[must_use]
-    pub fn with_expires_at(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_expires_at(mut self, time: Timestamp) -> Self {
         self.exp = Some(JwtClaims::numeric_date(time));
         self
     }
@@ -736,17 +736,21 @@ impl StatusListToken {
             });
         }
         let (now, earliest, latest) = time.window();
-        // An `iat` past the range `chrono` represents is as far in the future or past as its sign.
+        // A time past the range of `Timestamp` is as far in the future or past as its sign.
         let issued_at = JwtClaims::timestamp(self.iat).unwrap_or(if self.iat.is_negative() {
-            DateTime::<Utc>::MIN_UTC
+            Timestamp::MIN
         } else {
-            DateTime::<Utc>::MAX_UTC
+            Timestamp::MAX
         });
         if issued_at > latest {
             return Err(StatusListError::NotYetIssued { issued_at, now });
         }
         if let Some(exp) = self.exp {
-            let expired_at = JwtClaims::timestamp(exp).unwrap_or(DateTime::<Utc>::MIN_UTC);
+            let expired_at = JwtClaims::timestamp(exp).unwrap_or(if exp.is_negative() {
+                Timestamp::MIN
+            } else {
+                Timestamp::MAX
+            });
             if expired_at <= earliest {
                 return Err(StatusListError::Expired { expired_at, now });
             }

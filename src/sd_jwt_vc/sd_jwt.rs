@@ -4,7 +4,7 @@ use core::fmt;
 use core::str::FromStr;
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -619,13 +619,13 @@ impl<'a> Processor<'a> {
 /// # Examples
 ///
 /// ```
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::sd_jwt_vc::KeyBinding;
 ///
 /// let binding = KeyBinding::new(
 ///     "https://verifier.example.org",
 ///     "1234567890",
-///     Utc.timestamp_opt(1748536865, 0).unwrap(),
+///     Timestamp::from_unix_seconds(1748536865).unwrap(),
 /// );
 /// let claims = binding.claims("fMV05vuMARs3uG0Dg0BYd_7mQR9EGBkRof0cTZyuqXE".to_owned());
 /// assert_eq!(claims.iat, Some(1748536865));
@@ -649,7 +649,7 @@ impl KeyBinding {
     pub fn new(
         audience: impl Into<String>,
         nonce: impl Into<String>,
-        issued_at: DateTime<Utc>,
+        issued_at: Timestamp,
     ) -> Self {
         Self {
             audience: audience.into(),

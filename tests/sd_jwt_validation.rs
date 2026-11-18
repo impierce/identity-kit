@@ -17,7 +17,6 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::claim_path;
 use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
@@ -31,6 +30,7 @@ use identity_kit::sd_jwt_vc::{
     SdJwtVcError,
 };
 use identity_kit::status_list::{Status, StatusList, StatusListRef, StatusListToken, StatusType};
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialStatus, StatusCheck, StatusError, StatusPolicy, TimeOptions, ValidationError,
 };
@@ -45,8 +45,8 @@ const VCT: &str = "https://credentials.example.com/identity_credential";
 const AUDIENCE: &str = "https://verifier.example.org";
 const NONCE: &str = "1234567890";
 
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap()
+fn now() -> Timestamp {
+    "2024-06-01T12:00:00Z".parse::<Timestamp>().unwrap()
 }
 
 fn holder() -> Es256Signer {
@@ -188,7 +188,7 @@ async fn presentation_with_key_binding_validates() {
     // A bounded age, and leeway on `iat`.
     let bounded = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
-            .with_time(TimeOptions::at(now() + chrono::TimeDelta::minutes(5)))
+            .with_time(TimeOptions::at(now() + Duration::from_mins(5)))
             .with_max_age(Duration::from_mins(10)),
     );
     assert!(
@@ -259,7 +259,7 @@ async fn key_binding_errors() {
     // `iat` in the future, or too old.
     let earlier = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
-            .with_time(TimeOptions::at(now() - chrono::TimeDelta::hours(1))),
+            .with_time(TimeOptions::at(now() - Duration::from_secs(3_600))),
     );
     assert!(matches!(
         validator.validate(presentation.sd_jwt(), &earlier).await,
@@ -269,7 +269,7 @@ async fn key_binding_errors() {
     ));
     let stale = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
-            .with_time(TimeOptions::at(now() + chrono::TimeDelta::hours(1)))
+            .with_time(TimeOptions::at(now() + Duration::from_secs(3_600)))
             .with_max_age(Duration::from_mins(1)),
     );
     assert!(matches!(
@@ -278,7 +278,7 @@ async fn key_binding_errors() {
     ));
     let oldest = options().with_key_binding(
         KeyBindingOptions::new(AUDIENCE, NONCE)
-            .with_time(TimeOptions::at(now() + chrono::TimeDelta::seconds(60)))
+            .with_time(TimeOptions::at(now() + Duration::from_secs(60)))
             .with_max_age(Duration::from_mins(1)),
     );
     assert!(
@@ -568,12 +568,12 @@ async fn validity_period() {
     let issuer = issuer();
     let credential = issue(&issuer).await;
     let validator = validator();
-    let at = |time: DateTime<Utc>| options().with_time(TimeOptions::at(time));
+    let at = |time: Timestamp| options().with_time(TimeOptions::at(time));
     assert!(matches!(
         validator
             .validate(
                 credential.sd_jwt(),
-                &at(issued_at() - chrono::TimeDelta::seconds(1))
+                &at(issued_at() - Duration::from_secs(1))
             )
             .await,
         Err(SdJwtValidationError::Validation(
@@ -598,7 +598,7 @@ async fn validity_period() {
     );
 
     let later = builder(&issuer)
-        .with_not_before(now() + chrono::TimeDelta::days(1))
+        .with_not_before(now() + Duration::from_hours(24))
         .sign(&issuer.signer)
         .await
         .unwrap();
@@ -656,7 +656,7 @@ async fn status_is_checked_at_the_validation_time() {
         Resolver::builder().with(DidKey::default()).build(),
     ));
     let check = Arc::new(RecordedTimes::default());
-    let started = Utc::now();
+    let started = Timestamp::now();
     SdJwtCredentialValidator::new(Arc::clone(&resolver), DefaultVerifier)
         .with_status_check(Arc::clone(&check))
         .validate(credential.sd_jwt(), &SdJwtValidationOptions::new())
@@ -1095,7 +1095,7 @@ mod status_list_check {
         let issuer = issuer();
         let token = StatusListToken::new(
             LIST_URI,
-            now() + chrono::TimeDelta::hours(1),
+            now() + Duration::from_secs(3_600),
             StatusList::new(1, 8).unwrap(),
         )
         .with_expires_at(expires_at())
@@ -1131,7 +1131,7 @@ mod status_list_check {
             matches!(
                 error.source().and_then(|e| e.source()).and_then(|e| e.downcast_ref()),
                 Some(StatusListError::NotYetIssued { issued_at, now: at })
-                    if *issued_at == now() + chrono::TimeDelta::hours(1) && *at == now()
+                    if *issued_at == now() + Duration::from_secs(3_600) && *at == now()
             ),
             "{error:?}"
         );

@@ -114,7 +114,7 @@ pub mod credentials {
     pub use crate::vc::validation::{DecodedCredential, DecodedPresentation};
     pub use crate::vc::{
         ClaimPath, CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Party,
-        PresentationV2, Subject,
+        PresentationV2, Subject, Timestamp,
     };
     #[expect(deprecated, reason = "kept for the deprecated VCDM 1.1 JWT profile")]
     pub use crate::vc::{Credential, Presentation};

@@ -3,7 +3,7 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 
 use crate::cause::cause;
 use crate::did::{OneOrMany, Uri};
@@ -91,28 +91,28 @@ pub enum ValidationError {
         key: Box<KeyReference>,
     },
     /// The token or credential is not valid yet.
-    #[error("not valid before {} (now is {})", not_before.to_rfc3339(), now.to_rfc3339())]
+    #[error("not valid before {} (now is {})", not_before, now)]
     NotYetValid {
         /// When it becomes valid.
-        not_before: DateTime<Utc>,
+        not_before: Timestamp,
         /// The validation time.
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     /// The token or credential has expired.
-    #[error("expired at {} (now is {})", expired_at.to_rfc3339(), now.to_rfc3339())]
+    #[error("expired at {} (now is {})", expired_at, now)]
     Expired {
         /// When it expired.
-        expired_at: DateTime<Utc>,
+        expired_at: Timestamp,
         /// The validation time.
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     /// The token claims to have been issued in the future.
-    #[error("issued at {}, after now ({})", issued_at.to_rfc3339(), now.to_rfc3339())]
+    #[error("issued at {}, after now ({})", issued_at, now)]
     IssuedInFuture {
         /// The `iat`.
-        issued_at: DateTime<Utc>,
+        issued_at: Timestamp,
         /// The validation time.
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     /// The `aud` does not include the expected audience.
     #[error("audience {found:?} does not include {expected:?}")]
@@ -221,18 +221,14 @@ pub enum StatusError {
         source: KeyResolutionError,
     },
     /// The status list has expired.
-    #[error(
-        "status list {uri} expired at {} (now is {})",
-        expired_at.to_rfc3339(),
-        now.to_rfc3339()
-    )]
+    #[error("status list {uri} expired at {} (now is {})", expired_at, now)]
     Expired {
         /// The status list URI the credential references.
         uri: String,
         /// Its `exp`.
-        expired_at: DateTime<Utc>,
+        expired_at: Timestamp,
         /// The validation time.
-        now: DateTime<Utc>,
+        now: Timestamp,
     },
     /// The credential's index is beyond the end of the status list.
     #[error("index {idx} is out of range of status list {uri} of {len} entries")]

@@ -3,7 +3,7 @@
 use core::fmt;
 use core::str::FromStr;
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
@@ -274,21 +274,21 @@ impl SdJwtVcClaims {
 
     /// These claims with `iat`.
     #[must_use]
-    pub fn with_issued_at(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_issued_at(mut self, time: Timestamp) -> Self {
         self.iat = Some(JwtClaims::numeric_date(time));
         self
     }
 
     /// These claims with `nbf`.
     #[must_use]
-    pub fn with_not_before(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_not_before(mut self, time: Timestamp) -> Self {
         self.nbf = Some(JwtClaims::numeric_date(time));
         self
     }
 
     /// These claims with `exp`.
     #[must_use]
-    pub fn with_expires_at(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_expires_at(mut self, time: Timestamp) -> Self {
         self.exp = Some(JwtClaims::numeric_date(time));
         self
     }
@@ -495,21 +495,21 @@ impl SdJwtVcBuilder {
 
     /// This builder with `iat`.
     #[must_use]
-    pub fn with_issued_at(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_issued_at(mut self, time: Timestamp) -> Self {
         self.claims = self.claims.with_issued_at(time);
         self
     }
 
     /// This builder with `nbf`.
     #[must_use]
-    pub fn with_not_before(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_not_before(mut self, time: Timestamp) -> Self {
         self.claims = self.claims.with_not_before(time);
         self
     }
 
     /// This builder with `exp`.
     #[must_use]
-    pub fn with_expires_at(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_expires_at(mut self, time: Timestamp) -> Self {
         self.claims = self.claims.with_expires_at(time);
         self
     }

@@ -7,11 +7,12 @@
     reason = "numbers are written as the specifications' examples write them"
 )]
 
-use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{OneOrMany, Uri};
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{ValidationError, decode_credential};
 use identity_kit::vc::{Credential, CredentialError, Jwt, JwtClaims, Party, Subject, TypedObject};
 use serde_json::{Value, json};
+use std::time::Duration;
 
 /// VCDM 1.1 Example 1, without the comments and with the `proof` as the example shows it.
 const EXAMPLE_1: &str = r#"{
@@ -106,7 +107,7 @@ fn example_1_round_trips_as_data() {
     );
     assert_eq!(
         credential.issuance_date,
-        Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap()
+        "2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap()
     );
     let subject = credential.subject().unwrap();
     assert_eq!(
@@ -133,7 +134,7 @@ fn example_1_round_trips_as_data() {
 fn example_1_is_built_from_parts() {
     let credential = Credential::new(
         uri("https://example.edu/issuers/565049"),
-        Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap(),
+        "2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap(),
         Subject::new(uri("did:example:ebfeb1f712ebc6f1c276e12ec21")).with_property(
             "alumniOf",
             json!({
@@ -206,7 +207,7 @@ fn expiration_status_evidence_and_terms_of_use_examples() {
     .unwrap();
     assert_eq!(
         credential.expiration_date,
-        Some(Utc.with_ymd_and_hms(2020, 1, 1, 19, 23, 24).unwrap())
+        Some("2020-01-01T19:23:24Z".parse::<Timestamp>().unwrap())
     );
     let status = credential.credential_status.as_ref().unwrap();
     assert_eq!(status.id, Some(uri("https://example.edu/status/24")));
@@ -248,11 +249,11 @@ fn example_31_claims_decode_to_the_credential_and_back() {
     );
     assert_eq!(
         credential.issuance_date,
-        Utc.with_ymd_and_hms(2018, 11, 6, 8, 42, 4).unwrap()
+        "2018-11-06T08:42:04Z".parse::<Timestamp>().unwrap()
     );
     assert_eq!(
         credential.expiration_date,
-        Some(Utc.with_ymd_and_hms(2019, 11, 6, 8, 42, 3).unwrap())
+        Some("2019-11-06T08:42:03Z".parse::<Timestamp>().unwrap())
     );
     let subject = credential.subject().unwrap();
     assert_eq!(
@@ -465,7 +466,10 @@ fn structural_requirements() {
         error(with("expirationDate", json!("2009-01-01T00:00:00Z"))),
         "`expirationDate` precedes `issuanceDate`"
     );
-    assert!(error(with("issuanceDate", json!("2010-01-01T19:23:24"))).contains("premature end"));
+    assert!(
+        error(with("issuanceDate", json!("2010-01-01T19:23:24")))
+            .contains("not an RFC 3339 date-time")
+    );
     assert!(error(with("issuer", json!({ "name": "no id" }))).contains("untagged"));
 
     // `type` may be a single string, and is kept as one.
@@ -534,7 +538,7 @@ fn multiple_subjects_have_no_jwt_form() {
     // A bearer credential has no `sub`.
     let bearer = Credential::new(
         uri("did:example:issuer"),
-        Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap(),
+        "2010-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
         Subject::default().with_property("favoriteCheese", "Gouda"),
     );
     let claims = bearer.to_jwt_claims().unwrap();
@@ -560,10 +564,10 @@ fn typed_objects_and_builders() {
         .with_property("statusListIndex", "94567");
     let credential = Credential::new(
         uri("did:example:issuer"),
-        Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap(),
+        "2010-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
         Subject::new(uri("did:example:subject")),
     )
-    .with_expiration_date(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap())
+    .with_expiration_date("2020-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
     .with_status(status.clone())
     .with_schema(TypedObject::new("JsonSchema").with_id(uri("https://example.org/degree.json")))
     .with_schema(TypedObject::new("JsonSchema").with_id(uri("https://example.org/alumni.json")))
@@ -586,10 +590,10 @@ fn typed_objects_and_builders() {
     // Building a credential whose expiration precedes its issuance is caught at encoding.
     let backwards = Credential::new(
         uri("did:example:issuer"),
-        Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap(),
+        "2010-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
         Subject::new(uri("did:example:subject")),
     )
-    .with_expiration_date(Utc.with_ymd_and_hms(2009, 1, 1, 0, 0, 0).unwrap());
+    .with_expiration_date("2009-01-01T00:00:00Z".parse::<Timestamp>().unwrap());
     assert_eq!(
         backwards.to_jwt_claims(),
         Err(CredentialError::InvalidValidity {
@@ -597,7 +601,7 @@ fn typed_objects_and_builders() {
             until: "expirationDate"
         })
     );
-    let instant = Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap();
+    let instant = "2010-01-01T00:00:00Z".parse::<Timestamp>().unwrap();
     Credential::new(
         uri("did:example:issuer"),
         instant,
@@ -630,7 +634,7 @@ fn jwt_type_and_claims_helpers() {
     );
     assert!(serde_json::from_value::<Jwt>(json!("x.y")).is_err());
 
-    let time = Utc.with_ymd_and_hms(2019, 11, 6, 8, 42, 3).unwrap();
+    let time = "2019-11-06T08:42:03Z".parse::<Timestamp>().unwrap();
     assert_eq!(JwtClaims::numeric_date(time), 1573029723);
     assert_eq!(JwtClaims::timestamp(1573029723), Some(time));
     assert_eq!(JwtClaims::timestamp(i64::MAX), None);
@@ -667,17 +671,14 @@ fn numeric_dates_are_whole_seconds() {
     let mut vc: Value = serde_json::from_str(EXAMPLE_1).unwrap();
     vc["issuanceDate"] = json!("2010-01-01T19:23:24.500Z");
     vc.as_object_mut().unwrap().remove("proof");
-    let nbf = Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap();
+    let nbf = "2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap();
     let claims = |nbf: i64| {
         JwtClaims::new()
             .with_claim("vc", vc.clone())
             .with_nbf(JwtClaims::timestamp(nbf).unwrap())
     };
     let credential = Credential::from_jwt_claims(&claims(JwtClaims::numeric_date(nbf))).unwrap();
-    assert_eq!(
-        credential.issuance_date,
-        nbf + chrono::Duration::milliseconds(500)
-    );
+    assert_eq!(credential.issuance_date, nbf + Duration::from_millis(500));
     assert_eq!(
         Credential::from_jwt_claims(&claims(JwtClaims::numeric_date(nbf) + 1)),
         Err(CredentialError::ClaimMismatch {
@@ -709,7 +710,7 @@ fn domain_linkage_reexports_the_vcdm11_types() {
     let _: fn(_) -> _ = decoded;
     let issued = credential(domain_linkage::Credential::new(
         Uri::parse("did:example:123").unwrap(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         Subject::new(Uri::parse("did:example:123").unwrap()),
     ));
     assert_eq!(issued.issuer.id().as_str(), "did:example:123");

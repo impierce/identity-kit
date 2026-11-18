@@ -5,7 +5,7 @@ use core::fmt;
 use core::str::FromStr;
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
@@ -440,21 +440,21 @@ impl SdJwtCredentialV2Builder {
 
     /// This builder with `iat`, beside the credential's `validFrom`.
     #[must_use]
-    pub fn with_issued_at(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_issued_at(mut self, time: Timestamp) -> Self {
         self.iat = Some(JwtClaims::numeric_date(time));
         self
     }
 
     /// This builder with `nbf`.
     #[must_use]
-    pub fn with_not_before(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_not_before(mut self, time: Timestamp) -> Self {
         self.nbf = Some(JwtClaims::numeric_date(time));
         self
     }
 
     /// This builder with `exp`, beside the credential's `validUntil`.
     #[must_use]
-    pub fn with_expires_at(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_expires_at(mut self, time: Timestamp) -> Self {
         self.exp = Some(JwtClaims::numeric_date(time));
         self
     }

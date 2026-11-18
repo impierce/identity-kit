@@ -10,7 +10,6 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 use arbitrary::{Arbitrary, Unstructured};
-use chrono::DateTime;
 use identity_kit::did::{Did, DidDocument, ServiceEndpoint, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk};
 use identity_kit::linked_vp::{
@@ -19,7 +18,7 @@ use identity_kit::linked_vp::{
 };
 use identity_kit::methods::web::{HttpClient, HttpError, HttpResponse};
 use identity_kit::resolver::{KeyReference, KeyResolutionError, KeyResolver, KeyRole};
-use identity_kit::vc::{Jwt, Presentation};
+use identity_kit::vc::{Jwt, Presentation, Timestamp};
 use libfuzzer_sys::fuzz_target;
 use url::Url;
 
@@ -156,7 +155,7 @@ fn exercise_builder(built: &Built<'_>) {
     let Ok(holder) = Did::parse(built.holder) else {
         return;
     };
-    let Some(issued_at) = DateTime::from_timestamp(built.issued_at, 0) else {
+    let Some(issued_at) = Timestamp::from_unix_seconds(built.issued_at) else {
         return;
     };
     let mut builder = LinkedPresentationBuilder::new(holder.clone()).with_issued_at(issued_at);
@@ -165,7 +164,7 @@ fn exercise_builder(built: &Built<'_>) {
         builder = builder.with_id(id);
     }
     if let Some(expiration) = built.expiration {
-        let Some(expiration) = DateTime::from_timestamp(expiration, 0) else {
+        let Some(expiration) = Timestamp::from_unix_seconds(expiration) else {
             return;
         };
         builder = builder.with_expiration(expiration);
