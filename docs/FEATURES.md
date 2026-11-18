@@ -112,6 +112,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `SdJwtCredentialValidator::validate_v2`: issuer binding, validity period, key binding, `credentialStatus` and `status` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.1][vc-jose-cose], [RFC 9901 §7][rfc9901] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | `JwtPresentationValidator::validate_v2` and `decode_presentation_v2` unwrap `application/vc+sd-jwt` envelopes (`EnvelopedVc::to_sd_jwt`, `PresentedCredentialV2`), key binding required per `PresentationValidationOptions::key_binding` | ✅ | `sd-jwt` | [VC-JOSE-COSE §3.2.2][vc-jose-cose] | [#49](https://github.com/impierce/identity-kit/issues/49) |
 | Key binding with the holder key from `cnf.kid` (resolved through `KeyReference`)      |   ✅   | `sd-jwt`      | [RFC 7800 §3.4][rfc7800]                       | [#53](https://github.com/impierce/identity-kit/issues/53) |
+| `KeyBindingPolicy::WhenCnf`: key binding required of every credential with `cnf`, alone or enveloped in a presentation, for a Verifier; `WhenRequested`, the default, for a Holder | ✅ | `sd-jwt` | [RFC 9901 §7.3][rfc9901], [HAIP §6.1.1.1][haip] | [#176](https://github.com/impierce/identity-kit/issues/176) |
 
 ### `status_list`: Token Status List
 
@@ -198,7 +199,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
 | [Token Status List][status-list] (draft 21)  | IETF draft  | `status_list`                             |
-| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`) |
+| [OpenID4VC High Assurance Interoperability Profile 1.0][haip] | OpenID Foundation | `resolver` (`X509Resolver`, `x509`), `jose` (`CertifiedSigner`), `sd_jwt_vc` (`KeyBindingPolicy`) |
 | [PKCS #11 v3.1][pkcs11]                      | OASIS       | `keys::pkcs11`                            |
 | [multicodec][multicodec], [multibase][multibase] | Multiformats | `methods::key`                        |
 

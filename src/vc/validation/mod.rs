@@ -554,6 +554,12 @@ pub struct PresentationValidationOptions {
     #[cfg(feature = "sd-jwt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
     pub key_binding: Option<crate::sd_jwt_vc::KeyBindingOptions>,
+    /// When the key binding of an enveloped credential secured with SD-JWT is required:
+    /// [`KeyBindingPolicy::WhenRequested`](crate::sd_jwt_vc::KeyBindingPolicy::WhenRequested),
+    /// whenever [`key_binding`](Self::key_binding) is set, by default.
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    pub key_binding_policy: crate::sd_jwt_vc::KeyBindingPolicy,
 }
 
 impl PresentationValidationOptions {
@@ -620,6 +626,16 @@ impl PresentationValidationOptions {
     #[must_use]
     pub fn with_key_binding(mut self, key_binding: crate::sd_jwt_vc::KeyBindingOptions) -> Self {
         self.key_binding = Some(key_binding);
+        self
+    }
+
+    /// These options with `policy` deciding when the key binding of an enveloped credential
+    /// secured with SD-JWT is required.
+    #[cfg(feature = "sd-jwt")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
+    #[must_use]
+    pub fn with_key_binding_policy(mut self, policy: crate::sd_jwt_vc::KeyBindingPolicy) -> Self {
+        self.key_binding_policy = policy;
         self
     }
 }

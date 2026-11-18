@@ -88,8 +88,8 @@ pub mod credentials {
     #[cfg(feature = "sd-jwt")]
     #[cfg_attr(docsrs, doc(cfg(feature = "sd-jwt")))]
     pub use crate::sd_jwt_vc::{
-        Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, Processed, SdJwt, SdJwtBuilder,
-        SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
+        Disclosure, HashAlgorithm, KeyBinding, KeyBindingOptions, KeyBindingPolicy, Processed,
+        SdJwt, SdJwtBuilder, SdJwtCredentialV2, SdJwtCredentialV2Builder, SdJwtCredentialV2Error,
         SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtValidationOptions,
         SdJwtVc, SdJwtVcBuilder, SdJwtVcClaims, SdJwtVcError, TypeMetadata,
         ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,

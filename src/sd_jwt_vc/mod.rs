@@ -85,8 +85,8 @@ pub use type_metadata::{
     SdPolicy, TypeMetadata, TypeMetadataError,
 };
 pub use validation::{
-    KeyBindingOptions, SdJwtCredentialValidator, SdJwtValidationError, SdJwtValidationOptions,
-    ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
+    KeyBindingOptions, KeyBindingPolicy, SdJwtCredentialValidator, SdJwtValidationError,
+    SdJwtValidationOptions, ValidatedSdJwtCredentialV2, ValidatedSdJwtVc,
 };
 
 // `#[deprecated]` has no effect on a `pub use` (rust-lang/rust#30827), so the old paths are

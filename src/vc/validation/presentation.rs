@@ -275,8 +275,9 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
     /// [`JwtCredentialValidator::validate_v2`]; with the `sd-jwt` feature, an
     /// `application/vc+sd-jwt` one as `SdJwtCredentialValidator::validate_v2` of `sd_jwt_vc`
     /// does, with its `credentialStatus` entries and its `status` claim checked by this
-    /// validator's [`StatusCheck`] and the key binding of `options.key_binding` required when
-    /// set (none by default: the presentation JWT already proves holder control). An envelope
+    /// validator's [`StatusCheck`] and the key binding of `options.key_binding` required as
+    /// `options.key_binding_policy` decides (none by default: the presentation JWT already
+    /// proves holder control). An envelope
     /// of another media type (a COSE credential) fails for that credential alone.
     ///
     /// # Errors
@@ -339,6 +340,7 @@ impl<R: KeyResolver, V: JwsVerifier> JwtPresentationValidator<R, V> {
             let sd_jwt_options = SdJwtValidationOptions {
                 time,
                 key_binding: options.key_binding.clone(),
+                key_binding_policy: options.key_binding_policy,
                 ..SdJwtValidationOptions::default()
             };
             let validated = SdJwtCredentialValidator::new(

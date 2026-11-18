@@ -22,7 +22,9 @@ use identity_kit::claim_path;
 use identity_kit::jose::{DefaultVerifier, JwsAlgorithm, JwsHeader};
 use identity_kit::methods::DidKey;
 use identity_kit::resolver::{KeyReference, KeyReferenceError, Resolver};
-use identity_kit::sd_jwt_vc::validation::{KeyBindingOptions, SdJwtValidationOptions};
+use identity_kit::sd_jwt_vc::validation::{
+    KeyBindingOptions, KeyBindingPolicy, SdJwtValidationOptions,
+};
 use identity_kit::sd_jwt_vc::{
     Disclosure, HashAlgorithm, KeyBinding, LEGACY_TYP, SdJwt, SdJwtBuilder, SdJwtCredentialV2Error,
     SdJwtCredentialValidator, SdJwtError, SdJwtValidationError, SdJwtVc, SdJwtVcBuilder,
@@ -343,6 +345,82 @@ async fn key_binding_errors() {
         validator.validate(&no_iat, &with_key_binding()).await,
         Err(SdJwtValidationError::Validation(
             ValidationError::Credential(CredentialError::MissingClaim("iat"))
+        ))
+    ));
+}
+
+/// HAIP §6.1.1.1: a presented SD-JWT VC with `cnf` always carries a key binding JWT. Under
+/// `KeyBindingPolicy::WhenCnf` the credential's `cnf` decides (RFC 9901 §7.3, step 1), not
+/// whether a key binding JWT is present.
+#[tokio::test]
+async fn key_binding_policy_when_cnf() {
+    let issuer = issuer();
+    let credential = issue(&issuer).await;
+    let presentation = present(&credential).await;
+    let validator = validator();
+    let when_cnf = || with_key_binding().with_key_binding_policy(KeyBindingPolicy::WhenCnf);
+    assert_eq!(
+        options().key_binding_policy,
+        KeyBindingPolicy::WhenRequested
+    );
+
+    // A presentation with key binding validates, its key binding JWT verified.
+    let validated = validator
+        .validate(presentation.sd_jwt(), &when_cnf())
+        .await
+        .unwrap();
+    assert_eq!(validated.key_binding.unwrap().additional["nonce"], NONCE);
+    assert!(validated.holder_key.is_some());
+
+    // `cnf` and no key binding JWT: refused, where the default policy without key binding
+    // options accepts it (a Holder checking the credential it was issued).
+    assert!(credential.confirmation().is_some());
+    assert!(matches!(
+        validator.validate(credential.sd_jwt(), &when_cnf()).await,
+        Err(SdJwtValidationError::KeyBindingRequired)
+    ));
+    assert!(
+        validator
+            .validate(credential.sd_jwt(), &options())
+            .await
+            .is_ok()
+    );
+
+    // `cnf` and no key binding options: refused, with or without a key binding JWT.
+    let forgotten = options().with_key_binding_policy(KeyBindingPolicy::WhenCnf);
+    for sd_jwt in [credential.sd_jwt(), presentation.sd_jwt()] {
+        assert!(matches!(
+            validator.validate(sd_jwt, &forgotten).await,
+            Err(SdJwtValidationError::KeyBindingOptionsMissing)
+        ));
+    }
+
+    // No `cnf`: validated without key binding, a key binding JWT left alone, where the
+    // default policy with key binding options refuses it for want of a holder key.
+    let unbound = SdJwtVcBuilder::new(VCT)
+        .with_issuer(issuer.did.as_str())
+        .with_kid(issuer.kid.as_str())
+        .sign(&issuer.signer)
+        .await
+        .unwrap();
+    let unbound_kb = unbound
+        .clone()
+        .sign_key_binding(&KeyBinding::new(AUDIENCE, NONCE, now()), &holder())
+        .await
+        .unwrap();
+    for sd_jwt in [unbound.sd_jwt(), unbound_kb.sd_jwt()] {
+        for options in [when_cnf(), forgotten.clone()] {
+            let validated = validator.validate(sd_jwt, &options).await.unwrap();
+            assert_eq!(validated.key_binding, None);
+            assert_eq!(validated.holder_key, None);
+        }
+    }
+    assert!(matches!(
+        validator
+            .validate(unbound_kb.sd_jwt(), &with_key_binding())
+            .await,
+        Err(SdJwtValidationError::NoHolderKey(
+            KeyReferenceError::Missing
         ))
     ));
 }
