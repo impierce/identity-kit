@@ -211,6 +211,14 @@ impl FromStr for Timestamp {
 
     /// Parses an RFC 3339 date-time (§5.6) with any offset, as the instant it names.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // `time` takes any character between the date and the time; RFC 3339 writes `T` (or
+        // `t`), and its §5.6 note lets applications use a space, as `chrono` did.
+        if s.as_bytes()
+            .get(10)
+            .is_some_and(|separator| !matches!(separator, b'T' | b't' | b' '))
+        {
+            return Err(TimestampError::Invalid);
+        }
         let time = OffsetDateTime::parse(s, &Rfc3339).map_err(|_| TimestampError::Invalid)?;
         Self::try_from(time)
     }

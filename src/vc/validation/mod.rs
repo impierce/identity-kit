@@ -426,10 +426,13 @@ impl TimeOptions {
     }
 
     /// The validation time, and the earliest and latest times the leeway lets pass for it.
-    pub(crate) fn window(&self) -> (Timestamp, Timestamp, Timestamp) {
+    ///
+    /// The earliest is `None` when the leeway reaches before the range of `Timestamp`, so that
+    /// no expiry counts as passed; the latest saturates, as no time is after
+    /// [`Timestamp::MAX`].
+    pub(crate) fn window(&self) -> (Timestamp, Option<Timestamp>, Timestamp) {
         let now = self.now();
-        // A leeway past the range of `Timestamp` saturates rather than overflowing.
-        let earliest = now.saturating_sub(self.leeway);
+        let earliest = now.checked_sub(self.leeway);
         let latest = now.saturating_add(self.leeway);
         (now, earliest, latest)
     }
@@ -454,7 +457,7 @@ impl TimeOptions {
             return Err(ValidationError::NotYetValid { not_before, now });
         }
         if let Some(expired_at) = expires
-            && expired_at <= earliest
+            && earliest.is_some_and(|earliest| expired_at <= earliest)
         {
             return Err(ValidationError::Expired { expired_at, now });
         }

@@ -751,7 +751,7 @@ impl StatusListToken {
             } else {
                 Timestamp::MAX
             });
-            if expired_at <= earliest {
+            if earliest.is_some_and(|earliest| expired_at <= earliest) {
                 return Err(StatusListError::Expired { expired_at, now });
             }
         }

@@ -3,6 +3,7 @@
 
 use std::time::{Duration, SystemTime};
 
+use identity_kit::vc::validation::{TimeOptions, ValidationError};
 use identity_kit::vc::{Timestamp, TimestampError};
 
 /// RFC 3339 §5.8: each example, the instant it names in UTC as `Timestamp` writes it, and that
@@ -67,6 +68,8 @@ fn refuses_what_rfc_3339_does_not_write() {
         "2010-01-01T19:23:24 UTC",   // a zone name
         "2010-01-01T19:23:24+24:00", // an offset of a whole day
         "2010-13-01T19:23:24Z",      // no 13th month
+        "2010-01-01\u{0}19:23:24Z",  // a NUL between date and time
+        "2010-01-01X19:23:24Z",      // another letter
         "",
     ] {
         assert_eq!(
@@ -77,6 +80,21 @@ fn refuses_what_rfc_3339_does_not_write() {
         assert!(serde_json::from_value::<Timestamp>(serde_json::json!(text)).is_err());
     }
     assert!(serde_json::from_value::<Timestamp>(serde_json::json!(1_262_373_804)).is_err());
+}
+
+/// RFC 3339 §5.6: `T` separates the date and the time, in either case, and its note lets
+/// applications use a space instead.
+#[test]
+fn takes_t_or_a_space_between_date_and_time() {
+    let time: Timestamp = "2010-01-01T19:23:24Z".parse().unwrap();
+    for text in [
+        "2010-01-01t19:23:24Z",
+        "2010-01-01 19:23:24Z",
+        "2010-01-01T19:23:24z",
+    ] {
+        assert_eq!(text.parse::<Timestamp>(), Ok(time), "{text}");
+    }
+    assert!(serde_json::from_str::<Timestamp>(r#""2010-01-01\u000019:23:24Z""#).is_err());
 }
 
 #[test]
@@ -129,4 +147,27 @@ fn orders_adds_and_converts() {
         Err(TimestampError::OutOfRange)
     );
     assert!(Timestamp::now() > earlier);
+}
+
+/// A leeway reaching past either end of the range bounds nothing there: an expiry at the first
+/// instant has not passed one second into a leeway that would reach before it.
+#[test]
+fn a_leeway_past_the_range_bounds_nothing() {
+    let first = TimeOptions::at(Timestamp::MIN);
+    let second = Duration::from_secs(1);
+    assert!(
+        first
+            .with_leeway(second)
+            .check(None, Some(Timestamp::MIN), None)
+            .is_ok()
+    );
+    assert!(matches!(
+        first.check(None, Some(Timestamp::MIN), None),
+        Err(ValidationError::Expired { .. })
+    ));
+    let last = TimeOptions::at(Timestamp::MAX).with_leeway(second);
+    assert!(
+        last.check(Some(Timestamp::MAX), None, Some(Timestamp::MAX))
+            .is_ok()
+    );
 }
