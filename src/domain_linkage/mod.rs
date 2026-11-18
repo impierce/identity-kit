@@ -109,10 +109,22 @@ use crate::jose::{DefaultVerifier, JwsHeader, JwsVerifier, Signer};
 use crate::methods::web::{HttpClient, HttpError, fetchable};
 use crate::resolver::Resolver;
 use crate::vc::validation::{
-    CredentialValidationOptions, DecodedCredential, JwtCredentialValidator, KeyReferenceError,
-    KeyResolver, ValidationError, decode_credential,
+    CredentialValidationOptions, JwtCredentialValidator, KeyReferenceError, KeyResolver,
+    ValidationError, decode_credential_vcdm11,
 };
-use crate::vc::{Credential, CredentialError, Jwt, JwtClaims, Subject};
+use crate::vc::{CredentialError, Jwt, JwtClaims, Subject};
+
+/// A VCDM 1.1 verifiable credential, which a domain linkage credential is.
+///
+/// The DIF Well Known DID Configuration requires the VCDM 1.1 JWT profile, which the rest of
+/// the crate deprecates; this is the same type as the deprecated `vc::Credential`, without the
+/// deprecation.
+pub use crate::vc::credential::Credential;
+/// A validated or decoded VCDM 1.1 credential JWT: a domain linkage credential.
+///
+/// The same type as the deprecated `vc::validation::DecodedCredential`, without the
+/// deprecation.
+pub use crate::vc::validation::credential::DecodedCredential;
 
 /// The context of the DID configuration resource and of domain linkage credentials.
 pub const CONTEXT: &str = "https://identity.foundation/.well-known/did-configuration/v1";
@@ -584,7 +596,7 @@ impl UnverifiedLinkage {
     /// [`DomainLinkageError::InvalidOriginProperty`] or [`DomainLinkageError::InvalidOrigin`]
     /// when its `origin` is not one origin.
     pub fn from_jwt(jwt: &Jwt) -> Result<Self, DomainLinkageError> {
-        let credential = decode_credential(jwt)?.credential;
+        let credential = decode_credential_vcdm11(jwt)?.credential;
         let subject = credential
             .subject()
             .ok_or(DomainLinkageError::SubjectNotDid(None))?;
@@ -972,9 +984,9 @@ impl<R: KeyResolver, V: JwsVerifier> DomainLinkageValidator<R, V> {
         options: &CredentialValidationOptions,
     ) -> Result<DecodedCredential, DomainLinkageError> {
         let expected = normalize_origin(origin.as_str())?;
-        let decoded = decode_credential(jwt)?;
+        let decoded = decode_credential_vcdm11(jwt)?;
         check_format(&decoded, &expected)?;
-        self.credentials.validate(jwt, options).await?;
+        self.credentials.validate_vcdm11(jwt, options).await?;
         Ok(decoded)
     }
 

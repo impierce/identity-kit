@@ -21,6 +21,7 @@ use super::{CredentialError, JwtClaims, Party, Subject, TypedObject, claims};
 /// # Examples
 ///
 /// ```
+/// # #![allow(deprecated)]
 /// use chrono::{TimeZone as _, Utc};
 /// use identity_kit::did::Uri;
 /// use identity_kit::vc::{Credential, Subject};
@@ -46,6 +47,13 @@ use super::{CredentialError, JwtClaims, Party, Subject, TypedObject, claims};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 #[serde(remote = "Self")]
+#[cfg_attr(
+    not(feature = "domain-linkage"),
+    expect(
+        clippy::struct_field_names,
+        reason = "the data model's property names; reachable only through the deprecated alias without `domain-linkage`, so clippy no longer sees the type as exported"
+    )
+)]
 pub struct Credential {
     /// `@context`, starting with [`Credential::CONTEXT`].
     #[serde(rename = "@context")]

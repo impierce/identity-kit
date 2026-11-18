@@ -3,6 +3,7 @@
 //! response bodies and tokens never panic the fetcher, decoder or validator, and a built
 //! presentation maps to JWT claims and back unchanged.
 #![no_main]
+#![expect(deprecated, reason = "fuzzes the deprecated VCDM 1.1 form next to VCDM 2.0")]
 
 use std::future::Future;
 use std::pin::pin;

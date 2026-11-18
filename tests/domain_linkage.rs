@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidDocument, DidUrl, ResolutionErrorKind, ServiceEndpoint, Uri};
 use identity_kit::domain_linkage::{
-    CONTEXT, CREDENTIAL_TYPE, DomainLinkageClient, DomainLinkageConfiguration,
+    CONTEXT, CREDENTIAL_TYPE, Credential, DomainLinkageClient, DomainLinkageConfiguration,
     DomainLinkageCredentialBuilder, DomainLinkageError, DomainLinkageValidator, LinkedDid,
     SERVICE_TYPE, UnverifiedLinkage, configuration_url, fetch_configuration, normalize_origin,
     service, services,
@@ -33,9 +33,9 @@ use identity_kit::methods::web::DidWeb;
 use identity_kit::resolver::Resolver;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver,
-    KeyRole, TimeOptions, ValidationError, decode_credential,
+    KeyRole, TimeOptions, ValidationError,
 };
-use identity_kit::vc::{Credential, Jwt, JwtClaims, Subject};
+use identity_kit::vc::{Jwt, JwtClaims, Subject};
 use serde_json::{Value, json};
 use url::Url;
 
@@ -224,7 +224,13 @@ async fn validators_refuse_a_configuration_without_entries() {
 }
 
 #[test]
+#[expect(
+    deprecated,
+    reason = "decodes the specification's example with the general VCDM 1.1 decoder"
+)]
 fn example_jwt_decodes_to_the_published_header_and_payload() {
+    use identity_kit::vc::validation::decode_credential;
+
     let decoded = decode_credential(&example_jwt()).unwrap();
     let header: Value =
         serde_json::from_str(include_str!("vectors/did_configuration/header.json")).unwrap();
