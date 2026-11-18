@@ -794,36 +794,25 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
         Some(Value::String(alg)) => {
             alg.parse::<JweAlgorithm>()?;
         }
-        Some(other) => return Err(JweError::UnsupportedAlgorithm(shown(&other.to_string()))),
+        Some(other) => return Err(JweError::UnsupportedAlgorithm(shown_value(other))),
         None => return Err(JweError::invalid_header("missing `alg`")),
     }
     match object.get("enc") {
         Some(Value::String(enc)) => {
             enc.parse::<JweEncryption>()?;
         }
-        Some(other) => return Err(JweError::UnsupportedEncryption(shown(&other.to_string()))),
+        Some(other) => return Err(JweError::UnsupportedEncryption(shown_value(other))),
         None => return Err(JweError::invalid_header("missing `enc`")),
     }
     if let Some(zip) = object.get("zip") {
-        let zip = zip.as_str().map_or_else(|| zip.to_string(), str::to_owned);
-        return Err(JweError::UnsupportedCompression(shown(&zip)));
+        return Err(JweError::UnsupportedCompression(shown_value(zip)));
     }
     // Read from the JSON itself: `"crit": null` deserializes as no `crit` at all, and an
     // array is the only form RFC 7516 §4.1.13 allows.
     match object.get("crit") {
         None => {}
         Some(Value::Array(names)) => {
-            let names = names
-                .iter()
-                .take(8)
-                .map(|name| {
-                    shown(
-                        &name
-                            .as_str()
-                            .map_or_else(|| name.to_string(), str::to_owned),
-                    )
-                })
-                .collect();
+            let names = names.iter().take(8).map(shown_value).collect();
             return Err(JweError::UnsupportedCritical(names));
         }
         Some(_) => return Err(JweError::invalid_header("`crit` is not an array")),
@@ -849,6 +838,20 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
             .any(|name| epk.contains_key(*name))
     {
         return Err(JweError::invalid_key("`epk` has private parameters"));
+    }
+    // `jwk` is a public key too (RFC 7516 §4.1.5): a private one in the header would travel
+    // unencrypted. Encryption decodes its own header, so it refuses one as well.
+    match object.get("jwk") {
+        None => {}
+        Some(Value::Object(jwk)) => {
+            if PRIVATE_JWK_MEMBERS
+                .iter()
+                .any(|name| jwk.contains_key(*name))
+            {
+                return Err(JweError::invalid_header("`jwk` has private parameters"));
+            }
+        }
+        Some(_) => return Err(JweError::invalid_header("`jwk` is not a JSON object")),
     }
     // The JSON error is quoted cut short: it can repeat a string from the token.
     let header: JweHeader = serde_json::from_value(value).map_err(|e| {
@@ -883,6 +886,19 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
 
 /// The members of a JWK that are private parameters (RFC 7518 §6.2.2, §6.3.2 and §6.4).
 const PRIVATE_JWK_MEMBERS: [&str; 8] = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
+
+/// A JSON value read from the token, for an error: a string cut as [`shown`] cuts it, any other
+/// value named by its type rather than serialized, as it can be large.
+fn shown_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => shown(value),
+        Value::Null => "null".to_owned(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(_) => "a number".to_owned(),
+        Value::Array(_) => "an array".to_owned(),
+        Value::Object(_) => "an object".to_owned(),
+    }
+}
 
 /// At most the first [`SHOWN_LEN`] characters of `value`, with `…` when there were more.
 fn shown(value: &str) -> String {

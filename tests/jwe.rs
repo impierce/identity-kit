@@ -400,6 +400,62 @@ fn header_members_have_their_types() {
     );
 }
 
+/// `jwk` is a public key (RFC 7516 §4.1.5): a private one would travel unencrypted.
+#[test]
+fn a_private_jwk_header_is_refused() {
+    let private = serde_json::to_value(other_jwk()).unwrap();
+    let in_token = with_header(|header| {
+        header.insert("jwk".to_owned(), private.clone());
+    });
+    assert!(matches!(
+        decode_err(&in_token),
+        JweError::InvalidHeader { .. }
+    ));
+    let not_an_object = with_header(|header| {
+        header.insert("jwk".to_owned(), json!("key"));
+    });
+    assert!(matches!(
+        decode_err(&not_an_object),
+        JweError::InvalidHeader { .. }
+    ));
+    let public = verifier_jwk().public();
+    let with_jwk = |jwk: Value| {
+        let mut header = JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
+        header.additional.insert("jwk".to_owned(), jwk);
+        CompactJwe::encrypt(header, b"{}", &public)
+    };
+    assert!(matches!(
+        with_jwk(private),
+        Err(JweError::InvalidHeader { .. })
+    ));
+    assert!(with_jwk(serde_json::to_value(other_jwk().public()).unwrap()).is_ok());
+}
+
+/// A value of another type than due is named by its type, not quoted whole.
+#[test]
+fn values_of_other_types_are_named_by_type() {
+    let long = json!(vec!["A".repeat(1000); 100]);
+    let alg = with_header(|header| {
+        header.insert("alg".to_owned(), long.clone());
+    });
+    assert!(matches!(decode_err(&alg), JweError::UnsupportedAlgorithm(alg) if alg == "an array"));
+    let enc = with_header(|header| {
+        header.insert("enc".to_owned(), json!({"a": long.clone()}));
+    });
+    assert!(matches!(decode_err(&enc), JweError::UnsupportedEncryption(enc) if enc == "an object"));
+    let zip = with_header(|header| {
+        header.insert("zip".to_owned(), json!(7));
+    });
+    assert!(matches!(decode_err(&zip), JweError::UnsupportedCompression(zip) if zip == "a number"));
+    let crit = with_header(|header| {
+        header.insert("crit".to_owned(), json!([long, null, true]));
+    });
+    assert!(matches!(
+        decode_err(&crit),
+        JweError::UnsupportedCritical(names) if names == ["an array", "null", "true"]
+    ));
+}
+
 /// A crit list is named in its first eight members.
 #[test]
 fn unsupported_critical_names_are_cut_to_eight() {
