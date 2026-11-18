@@ -387,8 +387,10 @@ fn header_members_have_their_types() {
         header.insert("epk".to_owned(), json!(long));
     });
     let error = decode_err(&epk_string);
-    assert!(matches!(error, JweError::InvalidHeader { .. }));
-    assert!(error.to_string().len() < 300, "{error}");
+    assert!(
+        matches!(&error, JweError::InvalidHeader { reason, source: None } if reason == "`epk` is not a JSON object"),
+        "{error}"
+    );
 }
 
 /// RFC 7518 §4.6.1.1: `epk` is present, public and, for a P-256 recipient, a P-256 point.
@@ -406,6 +408,16 @@ fn the_ephemeral_key_is_checked() {
         header["epk"]["d"] = json!("Et-3ce0omz8_TuZ96Df9lp0GAaaDoUnDe6X-CRO7Aww");
     });
     assert!(matches!(decode_err(&private), JweError::InvalidKey { .. }));
+    // A private parameter in any form, `null` included, which would otherwise read as absent.
+    for (name, value) in [("d", Value::Null), ("k", json!("AQ")), ("oth", json!([]))] {
+        let private = with_header(|header| {
+            header["epk"][name] = value;
+        });
+        assert!(
+            matches!(decode_err(&private), JweError::InvalidKey { .. }),
+            "{name}"
+        );
+    }
 
     // A point off the curve, the start of an invalid-curve attack.
     let off_curve = with_header(|header| {

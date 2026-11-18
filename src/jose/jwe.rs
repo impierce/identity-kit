@@ -836,8 +836,20 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
             )));
         }
     }
-    // The JSON error is quoted cut short: it can repeat a string from the token, such as an
-    // `epk` given as one.
+    // `epk` holds only public parameters (RFC 7518 §4.6.1.1): a private one present in any
+    // form, `null` included, is refused before it could read as absent.
+    match object.get("epk") {
+        None | Some(Value::Object(_)) => {}
+        Some(_) => return Err(JweError::invalid_header("`epk` is not a JSON object")),
+    }
+    if let Some(Value::Object(epk)) = object.get("epk")
+        && PRIVATE_JWK_MEMBERS
+            .iter()
+            .any(|name| epk.contains_key(*name))
+    {
+        return Err(JweError::invalid_key("`epk` has private parameters"));
+    }
+    // The JSON error is quoted cut short: it can repeat a string from the token.
     let header: JweHeader = serde_json::from_value(value).map_err(|e| {
         JweError::invalid_header(&format!("a member is malformed: {}", shown(&e.to_string())))
     })?;
@@ -865,6 +877,9 @@ fn parse_header(json: &[u8]) -> Result<JweHeader, JweError> {
     }
     Ok(header)
 }
+
+/// The members of a JWK that are private parameters (RFC 7518 §6.2.2, §6.3.2 and §6.4).
+const PRIVATE_JWK_MEMBERS: [&str; 8] = ["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
 
 /// At most the first [`SHOWN_LEN`] characters of `value`, with `…` when there were more.
 fn shown(value: &str) -> String {
