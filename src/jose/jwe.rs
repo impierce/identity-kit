@@ -940,7 +940,7 @@ fn recipient_public_key(recipient: &Jwk, alg: JweAlgorithm) -> Result<p256::Publ
 }
 
 /// `key_ops`, when `jwk` has them, allow no signature operation, which would contradict a key
-/// meant for encryption (RFC 7517 §4.3: `use` and `key_ops` "MUST be consistent"); a private
+/// meant for encryption, nor any operation twice (RFC 7517 §4.3); a private
 /// key's must also allow key agreement (`deriveKey` or `deriveBits`). A public key's need not:
 /// in the Web Crypto API the private key holds the agreement usages, and an exported ECDH
 /// public key has `"key_ops": []`.
@@ -948,6 +948,12 @@ fn check_agreement_key_ops(jwk: &Jwk, whose: &str, private: bool) -> Result<(), 
     let Some(ops) = jwk.key_ops() else {
         return Ok(());
     };
+    // "Duplicate key operation values MUST NOT be present in the array" (RFC 7517 §4.3).
+    if ops.iter().enumerate().any(|(i, op)| ops[..i].contains(op)) {
+        return Err(JweError::invalid_key(&format!(
+            "{whose} `key_ops` repeat an operation"
+        )));
+    }
     if private && !ops.iter().any(|op| op == "deriveKey" || op == "deriveBits") {
         return Err(JweError::invalid_key(&format!(
             "{whose} `key_ops` allow no key agreement"

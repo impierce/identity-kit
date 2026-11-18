@@ -424,7 +424,13 @@ fn what_other_implementations_produce_is_accepted() {
     let header = || JweHeader::new(JweAlgorithm::EcdhEs, JweEncryption::A128Gcm);
     let public = verifier_jwk().public();
     // A public key need not list agreement: WebCrypto exports an ECDH public key with
-    // `"key_ops": []`, its private key holding `deriveBits`.
+    // `"key_ops": []`, its private key holding `deriveBits`. Read from JSON, as it arrives.
+    let mut exported = serde_json::to_value(&public).unwrap();
+    exported["key_ops"] = json!([]);
+    exported["ext"] = json!(true);
+    let exported: Jwk = serde_json::from_value(exported).unwrap();
+    assert_eq!(exported.alg(), Some("ECDH-ES"));
+    assert!(CompactJwe::encrypt(header(), b"{}", &exported).is_ok());
     for ops in [&[][..], &["encrypt"][..]] {
         assert!(
             CompactJwe::encrypt(
@@ -439,6 +445,19 @@ fn what_other_implementations_produce_is_accepted() {
     assert!(CompactJwe::encrypt(header().with_apu(b"").with_apv(b""), b"{}", &public).is_ok());
     // A private key must still allow key agreement when it lists `key_ops`.
     assert!(EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["deriveBits"])).is_ok());
+    // "Duplicate key operation values MUST NOT be present in the array" (RFC 7517 §4.3).
+    assert!(matches!(
+        EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["deriveBits", "deriveBits"])),
+        Err(JweError::InvalidKey { .. })
+    ));
+    assert!(matches!(
+        CompactJwe::encrypt(
+            header(),
+            b"{}",
+            &public.clone().with_key_ops(["encrypt", "encrypt"])
+        ),
+        Err(JweError::InvalidKey { .. })
+    ));
     assert!(matches!(
         EcdhKey::from_jwk(&verifier_jwk().with_key_ops(["encrypt"])),
         Err(JweError::InvalidKey { .. })
