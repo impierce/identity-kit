@@ -3,6 +3,7 @@
 //! P-256 key of RFC 7515 Appendix A.3), who presents them. Every negative case the issue
 //! lists: expired, not yet valid, wrong audience, wrong holder, unresolvable `kid`, and more.
 #![cfg(all(feature = "vc", feature = "did-key", feature = "did-jwk"))]
+#![expect(deprecated, reason = "tests the deprecated VCDM 1.1 JWT profile")]
 #![expect(
     clippy::too_many_lines,
     reason = "a test walks through a specification example from start to end"
