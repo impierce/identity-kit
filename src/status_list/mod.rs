@@ -737,10 +737,10 @@ impl StatusListToken {
         }
         let (now, earliest, latest) = time.window();
         // An `iat` past the range `chrono` represents is as far in the future or past as its sign.
-        let issued_at = JwtClaims::timestamp(self.iat).unwrap_or(if self.iat > 0 {
-            DateTime::<Utc>::MAX_UTC
-        } else {
+        let issued_at = JwtClaims::timestamp(self.iat).unwrap_or(if self.iat.is_negative() {
             DateTime::<Utc>::MIN_UTC
+        } else {
+            DateTime::<Utc>::MAX_UTC
         });
         if issued_at > latest {
             return Err(StatusListError::NotYetIssued { issued_at, now });

@@ -413,4 +413,35 @@ mod tests {
         assert!(entry.is_live(now.checked_sub(Duration::from_nanos(1)).unwrap()));
         assert!(!entry.is_live(now));
     }
+
+    /// A client for tests that never fetch.
+    struct Offline;
+
+    #[async_trait::async_trait]
+    impl HttpClient for Offline {
+        async fn get(&self, url: &Url) -> Result<crate::methods::web::HttpResponse, HttpError> {
+            Err(HttpError::msg(format!("offline: {url}")))
+        }
+    }
+
+    /// Two fetches of one issuer can both miss and both store; the second replaces the first's
+    /// entry and evicts no other issuer's live key set, even when the cache is full.
+    #[test]
+    fn storing_an_issuer_again_evicts_no_other_issuer() {
+        let resolver = JwksResolver::new(Offline).with_capacity(2);
+        let other = Url::parse("https://other.example").unwrap();
+        let issuer = Url::parse("https://issuer.example").unwrap();
+        // The other issuer's entry expires first, so a full cache would evict it.
+        resolver.cache.write().unwrap().insert(
+            other.clone(),
+            Entry {
+                keys: Arc::from([]),
+                expires_at: Instant::now().checked_add(Duration::from_secs(60)),
+            },
+        );
+        resolver.store(&issuer, Arc::from([]));
+        resolver.store(&issuer, Arc::from([]));
+        assert!(resolver.cached(&other).is_some());
+        assert!(resolver.cached(&issuer).is_some());
+    }
 }
