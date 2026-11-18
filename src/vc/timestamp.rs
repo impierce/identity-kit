@@ -4,6 +4,7 @@ use core::fmt;
 use core::str::FromStr;
 use core::time::Duration;
 use std::borrow::Cow;
+use std::time::SystemTime;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::format_description::well_known::Rfc3339;
@@ -19,7 +20,7 @@ use time::{OffsetDateTime, UtcOffset};
 /// [`unix_seconds`](Self::unix_seconds).
 ///
 /// The type keeps the public API off any date and time crate; it is built on `time`, and
-/// converts to and from [`SystemTime`](std::time::SystemTime).
+/// converts to and from [`SystemTime`] where both reach the instant.
 ///
 /// # Examples
 ///
@@ -156,17 +157,52 @@ impl TryFrom<OffsetDateTime> for Timestamp {
     }
 }
 
-impl TryFrom<std::time::SystemTime> for Timestamp {
+impl TryFrom<SystemTime> for Timestamp {
     type Error = TimestampError;
 
-    fn try_from(time: std::time::SystemTime) -> Result<Self, Self::Error> {
-        Self::try_from(OffsetDateTime::from(time))
+    /// The instant `time` names, when it is in range. Converted through its distance from the
+    /// Unix epoch, as `time`'s own conversion panics on a `SystemTime` it cannot represent.
+    fn try_from(time: SystemTime) -> Result<Self, Self::Error> {
+        let seconds = |duration: Duration| i64::try_from(duration.as_secs()).ok();
+        let (seconds, nanosecond) = match time.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(after) => (seconds(after), after.subsec_nanos()),
+            Err(before) => {
+                let before = before.duration();
+                match before.subsec_nanos() {
+                    0 => (seconds(before).map(|seconds| -seconds), 0),
+                    nanos => (
+                        seconds(before).map(|seconds| -seconds - 1),
+                        1_000_000_000 - nanos,
+                    ),
+                }
+            }
+        };
+        let whole = seconds
+            .and_then(Self::from_unix_seconds)
+            .ok_or(TimestampError::OutOfRange)?;
+        let time = whole
+            .0
+            .replace_nanosecond(nanosecond)
+            .map_err(|_| TimestampError::OutOfRange)?;
+        Ok(Self(time))
     }
 }
 
-impl From<Timestamp> for std::time::SystemTime {
-    fn from(time: Timestamp) -> Self {
-        time.0.into()
+impl TryFrom<Timestamp> for SystemTime {
+    type Error = TimestampError;
+
+    /// The `SystemTime` of `time`, when the platform's clock reaches it: Windows counts from
+    /// 1601, for one.
+    fn try_from(time: Timestamp) -> Result<Self, Self::Error> {
+        let seconds = time.unix_seconds();
+        let whole = if seconds.is_negative() {
+            SystemTime::UNIX_EPOCH.checked_sub(Duration::from_secs(seconds.unsigned_abs()))
+        } else {
+            SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds.unsigned_abs()))
+        };
+        whole
+            .and_then(|whole| whole.checked_add(Duration::from_nanos(u64::from(time.nanosecond()))))
+            .ok_or(TimestampError::OutOfRange)
     }
 }
 
@@ -215,8 +251,9 @@ pub enum TimestampError {
     /// The text is not an RFC 3339 date-time.
     #[error("not an RFC 3339 date-time")]
     Invalid,
-    /// The instant is before year 0 or after year 9999 in UTC.
-    #[error("outside the years 0000 to 9999 in UTC")]
+    /// The instant is before year 0 or after year 9999 in UTC, or, converting to a
+    /// `SystemTime`, out of the platform's range.
+    #[error("outside the years 0000 to 9999 in UTC, or the range of the system clock")]
     OutOfRange,
 }
 

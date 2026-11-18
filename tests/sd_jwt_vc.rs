@@ -890,6 +890,18 @@ fn status_list_token_times() {
         let result = token.status_of(&StatusListRef::new(uri, 0), now);
         assert_eq!(result.is_ok(), issued, "{iat}: {result:?}");
     }
+    // So is an `exp`: one after year 9999 has not passed, one before year 0 has.
+    for (exp, valid) in [
+        (253_402_300_800, true),
+        (i64::MAX, true),
+        (-62_167_219_201, false),
+        (i64::MIN, false),
+    ] {
+        let mut token = token.clone();
+        token.exp = Some(exp);
+        let result = token.status_of(&StatusListRef::new(uri, 0), now);
+        assert_eq!(result.is_ok(), valid, "{exp}: {result:?}");
+    }
 }
 
 #[test]

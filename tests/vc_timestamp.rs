@@ -110,7 +110,23 @@ fn orders_adds_and_converts() {
             .to_string(),
         "2010-01-01T19:23:24.5Z"
     );
-    let system = SystemTime::from(earlier);
+    let system = SystemTime::try_from(earlier).unwrap();
     assert_eq!(Timestamp::try_from(system), Ok(earlier));
+    // Before the epoch, in whole seconds and with a fraction.
+    let second_before = Timestamp::from_unix_seconds(-1).unwrap();
+    let system = SystemTime::try_from(second_before).unwrap();
+    assert_eq!(Timestamp::try_from(system), Ok(second_before));
+    let before: Timestamp = "1937-01-01T11:40:27.87Z".parse().unwrap();
+    let system = SystemTime::try_from(before).unwrap();
+    assert_eq!(Timestamp::try_from(system), Ok(before));
+    assert_eq!(
+        SystemTime::UNIX_EPOCH.duration_since(system).unwrap(),
+        Duration::new(1_041_337_172, 130_000_000)
+    );
+    let year_11476 = SystemTime::UNIX_EPOCH + Duration::from_hours(83_333_334);
+    assert_eq!(
+        Timestamp::try_from(year_11476),
+        Err(TimestampError::OutOfRange)
+    );
     assert!(Timestamp::now() > earlier);
 }

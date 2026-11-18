@@ -39,7 +39,8 @@ comparing the instant each reads and the text each writes back:
    `Timestamp`: an instant in UTC, to the nanosecond, from `0000-01-01T00:00:00Z` to
    `9999-12-31T23:59:59.999999999Z`, the instants RFC 3339 can write. It serializes as RFC 3339
    in UTC with as many fractional digits as needed, parses RFC 3339 with any offset, converts
-   to and from `NumericDate` seconds (`from_unix_seconds`, `unix_seconds`) and `SystemTime`, and
+   to and from `NumericDate` seconds (`from_unix_seconds`, `unix_seconds`) and, where both
+   reach the instant, `SystemTime` (`time`'s own conversion panics where they do not), and
    adds and subtracts `core::time::Duration` (checked, saturating, or panicking on overflow as
    `SystemTime` does). The public API names no date-time crate, so the next change of crate does
    not break callers again, and no field needs a serde attribute. It lives in `vc`, the module
