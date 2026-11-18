@@ -5,6 +5,7 @@
 
 use core::fmt;
 use core::str::FromStr;
+use std::collections::HashSet;
 use std::error::Error;
 
 use aes_gcm::aead::{AeadInOut, KeyInit, Nonce, Tag};
@@ -948,8 +949,10 @@ fn check_agreement_key_ops(jwk: &Jwk, whose: &str, private: bool) -> Result<(), 
     let Some(ops) = jwk.key_ops() else {
         return Ok(());
     };
-    // "Duplicate key operation values MUST NOT be present in the array" (RFC 7517 §4.3).
-    if ops.iter().enumerate().any(|(i, op)| ops[..i].contains(op)) {
+    // "Duplicate key operation values MUST NOT be present in the array" (RFC 7517 §4.3); one
+    // pass, as a recipient key from another party can list any number of operations.
+    let mut seen = HashSet::with_capacity(ops.len());
+    if !ops.iter().all(|op| seen.insert(op.as_str())) {
         return Err(JweError::invalid_key(&format!(
             "{whose} `key_ops` repeat an operation"
         )));
