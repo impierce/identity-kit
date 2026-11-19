@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/impierce/identity-kit/compare/v0.6.0...v0.7.0) - 2026-11-19
+
+### Added
+
+- *(vc)* [**breaking**] move timestamps from `chrono` to `time` ([#190](https://github.com/impierce/identity-kit/pull/190))
+
 ## [0.6.0](https://github.com/impierce/identity-kit/compare/v0.5.1...v0.6.0) - 2026-11-19
 
 ### Added
