@@ -205,6 +205,137 @@ async fn rfc8037_key_as_thumbprint_reproduces_the_appendix_a_jws() {
         .unwrap();
 }
 
+/// The `did:jwk` of the RFC 8037 Appendix A key with `"alg": "EdDSA"` and its thumbprint as
+/// `kid`: the base64url of `{"alg":"EdDSA","crv":"Ed25519","kid":"kPrK_…","kty":"OKP","x":"11qY…"}`.
+const RFC8037_DID_JWK: &str = "did:jwk:eyJhbGciOiJFZERTQSIsImNydiI6IkVkMjU1MTkiLCJraWQiOiJrUHJLX3FteFZXYVlWQTl3d0JGNkl1bzN2Vnp6N1R4SENUd1hCeWdyUzRrIiwia3R5IjoiT0tQIiwieCI6IjExcVlBWUt4Q3JmVlNfN1R5V1FIT2c3aGN2UGFwaU1scndJYWFQY0hVUm8ifQ";
+
+/// A store's key id stays out of what the identity publishes: the `did:jwk` and the public key
+/// carry the thumbprint as `kid`, so the key has one `did:jwk` whatever store holds it.
+#[tokio::test]
+async fn a_store_label_stays_out_of_the_did_jwk() {
+    const LABEL: &str = "arn:aws:kms:eu-central-1:111122223333:key/example";
+    let dir = tempfile::tempdir().unwrap();
+    let key = |kid: Option<&str>| {
+        let mut jwk: serde_json::Value = serde_json::from_str(RFC8037_A1).unwrap();
+        jwk["alg"] = json!("EdDSA");
+        if let Some(kid) = kid {
+            jwk["kid"] = json!(kid);
+        }
+        jwk
+    };
+    let mut identifiers = Vec::new();
+    for (name, kid, id) in [
+        ("labelled.json", Some(LABEL), LABEL),
+        ("unlabelled.json", None, RFC8037_THUMBPRINT),
+    ] {
+        let path = dir.path().join(name);
+        write_key_set(&path, &json!({ "keys": [key(kid)] }).to_string());
+        let store: Arc<dyn KeyStore> = Arc::new(SoftwareKeyStore::open(&path).unwrap());
+        // The store's own public key keeps its key id: the contract is unchanged.
+        let stored = store.public_jwk(&KeyId::new(id)).await.unwrap();
+        assert_eq!(stored.kid(), Some(id));
+        let identity = KeyStoreIdentity::new(store)
+            .with_producer(DidKey::default())
+            .with_producer(DidJwk);
+        let kind = did_kind("did:jwk");
+        let did = identity
+            .bind(kind.clone(), JwsAlgorithm::EdDSA, KeyId::new(id))
+            .await
+            .unwrap();
+        assert_eq!(did.to_string(), RFC8037_DID_JWK, "{name}");
+        let public = identity
+            .public_jwk(&kind, JwsAlgorithm::EdDSA)
+            .await
+            .unwrap();
+        assert_eq!(public.kid(), Some(RFC8037_THUMBPRINT));
+        assert_eq!(public.alg(), Some("EdDSA"));
+        assert!(!serde_json::to_string(&public).unwrap().contains("arn:"));
+        sign_and_resolve(
+            &identity,
+            &kind,
+            JwsAlgorithm::EdDSA,
+            VerificationRelationship::AssertionMethod,
+        )
+        .await;
+        identifiers.push(did);
+    }
+    assert_eq!(identifiers[0], identifiers[1]);
+}
+
+/// The `did:jwk` of the RFC 7638 §3.1 key with its thumbprint as `kid` and no `alg`: the
+/// base64url of `{"e":"AQAB","kid":"NzbL…","kty":"RSA","n":"0vx7…"}`.
+const RFC7638_DID_JWK: &str = "did:jwk:eyJlIjoiQVFBQiIsImtpZCI6Ik56YkxzWGg4dURDY2QtNk1Od1hGNFdfN25vV1hGWkFmSGt4WnNSR0M5WHMiLCJrdHkiOiJSU0EiLCJuIjoiMHZ4N2Fnb2ViR2NRU3V1UGlMSlhacHROOW5uZHJRbWJYRXBzMmFpQUZiV2hNNzhMaFd4NGNiYmZBQXRWVDg2end1MVJLN2FQRkZ4dWhEUjFMNnRTb2NfQkpFQ1BlYldLUlhqQlpDaUZWNG4zb2tuamhNc3RuNjR0Wl8yVy01SnNHWTRIYzVuOXlCWEFyd2w5M2xxdDdfUk41dzZDZjBoNFF5UTV2LTY1WUdqUVIwX0ZEVzJRdnpxWTM2OFFRTWljQXRhU3F6czhLSlpnblliOWM3ZDB6Z2RBWkh6dTZxTVF2Ukw1aGFqcm4xbjkxQ2JPcGJJU0QwOHFOTHlyZGt0LWJGVFdoQUk0dk1RRmg2V2VadTBmTTRsRmQyTmNSd3IzWFBrc0lOSGFRLUdfeEJuaUlxYncwTHMxakY0NC1jc0ZDdXIta0VnVThhd2FwSnpLbnFES2d3In0";
+
+/// What a store adds beyond the key and its `alg` is not published: a store's `kid`, `use`,
+/// `key_ops` or other member, and no `alg` when the store gives none.
+#[tokio::test]
+async fn only_the_key_its_alg_and_its_thumbprint_are_published() {
+    let store = Fixed(json!({
+        "kty": "RSA", "n": RFC7638_RSA_N, "e": "AQAB",
+        "kid": "arn:aws:kms:eu-central-1:111122223333:key/example",
+        "use": "sig", "key_ops": ["verify"], "x5t#S256": "AQ"
+    }));
+    let identity = KeyStoreIdentity::new(Arc::new(store)).with_producer(DidJwk);
+    let kind = did_kind("did:jwk");
+    let did = identity
+        .bind(kind.clone(), JwsAlgorithm::RS256, KeyId::new("key"))
+        .await
+        .unwrap();
+    assert_eq!(did.to_string(), RFC7638_DID_JWK);
+    let public = identity
+        .public_jwk(&kind, JwsAlgorithm::RS256)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&public).unwrap(),
+        json!({ "kty": "RSA", "n": RFC7638_RSA_N, "e": "AQAB", "kid": RFC7638_THUMBPRINT })
+    );
+
+    // A key bound as the verification method of a DID the caller names is published the same
+    // way.
+    let url = DidUrl::parse("did:web:example.com#key-1").unwrap();
+    identity
+        .bind_did_url(
+            did_kind("did:web"),
+            JwsAlgorithm::RS256,
+            KeyId::new("key"),
+            url,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        identity
+            .public_jwk(&did_kind("did:web"), JwsAlgorithm::RS256)
+            .await
+            .unwrap(),
+        public
+    );
+}
+
+/// A key without the members its thumbprint covers cannot be published, whatever it is bound
+/// as.
+#[tokio::test]
+async fn a_key_without_its_required_members_is_refused() {
+    let store = Fixed(json!({ "kty": "RSA", "e": "AQAB", "alg": "RS256" }));
+    let identity = KeyStoreIdentity::new(Arc::new(store)).with_producer(DidJwk);
+    let key = || KeyId::new("key");
+    let url = DidUrl::parse("did:web:example.com#key-1").unwrap();
+    for result in [
+        identity
+            .bind(did_kind("did:jwk"), JwsAlgorithm::RS256, key())
+            .await,
+        identity
+            .bind(IdentityKind::JwkThumbprint, JwsAlgorithm::RS256, key())
+            .await,
+        identity
+            .bind_did_url(did_kind("did:web"), JwsAlgorithm::RS256, key(), url)
+            .await,
+    ] {
+        assert!(matches!(result, Err(IdentityError::Jwk(_))), "{result:?}");
+    }
+    assert!(identity.bindings().is_empty());
+}
+
 #[tokio::test]
 async fn rfc7638_key_gives_the_section_3_1_thumbprint() {
     let identity = KeyStoreIdentity::new(Arc::new(PublicOnly));
@@ -821,6 +952,31 @@ impl KeyStore for PublicOnly {
 
     async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError> {
         Ok(key.as_str() == "2011-04-29")
+    }
+}
+
+/// A store holding one RS256 key, `"key"`, whose public JWK is `jwk` as the store gives it.
+struct Fixed(serde_json::Value);
+
+#[async_trait::async_trait]
+impl KeyStore for Fixed {
+    fn capabilities(&self) -> KeyStoreCapabilities {
+        KeyStoreCapabilities::new([JwsAlgorithm::RS256])
+    }
+
+    async fn public_jwk(&self, key: &KeyId) -> Result<Jwk, KeyStoreError> {
+        if key.as_str() != "key" {
+            return Err(KeyStoreError::NotFound(key.clone()));
+        }
+        Ok(serde_json::from_value(self.0.clone()).unwrap())
+    }
+
+    async fn sign(&self, _: &KeyId, _: JwsAlgorithm, _: &[u8]) -> Result<Vec<u8>, KeyStoreError> {
+        Err(KeyStoreError::Unsupported("sign"))
+    }
+
+    async fn exists(&self, key: &KeyId) -> Result<bool, KeyStoreError> {
+        Ok(key.as_str() == "key")
     }
 }
 

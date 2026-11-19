@@ -61,6 +61,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | -------------------------------------------------------------------------------------------------------- | :----: | ------------- | ----------------------------------------------- | --------------------------------------------------------- |
 | `Identity` trait, `IdentityKind` (`Did(DidMethod)`, `JwkThumbprint`), `Identifier` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7638][rfc7638], [SIOPv2][siopv2]           | [#52](https://github.com/impierce/identity-kit/issues/52) |
 | `KeyStoreIdentity`: vendor-agnostic implementation over any `KeyStore` and the registered `DidProducer`s, opt-in key generation |   ✅   |               |                                                 | [#52](https://github.com/impierce/identity-kit/issues/52) |
+| `KeyStoreIdentity` publishes the key with its RFC 7638 thumbprint as `kid`, never the store's key id: one `did:jwk` per key and `alg`, whatever store holds it |   ✅   |               | [did:jwk][did-jwk], [RFC 7638][rfc7638]          | [#174](https://github.com/impierce/identity-kit/issues/174) |
 
 ### `resolver`: resolution and production
 

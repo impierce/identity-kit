@@ -260,6 +260,10 @@ pub struct KeyStoreIdentity { .. }   // over any KeyStore + DidProducers; bind(k
 - No external-signer hook: a remote or hardware signer is a `KeyStore`.
 - `KeyStoreIdentity` is vendor-agnostic; a KMS crate that implements `KeyStore` needs no glue.
   It binds existing keys and generates on first use only when asked (ADR 0006).
+- What `KeyStoreIdentity` publishes, in a DID it derives and from `public_jwk`, is the key's
+  required members, the store's `alg` and the RFC 7638 thumbprint as `kid`: never the store's
+  own key id (a label, a cloud key ARN), and the same `did:jwk` in every store that gives the
+  key the same `alg`.
 
 ## `resolver` and `methods`
 
