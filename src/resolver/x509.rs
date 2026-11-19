@@ -381,6 +381,8 @@ struct Usage {
 
 /// What an X.509 certificate says: its subject and issuer, the names of its Subject
 /// Alternative Name extension, its validity period, its key identifiers and its public key.
+/// [`chain_matches_authority_key_identifiers`](Self::chain_matches_authority_key_identifiers)
+/// answers an `aki` trusted authorities query of OID4VP for a whole `x5c` chain.
 ///
 /// Reading a certificate verifies nothing: [`X509Resolver`] decides whether it is trusted.
 /// With an `x5c` header the issuer of a token is the subject of the first certificate, so this
@@ -590,6 +592,76 @@ impl X509Certificate {
                 .any(|name| !name.contains('*') && name.eq_ignore_ascii_case(host))
     }
 
+    /// Whether `chain`, the certificates of an `x5c` header, matches an `aki` trusted
+    /// authorities query (OID4VP §6.1.1.1, which HAIP §5 requires a Wallet to support): whether
+    /// the [`authority_key_identifier`](Self::authority_key_identifier) of one of its
+    /// certificates equals one of `identifiers`, given base64url-encoded as the query gives them.
+    ///
+    /// Any certificate of the chain may match, as the chain can hold the whole path or a part
+    /// of it, or a single certificate. One without the extension, or whose extension has no
+    /// `keyIdentifier`, matches nothing.
+    ///
+    /// The chain is read, not validated: a Wallet uses this to select the credentials it
+    /// presents, and a Verifier validates the chain of what it receives with
+    /// [`X509Resolver`].
+    ///
+    /// # Errors
+    ///
+    /// - [`X509Error::InvalidKeyIdentifier`] when one of `identifiers` is not base64url.
+    /// - [`X509Error::EmptyChain`] for a chain without certificates, which an `x5c` header
+    ///   cannot be (RFC 7515 §4.1.6).
+    /// - [`X509Error::InvalidCertificate`] when a certificate of the chain does not decode,
+    ///   whether or not another one matches.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use identity_kit::resolver::{KeyReference, X509Certificate, X509Error};
+    ///
+    /// /// Whether a credential signed under `key` answers the `aki` values of a query.
+    /// fn answers(key: &KeyReference, aki: &[String]) -> Result<bool, X509Error> {
+    ///     match key {
+    ///         KeyReference::X509Chain(chain) => {
+    ///             X509Certificate::chain_matches_authority_key_identifiers(chain, aki)
+    ///         }
+    ///         _ => Ok(false),
+    ///     }
+    /// }
+    /// # let _ = answers;
+    /// ```
+    pub fn chain_matches_authority_key_identifiers<I>(
+        chain: &[Vec<u8>],
+        identifiers: I,
+    ) -> Result<bool, X509Error>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let identifiers = identifiers
+            .into_iter()
+            .enumerate()
+            .map(|(index, identifier)| {
+                base64url::decode(identifier.as_ref())
+                    .map_err(|_| X509Error::InvalidKeyIdentifier { index })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if chain.is_empty() {
+            return Err(X509Error::EmptyChain);
+        }
+        let certificates = chain
+            .iter()
+            .enumerate()
+            .map(|(index, der)| {
+                Self::parse(der).map_err(|e| X509Error::invalid_certificate(index, e))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(certificates.iter().any(|certificate| {
+            certificate
+                .authority_key_identifier()
+                .is_some_and(|aki| identifiers.iter().any(|identifier| identifier == aki))
+        }))
+    }
+
     /// Whether this certificate may issue others: a CA whose `keyUsage`, if it has one,
     /// asserts `keyCertSign` (RFC 5280 §4.2.1.3, §6.1.4).
     fn may_issue(&self) -> bool {
@@ -678,7 +750,7 @@ fn p384_jwk(point: &[u8]) -> Result<Jwk, X509Error> {
     .map_err(|e| X509Error::InvalidKey(e.to_string()))
 }
 
-/// Why an `x5c` chain yields no key.
+/// Why an `x5c` chain yields no key, or cannot be matched against Authority Key Identifiers.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum X509Error {
@@ -733,6 +805,12 @@ pub enum X509Error {
     /// The first certificate's key does not decode.
     #[error("invalid certificate key: {0}")]
     InvalidKey(String),
+    /// A value of an `aki` trusted authorities query is not base64url (OID4VP §6.1.1.1).
+    #[error("Authority Key Identifier {index} is not base64url")]
+    InvalidKeyIdentifier {
+        /// The index of the value among those given.
+        index: usize,
+    },
 }
 
 impl X509Error {

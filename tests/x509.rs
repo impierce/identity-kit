@@ -525,6 +525,91 @@ fn reads_a_certificate() {
     }
 }
 
+/// The `keyIdentifier`s of the Authority Key Identifier extensions of the chain of
+/// `tests/x509-limbo/signer.json`, base64url-encoded as an `aki` trusted authorities query of
+/// OID4VP §6.1.1.1 gives them. The leaf's is the intermediate's Subject Key Identifier
+/// `C9:0C:F0:2E:…:8E:8B`, the intermediate's the root's `7D:BC:73:FB:…:C8:4B`; the root has none.
+const LEAF_AKI: &str = "yQzwLg_WWHiALYf1z8L4yLnIjos";
+const INTERMEDIATE_AKI: &str = "fbxz-38oM7_5qJQ8oLBNF1E0yEs";
+/// The leaf's own Subject Key Identifier `B6:E3:18:78:…:1E:63`, no certificate's authority.
+const LEAF_SKI: &str = "tuMYeJhOWz-mD02uhOE6zRt_HmM";
+
+#[test]
+fn matches_authority_key_identifiers() {
+    let certified = certified();
+    let chain = &certified.chain;
+    let matches = |chain: &[Vec<u8>], identifiers: &[&str]| {
+        X509Certificate::chain_matches_authority_key_identifiers(chain, identifiers).unwrap()
+    };
+    // Any certificate of the chain may match, the leaf as well as the intermediate.
+    assert!(matches(chain, &[LEAF_AKI]));
+    assert!(matches(chain, &[INTERMEDIATE_AKI]));
+    assert!(matches(chain, &[LEAF_SKI, INTERMEDIATE_AKI]));
+    // The chain can be a single certificate.
+    assert!(matches(&chain[..1], &[LEAF_AKI]));
+    assert!(!matches(&chain[..1], &[INTERMEDIATE_AKI]));
+    // A Subject Key Identifier is not an Authority Key Identifier.
+    assert!(!matches(chain, &[LEAF_SKI]));
+    assert!(!matches(chain, &[]));
+    // The root has no Authority Key Identifier extension: nothing matches it, its own Subject
+    // Key Identifier included.
+    let root = std::slice::from_ref(&certified.anchor);
+    assert!(
+        X509Certificate::from_der(&certified.anchor)
+            .unwrap()
+            .authority_key_identifier()
+            .is_none()
+    );
+    assert!(!matches(root, &[INTERMEDIATE_AKI, LEAF_AKI]));
+    // With the trust anchor in the chain, its identifiers count like any other.
+    let whole = [chain.clone(), vec![certified.anchor.clone()]].concat();
+    assert!(matches(&whole, &[INTERMEDIATE_AKI]));
+    // The raw bytes are compared: the same value in another encoding is not the query's.
+    let padded = format!("{LEAF_AKI}=");
+    let base64 = LEAF_AKI.replace('_', "/");
+    for (index, identifiers) in [
+        (0, vec![padded.as_str()]),
+        (1, vec![INTERMEDIATE_AKI, base64.as_str()]),
+        (0, vec!["not base64url!"]),
+    ] {
+        let result = X509Certificate::chain_matches_authority_key_identifiers(chain, &identifiers);
+        assert!(
+            matches!(&result, Err(X509Error::InvalidKeyIdentifier { index: found }) if *found == index),
+            "{identifiers:?}: {result:?}"
+        );
+    }
+}
+
+/// A chain that does not read is an error, not a mismatch.
+#[test]
+fn matching_authority_key_identifiers_reads_the_whole_chain() {
+    let certified = certified();
+    assert!(matches!(
+        X509Certificate::chain_matches_authority_key_identifiers(&[], [LEAF_AKI]),
+        Err(X509Error::EmptyChain)
+    ));
+    // A malformed certificate is an error wherever it stands, after a match too.
+    for (broken, index) in [
+        (
+            vec![b"not a certificate".to_vec(), certified.chain[1].clone()],
+            0,
+        ),
+        (
+            vec![
+                certified.chain[0].clone(),
+                certified.chain[1][..40].to_vec(),
+            ],
+            1,
+        ),
+    ] {
+        let result = X509Certificate::chain_matches_authority_key_identifiers(&broken, [LEAF_AKI]);
+        assert!(
+            matches!(&result, Err(X509Error::InvalidCertificate { index: found, .. }) if *found == index),
+            "{result:?}"
+        );
+    }
+}
+
 /// ISRG Root X2, a root of Let's Encrypt with a P-384 key (<https://letsencrypt.org/certificates/>),
 /// SHA-256 fingerprint `69:72:9B:8E:15:A8:6E:FC:17:7A:57:AF:B7:17:1D:FC:64:AD:D2:8C:2F:CA:8C:F1:50:7E:34:45:3C:CB:14:70`.
 const ISRG_ROOT_X2: &str = "\

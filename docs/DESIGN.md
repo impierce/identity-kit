@@ -298,7 +298,7 @@ pub struct CompositeKeyResolver(..);   // first resolver that does not answer Un
 // in the crate: Resolver (DidUrl), DocumentKeyResolver (DidUrl, over documents supplied by the caller), JwkResolver (Jwk by value), JwksResolver<C: HttpClient> (Jwks, feature `jwks`), X509Resolver (X509Chain, feature `x509`)
 
 pub struct X509Resolver { .. }      // new(anchors: DER), from_pem; validate(chain, now) -> Jwk
-pub struct X509Certificate { .. }   // from_der; subject, issuer, dns_names, uris, not_before, not_after, key identifiers, sha256_thumbprint, public_key, binds(iss)
+pub struct X509Certificate { .. }   // from_der; subject, issuer, dns_names, uris, not_before, not_after, key identifiers, sha256_thumbprint, public_key, binds(iss); chain_matches_authority_key_identifiers(chain, aki)
 
 pub struct JwtValidator<R: KeyResolver, V: JwsVerifier = DefaultVerifier> { .. }   // validate, validate_as::<T>
 pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issuer_binding, required_claims, now: Option<i64>, leeway }
@@ -357,7 +357,12 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   SD-JWT VC signed this way and binds only as an `https` URL whose host is a `dNSName` of that
   certificate, never as a DID. An issuer signs
   with `jose::CertifiedSigner`, which carries its chain (`Signer::x5c`) into the `x5c` header
-  that `JwsHeader::for_signer` writes.
+  that `JwsHeader::for_signer` writes. A Wallet answers an `aki` trusted authorities query
+  (OpenID4VP §6.1.1.1, required by HAIP §5) with
+  `X509Certificate::chain_matches_authority_key_identifiers`: a chain matches when the
+  Authority Key Identifier of any of its certificates equals one of the query's base64url
+  values. It reads the chain without validating it; the DCQL query itself stays with the
+  protocol library.
 - Plain JWTs: `JwtValidator` validates a JWT that is not a credential (an OAuth 2.0 access
   token, RFC 9068) per RFC 7519 §7.2 and RFC 8725: an `alg` allow-list, the expected `typ`
   (case-insensitive, `application/` optional), the signature under the key the
