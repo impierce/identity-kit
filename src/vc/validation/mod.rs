@@ -412,6 +412,11 @@ impl TimeOptions {
     }
 
     /// The validation time.
+    ///
+    /// # Panics
+    ///
+    /// Without a fixed time, when the system clock is set after year 9999, as
+    /// [`Timestamp::now`].
     pub fn now(&self) -> Timestamp {
         self.now.unwrap_or_else(Timestamp::now)
     }
@@ -471,34 +476,30 @@ impl TimeOptions {
 
     /// Checks the registered time claims of `claims`: `nbf`, `exp` and `iat`.
     ///
+    /// A claim past the range of [`Timestamp`] counts as [`Timestamp::MAX`] when positive and
+    /// [`Timestamp::MIN`] when negative: an `exp` after year 9999 has not passed, an `nbf` or
+    /// `iat` after it is in the future, as the Token Status List check reads them too.
+    ///
     /// # Errors
     ///
-    /// As [`check`](Self::check), or [`ValidationError::Credential`] for a claim out of
-    /// range.
+    /// As [`check`](Self::check).
     pub fn check_claims(&self, claims: &JwtClaims) -> Result<(), ValidationError> {
         self.check(
-            timestamp(claims.nbf, "nbf")?,
-            timestamp(claims.exp, "exp")?,
-            timestamp(claims.iat, "iat")?,
+            claims.nbf.map(saturated),
+            claims.exp.map(saturated),
+            claims.iat.map(saturated),
         )
     }
 }
 
-/// The time a `NumericDate` claim names.
-fn timestamp(
-    value: Option<i64>,
-    claim: &'static str,
-) -> Result<Option<Timestamp>, ValidationError> {
-    value
-        .map(|value| {
-            JwtClaims::timestamp(value).ok_or_else(|| {
-                ValidationError::Credential(crate::vc::CredentialError::InvalidClaim {
-                    claim,
-                    reason: format!("{value} is out of range"),
-                })
-            })
-        })
-        .transpose()
+/// The time a `NumericDate` names, or the end of the range of [`Timestamp`] its sign points
+/// to when it is past it.
+pub(crate) fn saturated(numeric_date: i64) -> Timestamp {
+    JwtClaims::timestamp(numeric_date).unwrap_or(if numeric_date.is_negative() {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
+    })
 }
 
 /// Options of [`JwtCredentialValidator`].

@@ -19,8 +19,10 @@ documentation) and 25 edge cases with `chrono` as the crate used it, `jiff` 1.0 
 comparing the instant each reads and the text each writes back:
 
 - `time`'s RFC 3339 parser accepts and refuses what `chrono`'s `parse_from_rfc3339` does, on
-  every input but the leap second (`:60`, which `time` reads as `:59.999999999`). Its range ends
-  at 9999-12-31.
+  every input but two: a leap second, which `time` takes only at 23:59:60 UTC on the last day of
+  a month (RFC 3339 §5.7) and reads as `:59.999999999`, where `chrono` took `:60` at any minute;
+  and the character between date and time, which `time` does not check (`Timestamp` takes `T`,
+  `t` or a space there, as `chrono` did). Its range ends at 9999-12-31.
 - `jiff`'s `Timestamp` ends at 9999-12-30, so `9999-12-31T23:59:59Z`, the "no expiration" value
   RFC 5280 §4.1.2.5 gives certificates and some issuers copy into `exp` or `validUntil`, would no
   longer parse. Its parser accepts forms RFC 3339 does not (minute precision, comma fractions,
@@ -52,10 +54,13 @@ comparing the instant each reads and the text each writes back:
    speak.
 
 4. **Out-of-range times saturate where they are compared.** A `NumericDate` outside the range
-   of `Timestamp` is out of range where a credential or claim must carry it (as before, beyond
-   `chrono`'s wider range), and as far in the past or future as its sign where a Status List
-   Token's `iat` or `exp` is compared with the validation time, so a far-future `exp` does not
-   read as expired. A leeway or a key binding `max_age` beyond the range saturates.
+   of `Timestamp` is out of range where a credential must carry it as a date (a VCDM 1.1
+   `issuanceDate` from `nbf`, say), and as far in the past or future as its sign where it is
+   compared with the validation time: the `nbf`, `exp` and `iat` that `TimeOptions::check_claims`
+   reads for every JWT credential, presentation and key binding JWT, and a Status List Token's
+   `iat` and `exp`. A far-future `exp` therefore does not read as expired, as it did not with
+   `chrono`, whose range reached year 262143. A leeway or a key binding `max_age` beyond the
+   range saturates too.
 
 ## Consequences
 
@@ -66,11 +71,19 @@ comparing the instant each reads and the text each writes back:
 - Newly issued credentials write fractional seconds with as few digits as needed and `Z` for
   UTC, as VCDM's `dateTimeStamp` allows; the instants are unchanged, and validation of existing
   credentials is not affected. Error messages print times with `Z`.
-- Credential fields parse RFC 3339 only. `chrono`'s serde implementation also accepted an offset
-  without a colon (`+0200`) and a trailing ` UTC`, which are not RFC 3339 and which the
-  `NumericDate` mapping already refused; no vector uses them.
-- A `NumericDate` after year 9999 no longer converts to a timestamp; `chrono` reached year
-  262143.
+- Credential fields parse RFC 3339 only. `chrono`'s serde implementation also accepted forms
+  RFC 3339 does not have: an offset without a colon (`+0200`) or with a Unicode minus, a
+  trailing ` UTC`, leading or trailing white space, fields without zero padding
+  (`2010-1-01T9:23:24Z`) and signed years (`+2010-…`, `-0001-…`). A VCDM 1.1 credential whose
+  `nbf` or `exp` stands beside the property already failed on them, but a VCDM 1.1
+  `issuanceDate` without `nbf` and a VCDM 2.0 `validFrom` or `validUntil` read them; such a
+  credential no longer decodes. No vector uses them.
+- A leap second is taken only at 23:59:60 UTC on the last day of a month; `chrono` took `:60` at
+  any minute. Every fraction of a leap second reads as the same instant, its last nanosecond.
+- A `NumericDate` after year 9999 no longer converts to a timestamp where one must be written,
+  and reads as `Timestamp::MAX` where it is compared; `chrono` reached year 262143. An instant
+  that an RFC 3339 offset puts outside years 0000 to 9999 in UTC
+  (`0000-01-01T00:00:00+00:01`) is out of range.
 - `chrono` leaves the dependency tree of the library and the fuzz crate, and RUSTSEC-2026-0543
   leaves the ignore lists of `deny.toml` and `osv-scanner.toml`. The layer-boundary check now
   asserts that the lower layer does not pull in `time`.

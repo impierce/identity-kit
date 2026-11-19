@@ -314,6 +314,10 @@ pub struct LinkedPresentationBuilder {
 #[expect(deprecated, reason = "the VCDM 1.1 builder's own implementation")]
 impl LinkedPresentationBuilder {
     /// A presentation by `holder` of no credentials, issued now, without `id` or expiration.
+    ///
+    /// # Panics
+    ///
+    /// When the system clock is set after year 9999, as [`Timestamp::now`].
     pub fn new(holder: Did) -> Self {
         Self {
             holder,
@@ -460,6 +464,10 @@ pub struct LinkedPresentationV2Builder {
 
 impl LinkedPresentationV2Builder {
     /// A presentation by `holder` of no credentials, issued now, without `id` or expiration.
+    ///
+    /// # Panics
+    ///
+    /// When the system clock is set after year 9999, as [`Timestamp::now`].
     pub fn new(holder: Did) -> Self {
         Self {
             holder,

@@ -11,11 +11,12 @@ use time::format_description::well_known::Rfc3339;
 use time::{OffsetDateTime, UtcOffset};
 
 /// An instant in UTC, to the nanosecond, between `0000-01-01T00:00:00Z` and
-/// `9999-12-31T23:59:59.999999999Z`: the instants RFC 3339 can write.
+/// `9999-12-31T23:59:59.999999999Z`: the instants RFC 3339 can write in UTC.
 ///
 /// It serializes as an RFC 3339 string in UTC (`2010-01-01T19:23:24Z`), the `dateTimeStamp`
 /// form the VC data models require, with as many fractional digits as the instant needs
-/// (`2010-01-01T19:23:24.5Z`), and parses an RFC 3339 string with any offset. A JWT
+/// (`2010-01-01T19:23:24.5Z`), and parses an RFC 3339 string with any offset that leaves the
+/// instant in that range. A JWT
 /// `NumericDate` converts with [`from_unix_seconds`](Self::from_unix_seconds) and
 /// [`unix_seconds`](Self::unix_seconds).
 ///
@@ -60,13 +61,26 @@ impl Timestamp {
         Self(time)
     }
 
+    /// `time` in UTC, when its year there is 0000 to 9999. Private, so that `time` stays out
+    /// of the public API.
+    fn from_offset(time: OffsetDateTime) -> Result<Self, TimestampError> {
+        let time = time
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or(TimestampError::OutOfRange)?;
+        if (0..=9999).contains(&time.year()) {
+            Ok(Self(time))
+        } else {
+            Err(TimestampError::OutOfRange)
+        }
+    }
+
     /// The current time, from the system clock.
     ///
     /// # Panics
     ///
     /// When the system clock is set after year 9999.
     pub fn now() -> Self {
-        Self::try_from(OffsetDateTime::now_utc()).expect("the system clock is before year 10000")
+        Self::from_offset(OffsetDateTime::now_utc()).expect("the system clock is before year 10000")
     }
 
     /// The instant `seconds` after the Unix epoch, a JWT `NumericDate` (RFC 7519 §2), when it is
@@ -92,14 +106,14 @@ impl Timestamp {
     #[must_use]
     pub fn checked_add(self, duration: Duration) -> Option<Self> {
         let duration = time::Duration::try_from(duration).ok()?;
-        Self::try_from(self.0.checked_add(duration)?).ok()
+        Self::from_offset(self.0.checked_add(duration)?).ok()
     }
 
     /// The instant `duration` earlier, when it is in range.
     #[must_use]
     pub fn checked_sub(self, duration: Duration) -> Option<Self> {
         let duration = time::Duration::try_from(duration).ok()?;
-        Self::try_from(self.0.checked_sub(duration)?).ok()
+        Self::from_offset(self.0.checked_sub(duration)?).ok()
     }
 
     /// The instant `duration` later, or [`MAX`](Self::MAX).
@@ -139,21 +153,6 @@ impl core::ops::Sub<Duration> for Timestamp {
     fn sub(self, duration: Duration) -> Self {
         self.checked_sub(duration)
             .expect("a timestamp after year 0")
-    }
-}
-
-impl TryFrom<OffsetDateTime> for Timestamp {
-    type Error = TimestampError;
-
-    fn try_from(time: OffsetDateTime) -> Result<Self, Self::Error> {
-        let time = time
-            .checked_to_offset(UtcOffset::UTC)
-            .ok_or(TimestampError::OutOfRange)?;
-        if (0..=9999).contains(&time.year()) {
-            Ok(Self(time))
-        } else {
-            Err(TimestampError::OutOfRange)
-        }
     }
 }
 
@@ -209,7 +208,13 @@ impl TryFrom<Timestamp> for SystemTime {
 impl FromStr for Timestamp {
     type Err = TimestampError;
 
-    /// Parses an RFC 3339 date-time (§5.6) with any offset, as the instant it names.
+    /// Parses an RFC 3339 date-time (§5.6) with any offset, as the instant it names, when that
+    /// instant is in range (`0000-01-01T00:00:00+00:01` is not).
+    ///
+    /// Between the date and the time it takes `T`, `t` or a space. A leap second (`:60`) is
+    /// taken only where one can occur, at 23:59:60 UTC on the last day of a month (RFC 3339
+    /// §5.7), and reads as the last nanosecond of the second before it, so a fraction of the
+    /// leap second is not kept. `chrono`, used before, took `:60` at any minute.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // `time` takes any character between the date and the time; RFC 3339 writes `T` (or
         // `t`), and its §5.6 note lets applications use a space, as `chrono` did.
@@ -220,7 +225,7 @@ impl FromStr for Timestamp {
             return Err(TimestampError::Invalid);
         }
         let time = OffsetDateTime::parse(s, &Rfc3339).map_err(|_| TimestampError::Invalid)?;
-        Self::try_from(time)
+        Self::from_offset(time)
     }
 }
 

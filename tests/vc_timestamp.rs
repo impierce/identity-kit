@@ -4,7 +4,7 @@
 use std::time::{Duration, SystemTime};
 
 use identity_kit::vc::validation::{TimeOptions, ValidationError};
-use identity_kit::vc::{Timestamp, TimestampError};
+use identity_kit::vc::{JwtClaims, Timestamp, TimestampError};
 
 /// RFC 3339 §5.8: each example, the instant it names in UTC as `Timestamp` writes it, and that
 /// instant in whole seconds since the Unix epoch.
@@ -80,6 +80,27 @@ fn refuses_what_rfc_3339_does_not_write() {
         assert!(serde_json::from_value::<Timestamp>(serde_json::json!(text)).is_err());
     }
     assert!(serde_json::from_value::<Timestamp>(serde_json::json!(1_262_373_804)).is_err());
+}
+
+/// RFC 3339 §5.7: a leap second is at the end of a UTC month, so `:60` is taken there and
+/// nowhere else.
+#[test]
+fn takes_a_leap_second_only_at_the_end_of_a_month() {
+    for text in [
+        "2016-12-31T23:59:60Z",
+        "2015-06-30T23:59:60Z",
+        "2016-12-31T15:59:60-08:00",
+    ] {
+        let time: Timestamp = text.parse().unwrap();
+        assert_eq!(time.nanosecond(), 999_999_999, "{text}");
+    }
+    for text in [
+        "2010-01-01T12:00:60Z",
+        "2016-06-15T23:59:60Z",
+        "2016-12-31T23:59:60+01:00",
+    ] {
+        assert!(text.parse::<Timestamp>().is_err(), "{text}");
+    }
 }
 
 /// RFC 3339 §5.6: `T` separates the date and the time, in either case, and its note lets
@@ -168,6 +189,45 @@ fn a_leeway_past_the_range_bounds_nothing() {
     let last = TimeOptions::at(Timestamp::MAX).with_leeway(second);
     assert!(
         last.check(Some(Timestamp::MAX), None, Some(Timestamp::MAX))
+            .is_ok()
+    );
+}
+
+/// A `NumericDate` past the range counts as the end its sign points to: an `exp` after year
+/// 9999 has not passed, an `nbf` or `iat` after it is in the future, and any of them before
+/// year 0 is in the past.
+#[test]
+fn numeric_dates_past_the_range_saturate() {
+    let now = TimeOptions::at("2026-01-01T00:00:00Z".parse().unwrap());
+    let claims = |nbf: Option<i64>, exp: Option<i64>, iat: Option<i64>| {
+        let mut claims = JwtClaims::default();
+        (claims.nbf, claims.exp, claims.iat) = (nbf, exp, iat);
+        claims
+    };
+    let after = 253_402_300_800;
+    let before = -62_167_219_201;
+    for exp in [after, i64::MAX] {
+        assert!(
+            now.check_claims(&claims(None, Some(exp), None)).is_ok(),
+            "{exp}"
+        );
+    }
+    for exp in [before, i64::MIN] {
+        assert!(matches!(
+            now.check_claims(&claims(None, Some(exp), None)),
+            Err(ValidationError::Expired { expired_at, .. }) if expired_at == Timestamp::MIN
+        ));
+    }
+    assert!(matches!(
+        now.check_claims(&claims(Some(after), None, None)),
+        Err(ValidationError::NotYetValid { not_before, .. }) if not_before == Timestamp::MAX
+    ));
+    assert!(matches!(
+        now.check_claims(&claims(None, None, Some(i64::MAX))),
+        Err(ValidationError::IssuedInFuture { issued_at, .. }) if issued_at == Timestamp::MAX
+    ));
+    assert!(
+        now.check_claims(&claims(Some(before), None, Some(i64::MIN)))
             .is_ok()
     );
 }

@@ -36,7 +36,7 @@ use serde_json::Value;
 
 use crate::cause::cause;
 use crate::jose::{JwsError, JwsHeader, Signer, base64url};
-use crate::vc::validation::TimeOptions;
+use crate::vc::validation::{TimeOptions, saturated};
 use crate::vc::{Jwt, JwtClaims};
 
 #[cfg(feature = "did-web")]
@@ -737,20 +737,12 @@ impl StatusListToken {
         }
         let (now, earliest, latest) = time.window();
         // A time past the range of `Timestamp` is as far in the future or past as its sign.
-        let issued_at = JwtClaims::timestamp(self.iat).unwrap_or(if self.iat.is_negative() {
-            Timestamp::MIN
-        } else {
-            Timestamp::MAX
-        });
+        let issued_at = saturated(self.iat);
         if issued_at > latest {
             return Err(StatusListError::NotYetIssued { issued_at, now });
         }
         if let Some(exp) = self.exp {
-            let expired_at = JwtClaims::timestamp(exp).unwrap_or(if exp.is_negative() {
-                Timestamp::MIN
-            } else {
-                Timestamp::MAX
-            });
+            let expired_at = saturated(exp);
             if earliest.is_some_and(|earliest| expired_at <= earliest) {
                 return Err(StatusListError::Expired { expired_at, now });
             }
