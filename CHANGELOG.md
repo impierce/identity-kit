@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/impierce/identity-kit/compare/v0.5.1...v0.6.0) - 2026-11-19
+
+### Added
+
+- *(resolver)* match `x5c` chain against Authority Key Identifiers ([#187](https://github.com/impierce/identity-kit/pull/187))
+- *(jose)* encrypt and decrypt JWE with ECDH-ES and AES-GCM ([#178](https://github.com/impierce/identity-kit/pull/178))
+- *(vc)* deprecate VCDM 1.1, except for domain linkage ([#171](https://github.com/impierce/identity-kit/pull/171))
+- *(sd_jwt_vc)* add `KeyBindingPolicy` to require key binding with `cnf` ([#185](https://github.com/impierce/identity-kit/pull/185))
+
+### Dependencies
+
+- *(deps)* bump the cargo group with 2 updates ([#192](https://github.com/impierce/identity-kit/pull/192))
+
+### Fixed
+
+- *(methods)* refuse IPv6 benchmarking and documentation ranges ([#191](https://github.com/impierce/identity-kit/pull/191))
+- *(identity)* [**breaking**] keep store key id out of `did:jwk` ([#188](https://github.com/impierce/identity-kit/pull/188))
+
 ## [0.5.1](https://github.com/impierce/identity-kit/compare/v0.5.0...v0.5.1) - 2026-11-17
 
 ### Added
