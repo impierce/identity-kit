@@ -20,7 +20,6 @@ mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{
     Context, Did, DidDocument, DidUrl, ResolutionError, ResolutionErrorKind, ResolutionOptions,
     ResolutionResult, Service, ServiceEndpoint, Uri,
@@ -34,6 +33,7 @@ use identity_kit::linked_vp::{
 };
 use identity_kit::methods::{DidJwk, DidKey};
 use identity_kit::resolver::{CompositeKeyResolver, DidResolver, JwkResolver, Resolver};
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, FailFast, JwtCredentialValidator, JwtPresentationValidator,
     KeyReference, PresentationValidationError, PresentationValidationOptions,
@@ -286,7 +286,7 @@ async fn example_jwt_validates() {
 
     // Expired on 2029-02-08, not valid before 2024-02-08.
     let late = options().with_time(TimeOptions::at(
-        Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap(),
+        "2030-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     ));
     let error = example_validator()
         .validate(&example_jwt(), &example_did(), &late)
@@ -297,7 +297,7 @@ async fn example_jwt_validates() {
         ValidationError::Expired { .. }
     ));
     let early = options().with_time(TimeOptions::at(
-        Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        "2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     ));
     let error = example_validator()
         .validate(&example_jwt(), &example_did(), &early)
@@ -477,7 +477,7 @@ fn did_key_validator() -> LinkedVpValidator<Resolver> {
 async fn credential(holder: &Holder, subject: &Did) -> Jwt {
     let credential = Credential::new(
         &holder.did,
-        Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        "2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
         Subject::new(subject.clone()).with_property("name", "Example LLC"),
     )
     .with_type("OrganizationCredential");
@@ -496,8 +496,8 @@ async fn credential(holder: &Holder, subject: &Did) -> Jwt {
 fn builder(holder: &Holder) -> LinkedPresentationBuilder {
     LinkedPresentationBuilder::new(holder.did.clone())
         .with_id(Uri::parse(PUBLISHED_URL).unwrap())
-        .with_issued_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_expiration(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        .with_issued_at("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_expiration("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
 }
 
 /// `claims` signed by the holder, with `typ` when given.
@@ -602,7 +602,7 @@ async fn presentation_without_expiration_validates() {
     builder.expiration = None;
     let jwt = builder.sign(&holder.kid, &holder.signer).await.unwrap();
     let far = options().with_time(TimeOptions::at(
-        Utc.with_ymd_and_hms(2100, 1, 1, 0, 0, 0).unwrap(),
+        "2100-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     ));
     did_key_validator()
         .validate(&jwt, &holder.did, &far)
@@ -618,7 +618,7 @@ async fn expired_presentation_fails() {
         .await
         .unwrap();
     let late = options().with_time(TimeOptions::at(
-        Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        "2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
     ));
     let error = did_key_validator()
         .validate(&jwt, &holder.did, &late)
@@ -679,8 +679,8 @@ async fn embedded_key_must_be_the_did_jwk_of_the_holder() {
     let did = DidJwk::did(&signer.public_jwk()).unwrap();
     let claims = LinkedPresentationBuilder::new(did.clone())
         .with_id(Uri::parse(PUBLISHED_URL).unwrap())
-        .with_issued_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_expiration(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        .with_issued_at("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_expiration("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
         .jwt_claims()
         .unwrap();
     let mut header = JwsHeader::new(JwsAlgorithm::EdDSA).with_typ("JWT");
@@ -779,7 +779,7 @@ async fn credential_typ_values() {
     for typ in ["JWT", CREDENTIAL_TYP[0], CREDENTIAL_TYP[1], "vc+jwt"] {
         let credential = Credential::new(
             &holder.did,
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            "2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
             Subject::new(holder.did.clone()),
         );
         let header = JwsHeader::new(JwsAlgorithm::EdDSA)
@@ -1128,7 +1128,7 @@ async fn validators_accept_additional_typ_only_when_asked() {
     let credential = {
         let credential = Credential::new(
             &holder.did,
-            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            "2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
             Subject::new(holder.did.clone()),
         );
         sign(
@@ -1262,7 +1262,7 @@ fn credential_v2(holder: &Holder, subject: &Did) -> CredentialV2 {
         Subject::new(subject.clone()).with_property("name", "Example LLC"),
     )
     .with_type("OrganizationCredential")
-    .with_valid_from(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
+    .with_valid_from("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
 }
 
 /// The credential `holder` issued about `subject`, as a `vc+jwt` envelope.
@@ -1298,8 +1298,8 @@ async fn sd_jwt_envelope(holder: &Holder, subject: &Did) -> EnvelopedVc {
 fn builder_v2(holder: &Holder) -> LinkedPresentationV2Builder {
     LinkedPresentationV2Builder::new(holder.did.clone())
         .with_id(Uri::parse(PUBLISHED_URL).unwrap())
-        .with_issued_at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_expiration(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        .with_issued_at("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_expiration("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
 }
 
 #[cfg(feature = "sd-jwt")]

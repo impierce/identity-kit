@@ -13,7 +13,7 @@ use super::OneOrMany;
 /// Times are `NumericDate` values (RFC 7519 §2), whole seconds since the Unix epoch; a fraction
 /// is dropped on deserialization. With the `vc` feature, `JwtClaims::numeric_date`,
 /// `JwtClaims::timestamp` and the `with_exp`, `with_nbf` and `with_iat` setters convert from
-/// and to `chrono` times.
+/// and to `vc::Timestamp`s.
 ///
 /// Decoding a token's payload with [`CompactJws::claims`](super::CompactJws::claims) checks
 /// nothing; validating the registered claims is the validators' job.

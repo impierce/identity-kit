@@ -68,13 +68,11 @@ use core::time::Duration;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use chrono::{DateTime, TimeDelta, Utc};
-
 use crate::did::Did;
 pub use crate::resolver::{
     KeyReference, KeyReferenceError, KeyResolutionError, KeyResolver, KeyRole,
 };
-use crate::vc::{Jwt, JwtClaims, TypedObject, claims};
+use crate::vc::{Jwt, JwtClaims, Timestamp, TypedObject, claims};
 
 pub(crate) mod credential;
 mod error;
@@ -377,20 +375,21 @@ pub enum SubjectHolderRelationship {
 /// ```
 /// use std::time::Duration;
 ///
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::vc::validation::TimeOptions;
 ///
-/// let fixed = TimeOptions::at(Utc.with_ymd_and_hms(2019, 11, 6, 0, 0, 0).unwrap())
+/// let fixed = TimeOptions::at("2019-11-06T00:00:00Z".parse::<Timestamp>()?)
 ///     .with_leeway(Duration::from_secs(60));
-/// assert_eq!(fixed.now().to_rfc3339(), "2019-11-06T00:00:00+00:00");
+/// assert_eq!(fixed.now().to_string(), "2019-11-06T00:00:00Z");
 /// assert_eq!(fixed.leeway, Duration::from_secs(60));
 /// assert!(TimeOptions::default().now() > fixed.now());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TimeOptions {
     /// The validation time; the current time when `None`.
-    pub now: Option<DateTime<Utc>>,
+    pub now: Option<Timestamp>,
     /// How far `nbf`, `exp` and `iat` may miss the validation time and still pass; zero by
     /// default.
     pub leeway: Duration,
@@ -398,7 +397,7 @@ pub struct TimeOptions {
 
 impl TimeOptions {
     /// Options validating at `now`.
-    pub fn at(now: DateTime<Utc>) -> Self {
+    pub fn at(now: Timestamp) -> Self {
         Self {
             now: Some(now),
             leeway: Duration::ZERO,
@@ -413,8 +412,13 @@ impl TimeOptions {
     }
 
     /// The validation time.
-    pub fn now(&self) -> DateTime<Utc> {
-        self.now.unwrap_or_else(Utc::now)
+    ///
+    /// # Panics
+    ///
+    /// Without a fixed time, when the system clock is set after year 9999, as
+    /// [`Timestamp::now`].
+    pub fn now(&self) -> Timestamp {
+        self.now.unwrap_or_else(Timestamp::now)
     }
 
     /// These options at the validation time they name now: a validation reads the clock
@@ -426,22 +430,15 @@ impl TimeOptions {
         }
     }
 
-    /// The leeway as a `chrono` delta, saturated.
-    fn delta(&self) -> TimeDelta {
-        TimeDelta::from_std(self.leeway).unwrap_or(TimeDelta::MAX)
-    }
-
     /// The validation time, and the earliest and latest times the leeway lets pass for it.
-    pub(crate) fn window(&self) -> (DateTime<Utc>, DateTime<Utc>, DateTime<Utc>) {
+    ///
+    /// The earliest is `None` when the leeway reaches before the range of `Timestamp`, so that
+    /// no expiry counts as passed; the latest saturates, as no time is after
+    /// [`Timestamp::MAX`].
+    pub(crate) fn window(&self) -> (Timestamp, Option<Timestamp>, Timestamp) {
         let now = self.now();
-        let delta = self.delta();
-        // A leeway past the range `chrono` represents saturates rather than overflowing.
-        let earliest = now
-            .checked_sub_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MIN_UTC);
-        let latest = now
-            .checked_add_signed(delta)
-            .unwrap_or(DateTime::<Utc>::MAX_UTC);
+        let earliest = now.checked_sub(self.leeway);
+        let latest = now.saturating_add(self.leeway);
         (now, earliest, latest)
     }
 
@@ -454,9 +451,9 @@ impl TimeOptions {
     /// [`ValidationError::IssuedInFuture`].
     pub fn check(
         &self,
-        not_before: Option<DateTime<Utc>>,
-        expires: Option<DateTime<Utc>>,
-        issued_at: Option<DateTime<Utc>>,
+        not_before: Option<Timestamp>,
+        expires: Option<Timestamp>,
+        issued_at: Option<Timestamp>,
     ) -> Result<(), ValidationError> {
         let (now, earliest, latest) = self.window();
         if let Some(not_before) = not_before
@@ -465,7 +462,7 @@ impl TimeOptions {
             return Err(ValidationError::NotYetValid { not_before, now });
         }
         if let Some(expired_at) = expires
-            && expired_at <= earliest
+            && earliest.is_some_and(|earliest| expired_at <= earliest)
         {
             return Err(ValidationError::Expired { expired_at, now });
         }
@@ -479,34 +476,30 @@ impl TimeOptions {
 
     /// Checks the registered time claims of `claims`: `nbf`, `exp` and `iat`.
     ///
+    /// A claim past the range of [`Timestamp`] counts as [`Timestamp::MAX`] when positive and
+    /// [`Timestamp::MIN`] when negative: an `exp` after year 9999 has not passed, an `nbf` or
+    /// `iat` after it is in the future, as the Token Status List check reads them too.
+    ///
     /// # Errors
     ///
-    /// As [`check`](Self::check), or [`ValidationError::Credential`] for a claim out of
-    /// range.
+    /// As [`check`](Self::check).
     pub fn check_claims(&self, claims: &JwtClaims) -> Result<(), ValidationError> {
         self.check(
-            timestamp(claims.nbf, "nbf")?,
-            timestamp(claims.exp, "exp")?,
-            timestamp(claims.iat, "iat")?,
+            claims.nbf.map(saturated),
+            claims.exp.map(saturated),
+            claims.iat.map(saturated),
         )
     }
 }
 
-/// The time a `NumericDate` claim names.
-fn timestamp(
-    value: Option<i64>,
-    claim: &'static str,
-) -> Result<Option<DateTime<Utc>>, ValidationError> {
-    value
-        .map(|value| {
-            JwtClaims::timestamp(value).ok_or_else(|| {
-                ValidationError::Credential(crate::vc::CredentialError::InvalidClaim {
-                    claim,
-                    reason: format!("{value} is out of range"),
-                })
-            })
-        })
-        .transpose()
+/// The time a `NumericDate` names, or the end of the range of [`Timestamp`] its sign points
+/// to when it is past it.
+pub(crate) fn saturated(numeric_date: i64) -> Timestamp {
+    JwtClaims::timestamp(numeric_date).unwrap_or(if numeric_date.is_negative() {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
+    })
 }
 
 /// Options of [`JwtCredentialValidator`].

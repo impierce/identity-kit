@@ -1,10 +1,9 @@
 //! Merging registered JWT claims into the object of a `vc` or `vp` claim (VCDM 1.1 §6.3.1
 //! "JWT Decoding"), and the reverse.
 
-use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
-use super::{CredentialError, JwtClaims};
+use super::{CredentialError, JwtClaims, Timestamp};
 
 /// The object of the claim `name`, cloned.
 pub(super) fn claim_object(
@@ -73,17 +72,15 @@ pub(super) fn merge_time(
         }
         Some(_) => Err(CredentialError::ClaimMismatch { claim, property }),
         None => {
-            object.insert(property.to_owned(), Value::String(time.to_rfc3339()));
+            object.insert(property.to_owned(), Value::String(time.to_string()));
             Ok(())
         }
     }
 }
 
 /// The instant an RFC 3339 string names.
-fn parse_time(value: &Value) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(value.as_str()?)
-        .ok()
-        .map(|time| time.with_timezone(&Utc))
+fn parse_time(value: &Value) -> Option<Timestamp> {
+    value.as_str()?.parse().ok()
 }
 
 /// Sets the `id` of the one `credentialSubject` of `object` from `sub`, or checks they agree.

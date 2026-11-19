@@ -155,7 +155,7 @@ impl<C: HttpClient, R: KeyResolver, V: JwsVerifier> StatusListCheck<C, R, V> {
             &jws,
             iss,
             KeyRole::Issuer,
-            time.now().timestamp(),
+            time.now().unix_seconds(),
         )
         .await
         .map_err(|error| match error {

@@ -44,7 +44,7 @@
 use core::time::Duration;
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 
 use super::{
     Confirmation, SdJwt, SdJwtCredentialV2, SdJwtCredentialV2Error, SdJwtVc, SdJwtVcError,
@@ -235,12 +235,16 @@ pub enum SdJwtValidationError {
     #[error("key binding is required, but `cnf` carries no usable key reference: {0}")]
     NoHolderKey(KeyReferenceError),
     /// The key binding JWT is older than allowed.
-    #[error("key binding JWT issued at {} is older than {max_age:?} (now is {})", issued_at.to_rfc3339(), now.to_rfc3339())]
+    #[error(
+        "key binding JWT issued at {} is older than {max_age:?} (now is {})",
+        issued_at,
+        now
+    )]
     KeyBindingTooOld {
         /// Its `iat`.
-        issued_at: DateTime<Utc>,
+        issued_at: Timestamp,
         /// The validation time.
-        now: DateTime<Utc>,
+        now: Timestamp,
         /// The bound.
         max_age: Duration,
     },
@@ -489,7 +493,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             &jws,
             issuer,
             KeyRole::Issuer,
-            time.now().timestamp(),
+            time.now().unix_seconds(),
         )
         .await?;
         jws.verify(&self.verifier, &key)?;
@@ -512,7 +516,7 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
             KeyReference::Jwk(jwk) => jwk.public(),
             reference => self
                 .resolver
-                .resolve_key_at(reference, KeyRole::Subject, time.now().timestamp())
+                .resolve_key_at(reference, KeyRole::Subject, time.now().unix_seconds())
                 .await
                 .map_err(|source| ValidationError::KeyResolution {
                     key: Box::new(reference.clone()),
@@ -606,11 +610,8 @@ impl<R: KeyResolver, V: JwsVerifier> SdJwtCredentialValidator<R, V> {
         time.check(None, None, Some(issued_at))?;
         if let Some(max_age) = required.max_age {
             let now = time.now();
-            // A `max_age` beyond what `chrono` represents bounds nothing.
-            let oldest = chrono::TimeDelta::from_std(max_age)
-                .ok()
-                .and_then(|delta| now.checked_sub_signed(delta))
-                .unwrap_or(DateTime::<Utc>::MIN_UTC);
+            // A `max_age` beyond the range of `Timestamp` bounds nothing.
+            let oldest = now.saturating_sub(max_age);
             if issued_at < oldest {
                 return Err(SdJwtValidationError::KeyBindingTooOld {
                     issued_at,

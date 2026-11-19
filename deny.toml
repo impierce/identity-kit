@@ -17,10 +17,6 @@ ignore = [
     # 0.5.5, which no 0.5 release fixes, reached only through the `jsonwebtoken` dev-dependency
     # (`rust_crypto`) that tests use to sign and verify with published RFC test keys.
     { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 is a dev-dependency only, used with published RFC test keys" },
-    # `chrono` is unmaintained, with no patched version; `vc` uses it for timestamps. Accepted
-    # for now and to be checked again: the advisory suggests moving to `jiff` or `time`. Only
-    # this advisory is ignored; any other against `chrono` or what it pulls in still fails.
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained; accepted for now, to be checked again (move `vc` to `jiff` or `time`)" },
 ]
 
 [licenses]

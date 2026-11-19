@@ -31,7 +31,7 @@ fn rfc7519_claims() -> JwtClaims {
     let mut claims = JwtClaims::new()
         .with_iss("joe")
         .with_claim("http://example.com/is_root", true);
-    // Set directly: the `chrono` setters come with the `vc` feature.
+    // Set directly: the `Timestamp` setters come with the `vc` feature.
     claims.exp = Some(1300819380);
     claims
 }

@@ -7,9 +7,9 @@
     reason = "numbers are written as the specifications' examples write them"
 )]
 
-use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{OneOrMany, Uri};
 use identity_kit::jose::JwsAlgorithm;
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{decode_credential_v2, extract_issuer};
 use identity_kit::vc::{
     CredentialError, CredentialV2, EnvelopedVc, EnvelopedVp, Jwt, JwtClaims, Party, PresentationV2,
@@ -82,8 +82,8 @@ fn uri(s: &str) -> Uri {
     Uri::parse(s).unwrap()
 }
 
-fn time(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+fn time(s: &str) -> Timestamp {
+    s.parse().unwrap()
 }
 
 #[test]
@@ -452,7 +452,7 @@ fn builder_reproduces_the_jose_example() {
     .with_id(uri("http://university.example/credentials/3732"))
     .with_type("ExampleDegreeCredential")
     .with_type("ExamplePersonCredential")
-    .with_valid_from(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap())
+    .with_valid_from("2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap())
     .with_schema(
         TypedObject::new("JsonSchema").with_id(uri("https://example.org/examples/degree.json")),
     )
@@ -472,7 +472,7 @@ fn builder_reproduces_the_jose_example() {
             TypedObject::new("BitstringStatusListEntry")
                 .with_property("statusPurpose", "suspension"),
         )
-        .with_valid_until(Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap())
+        .with_valid_until("2030-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
         .with_name("Degree")
         .with_description(json!([{ "@value": "A degree", "@language": "en" }]))
         .with_subject(Subject::default())
@@ -494,11 +494,11 @@ fn validity_period_may_be_a_single_instant() {
     let entry = TypedObject::new("BitstringStatusListEntry");
     assert!(entry.has_type("BitstringStatusListEntry"));
     assert!(!entry.has_type("StatusList2021Entry"));
-    let from = Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 24).unwrap();
+    let from = "2010-01-01T19:23:24Z".parse::<Timestamp>().unwrap();
     credential.clone().with_valid_until(from).check().unwrap();
     assert_eq!(
         credential
-            .with_valid_until(Utc.with_ymd_and_hms(2010, 1, 1, 19, 23, 23).unwrap())
+            .with_valid_until("2010-01-01T19:23:23Z".parse::<Timestamp>().unwrap())
             .check(),
         Err(CredentialError::InvalidValidity {
             from: "validFrom",

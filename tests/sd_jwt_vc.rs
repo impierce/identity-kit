@@ -20,7 +20,6 @@ mod common;
 use std::error::Error as _;
 use std::time::Duration;
 
-use chrono::{TimeZone as _, Utc};
 use identity_kit::claim_path;
 use identity_kit::jose::{DefaultVerifier, Jwk};
 use identity_kit::sd_jwt_vc::{
@@ -32,6 +31,7 @@ use identity_kit::status_list::{
     Status, StatusList, StatusListError, StatusListRef, StatusListToken, StatusMechanism,
     StatusType,
 };
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::TimeOptions;
 use identity_kit::vc::{Jwt, JwtClaims};
 use serde_json::{Map, Value, json};
@@ -323,9 +323,9 @@ fn claims_setters_and_serialization() {
         .with_issuer("https://example.com/issuer")
         .with_subject("user_42")
         .with_jti("urn:uuid:9f4e9c2f-5d0d-4f0a-8d8e-2a9b7a3f5c11")
-        .with_issued_at(Utc.timestamp_opt(1683000000, 0).unwrap())
-        .with_not_before(Utc.timestamp_opt(1683000000, 0).unwrap())
-        .with_expires_at(Utc.timestamp_opt(1883000000, 0).unwrap())
+        .with_issued_at(Timestamp::from_unix_seconds(1683000000).unwrap())
+        .with_not_before(Timestamp::from_unix_seconds(1683000000).unwrap())
+        .with_expires_at(Timestamp::from_unix_seconds(1883000000).unwrap())
         .with_type_integrity("sha256-5qAmRHgxiSHIPqS+mLzrVKVWliOBm955Oj86pMrc5g4=")
         .with_aka_vct("https://credentials.example.com/credential")
         .with_status(Status::status_list(StatusListRef::new(
@@ -452,14 +452,14 @@ fn deprecated_sd_jwt_vc_paths_still_work() {
     ));
     let token: sd_jwt_vc::StatusListToken = StatusListToken::new(
         reference.uri.clone(),
-        Utc.timestamp_opt(0, 0).unwrap(),
+        Timestamp::from_unix_seconds(0).unwrap(),
         list,
     );
     assert_eq!(
         token
             .status_of(
                 &reference,
-                TimeOptions::at(Utc.timestamp_opt(1, 0).unwrap())
+                TimeOptions::at(Timestamp::from_unix_seconds(1).unwrap())
             )
             .unwrap(),
         StatusType::INVALID
@@ -741,7 +741,7 @@ fn status_list_token_of_section_5_and_8() {
         payload["status_list"]
     );
 
-    let now = TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
+    let now = TimeOptions::at("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap());
     let uri = "https://example.com/statuslists/1";
     assert_eq!(
         token.status_of(&StatusListRef::new(uri, 0), now).unwrap(),
@@ -766,7 +766,7 @@ fn status_list_token_of_section_5_and_8() {
         ),
         Err(StatusListError::SubjectMismatch { .. })
     ));
-    let later = TimeOptions::at(Utc.timestamp_opt(2291720170, 0).unwrap());
+    let later = TimeOptions::at(Timestamp::from_unix_seconds(2291720170).unwrap());
     assert!(matches!(
         token.status_of(&StatusListRef::new(uri, 0), later),
         Err(StatusListError::Expired { .. })
@@ -812,10 +812,10 @@ fn status_list_token_of_section_5_and_8() {
     // Built and serialized, the claims come out as the example's.
     let built = StatusListToken::new(
         uri,
-        Utc.timestamp_opt(1686920170, 0).unwrap(),
+        Timestamp::from_unix_seconds(1686920170).unwrap(),
         token.status_list.clone(),
     )
-    .with_expires_at(Utc.timestamp_opt(2291720170, 0).unwrap())
+    .with_expires_at(Timestamp::from_unix_seconds(2291720170).unwrap())
     .with_ttl(43200)
     .with_claim("iss", "https://example.com");
     assert_eq!(built, token);
@@ -832,9 +832,9 @@ fn status_list_token_times() {
     let jwt: Jwt = vector!("status_list", "token.txt").parse().unwrap();
     let (_, token) = StatusListToken::decode(&jwt).unwrap();
     let uri = "https://example.com/statuslists/1";
-    let now = TimeOptions::at(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap());
+    let now = TimeOptions::at("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap());
     // Expired at `exp`, but not within a leeway.
-    let expiry = TimeOptions::at(Utc.timestamp_opt(2291720170, 0).unwrap());
+    let expiry = TimeOptions::at(Timestamp::from_unix_seconds(2291720170).unwrap());
     assert!(matches!(
         token.status_of(&StatusListRef::new(uri, 0), expiry),
         Err(StatusListError::Expired { .. })
@@ -850,7 +850,8 @@ fn status_list_token_times() {
     );
     // Issued an hour after the validation time (Token Status List §8.3 and §5.1): refused,
     // unless the leeway covers the hour.
-    let hour_before_issue = TimeOptions::at(Utc.timestamp_opt(1686920170 - 3600, 0).unwrap());
+    let hour_before_issue =
+        TimeOptions::at(Timestamp::from_unix_seconds(1686920170 - 3600).unwrap());
     let error = token
         .status_of(&StatusListRef::new(uri, 0), hour_before_issue)
         .unwrap_err();
@@ -858,13 +859,13 @@ fn status_list_token_times() {
         matches!(
             error,
             StatusListError::NotYetIssued { issued_at, now }
-                if issued_at.timestamp() == 1686920170 && now.timestamp() == 1686920170 - 3600
+                if issued_at.unix_seconds() == 1686920170 && now.unix_seconds() == 1686920170 - 3600
         ),
         "{error:?}"
     );
     assert_eq!(
         error.to_string(),
-        "status list token issued at 2023-06-16T12:56:10+00:00, after now (2023-06-16T11:56:10+00:00)"
+        "status list token issued at 2023-06-16T12:56:10Z, after now (2023-06-16T11:56:10Z)"
     );
     assert_eq!(
         token
@@ -882,12 +883,24 @@ fn status_list_token_times() {
         ),
         Err(StatusListError::NotYetIssued { .. })
     ));
-    // An `iat` past `chrono`'s range is as far in the future, or the past, as its sign.
+    // An `iat` past the range of `Timestamp` is as far in the future, or the past, as its sign.
     for (iat, issued) in [(i64::MAX, false), (i64::MIN, true)] {
         let mut token = token.clone();
         token.iat = iat;
         let result = token.status_of(&StatusListRef::new(uri, 0), now);
         assert_eq!(result.is_ok(), issued, "{iat}: {result:?}");
+    }
+    // So is an `exp`: one after year 9999 has not passed, one before year 0 has.
+    for (exp, valid) in [
+        (253_402_300_800, true),
+        (i64::MAX, true),
+        (-62_167_219_201, false),
+        (i64::MIN, false),
+    ] {
+        let mut token = token.clone();
+        token.exp = Some(exp);
+        let result = token.status_of(&StatusListRef::new(uri, 0), now);
+        assert_eq!(result.is_ok(), valid, "{exp}: {result:?}");
     }
 }
 

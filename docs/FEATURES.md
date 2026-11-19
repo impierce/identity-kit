@@ -104,6 +104,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | One format-agnostic `StatusCheck` over `CredentialStatus::{Vcdm, StatusClaim}`, replacing `SdJwtStatusCheck` |   ✅   | `vc`          | [VCDM 1.1][vcdm11], [Token Status List][status-list] | [#55](https://github.com/impierce/identity-kit/issues/55) |
 | `status` claim of JWT credentials (Token Status List §6.1) checked beside `credentialStatus`, as `CredentialStatus::StatusClaim` |   ✅   | `vc`, `status-list` | [VCDM 1.1][vcdm11], [VC-JOSE-COSE][vc-jose-cose], [Token Status List][status-list] | [#93](https://github.com/impierce/identity-kit/issues/93) |
 | `ClaimPath` moved out of the `sd-jwt` feature, `utoipa` schema                                               |   ✅   | `vc`, `utoipa` | [SD-JWT VC §5.6.1][sd-jwt-vc], [OID4VP §7][oid4vp] | [#56](https://github.com/impierce/identity-kit/issues/56) |
+| `vc::Timestamp`: an instant in UTC that serializes as RFC 3339 and converts to and from `NumericDate` seconds, the type of every timestamp in the upper layer, built on `time` instead of the unmaintained `chrono` ([ADR 0011](adr/0011-timestamps-on-time.md)) |   ✅   | `vc`           | [RFC 3339 §5.6][rfc3339], [RFC 7519 §2][rfc7519] | [#181](https://github.com/impierce/identity-kit/issues/181) |
 | VCDM 1.1 JWT profile deprecated outside domain linkage: deprecated aliases `vc::Credential`, `vc::Presentation`, `DecodedCredential`, `DecodedPresentation`, deprecated `decode_credential`, `decode_presentation` and 1.1 `validate` methods; `domain_linkage::Credential` and `domain_linkage::DecodedCredential` without the deprecation ([ADR 0007](adr/0007-deprecate-vcdm-1-1-jwt-profile.md)) |   ✅   | `vc`, `domain-linkage` | [VCDM 2.0][vcdm20], [VC-JOSE-COSE][vc-jose-cose], [DID Configuration][did-config] | [#168](https://github.com/impierce/identity-kit/issues/168) |
 
 ### `sd_jwt_vc`: SD-JWT verifiable credentials
@@ -237,6 +238,7 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [sd-jwt-vc]: https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/
 [haip]: https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html
 [status-list]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-21
+[rfc3339]: https://www.rfc-editor.org/rfc/rfc3339
 [rfc7519]: https://www.rfc-editor.org/rfc/rfc7519
 [rfc7800]: https://www.rfc-editor.org/rfc/rfc7800
 [rfc8725]: https://www.rfc-editor.org/rfc/rfc8725

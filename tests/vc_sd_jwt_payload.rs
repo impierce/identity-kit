@@ -12,10 +12,10 @@
 
 mod common;
 
-use chrono::{TimeZone as _, Utc};
 use identity_kit::did::{DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, JwsHeader, Signer};
 use identity_kit::resolver::Resolver;
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, JwtCredentialValidator, JwtPresentationValidator,
     PresentationValidationError, PresentationValidationOptions, TimeOptions, ValidationError,
@@ -87,8 +87,8 @@ fn credential_v2(properties: Value) -> CredentialV2 {
     CredentialV2::new(&issuer.did, subject)
         .with_context("https://www.w3.org/ns/credentials/examples/v2")
         .with_type("ExampleDegreeCredential")
-        .with_valid_from(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_valid_until(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        .with_valid_from("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_valid_until("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
 }
 
 /// A VCDM 1.1 credential about the holder, issued in 2024.
@@ -105,7 +105,7 @@ fn credential(properties: Value) -> Credential {
         });
     Credential::new(
         &issuer.did,
-        Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        "2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap(),
         subject,
     )
     .with_type("UniversityDegreeCredential")
@@ -130,8 +130,8 @@ fn presentation_claims(claims: JwtClaims) -> JwtClaims {
     claims
         .with_aud(AUDIENCE)
         .with_claim("nonce", NONCE)
-        .with_iat(Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        .with_exp(Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())
+        .with_iat("2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
+        .with_exp("2026-01-01T00:00:00Z".parse::<Timestamp>().unwrap())
 }
 
 /// `claims` signed by the holder.

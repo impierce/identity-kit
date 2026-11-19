@@ -1,0 +1,233 @@
+//! `vc::Timestamp` against the examples of RFC 3339 §5.8 and the `NumericDate` of RFC 7519 §2.
+#![cfg(feature = "vc")]
+
+use std::time::{Duration, SystemTime};
+
+use identity_kit::vc::validation::{TimeOptions, ValidationError};
+use identity_kit::vc::{JwtClaims, Timestamp, TimestampError};
+
+/// RFC 3339 §5.8: each example, the instant it names in UTC as `Timestamp` writes it, and that
+/// instant in whole seconds since the Unix epoch.
+const RFC3339_EXAMPLES: [(&str, &str, i64); 5] = [
+    (
+        "1985-04-12T23:20:50.52Z",
+        "1985-04-12T23:20:50.52Z",
+        482_196_050,
+    ),
+    (
+        "1996-12-19T16:39:57-08:00",
+        "1996-12-20T00:39:57Z",
+        851_042_397,
+    ),
+    // A leap second is the last instant of the second before it.
+    (
+        "1990-12-31T23:59:60Z",
+        "1990-12-31T23:59:59.999999999Z",
+        662_687_999,
+    ),
+    (
+        "1990-12-31T15:59:60-08:00",
+        "1990-12-31T23:59:59.999999999Z",
+        662_687_999,
+    ),
+    // A fraction before the epoch rounds toward the past.
+    (
+        "1937-01-01T12:00:27.87+00:20",
+        "1937-01-01T11:40:27.87Z",
+        -1_041_337_173,
+    ),
+];
+
+#[test]
+fn reads_the_rfc_3339_examples() {
+    for (text, utc, seconds) in RFC3339_EXAMPLES {
+        let time: Timestamp = text.parse().unwrap();
+        assert_eq!(time.to_string(), utc, "{text}");
+        assert_eq!(time.unix_seconds(), seconds, "{text}");
+        let nanosecond = match utc.split_once('.') {
+            Some((_, fraction)) => format!("{:0<9}", fraction.trim_end_matches('Z'))
+                .parse()
+                .unwrap(),
+            None => 0,
+        };
+        assert_eq!(time.nanosecond(), nanosecond, "{text}");
+        // Serialized, it is the UTC text, which reads back as the same instant.
+        let json = serde_json::to_string(&time).unwrap();
+        assert_eq!(json, format!("\"{utc}\""));
+        assert_eq!(serde_json::from_str::<Timestamp>(&json).unwrap(), time);
+    }
+}
+
+#[test]
+fn refuses_what_rfc_3339_does_not_write() {
+    for text in [
+        "2010-01-01T19:23:24",       // no offset
+        "2010-01-01T19:23Z",         // no seconds
+        "2010-01-01T19:23:24,5Z",    // a comma fraction
+        "2010-01-01T19:23:24+0200",  // an offset without a colon
+        "2010-01-01T19:23:24 UTC",   // a zone name
+        "2010-01-01T19:23:24+24:00", // an offset of a whole day
+        "2010-13-01T19:23:24Z",      // no 13th month
+        "2010-01-01\u{0}19:23:24Z",  // a NUL between date and time
+        "2010-01-01X19:23:24Z",      // another letter
+        "",
+    ] {
+        assert_eq!(
+            text.parse::<Timestamp>(),
+            Err(TimestampError::Invalid),
+            "{text}"
+        );
+        assert!(serde_json::from_value::<Timestamp>(serde_json::json!(text)).is_err());
+    }
+    assert!(serde_json::from_value::<Timestamp>(serde_json::json!(1_262_373_804)).is_err());
+}
+
+/// RFC 3339 §5.7: a leap second is at the end of a UTC month, so `:60` is taken there and
+/// nowhere else.
+#[test]
+fn takes_a_leap_second_only_at_the_end_of_a_month() {
+    for text in [
+        "2016-12-31T23:59:60Z",
+        "2015-06-30T23:59:60Z",
+        "2016-12-31T15:59:60-08:00",
+    ] {
+        let time: Timestamp = text.parse().unwrap();
+        assert_eq!(time.nanosecond(), 999_999_999, "{text}");
+    }
+    for text in [
+        "2010-01-01T12:00:60Z",
+        "2016-06-15T23:59:60Z",
+        "2016-12-31T23:59:60+01:00",
+    ] {
+        assert!(text.parse::<Timestamp>().is_err(), "{text}");
+    }
+}
+
+/// RFC 3339 §5.6: `T` separates the date and the time, in either case, and its note lets
+/// applications use a space instead.
+#[test]
+fn takes_t_or_a_space_between_date_and_time() {
+    let time: Timestamp = "2010-01-01T19:23:24Z".parse().unwrap();
+    for text in [
+        "2010-01-01t19:23:24Z",
+        "2010-01-01 19:23:24Z",
+        "2010-01-01T19:23:24z",
+    ] {
+        assert_eq!(text.parse::<Timestamp>(), Ok(time), "{text}");
+    }
+    assert!(serde_json::from_str::<Timestamp>(r#""2010-01-01\u000019:23:24Z""#).is_err());
+}
+
+#[test]
+fn converts_numeric_dates_in_range() {
+    // RFC 7519 §2: seconds since 1970-01-01T00:00:00Z UTC, leap seconds ignored.
+    let time = Timestamp::from_unix_seconds(1_300_819_380).unwrap();
+    assert_eq!(time.to_string(), "2011-03-22T18:43:00Z");
+    assert_eq!(time.unix_seconds(), 1_300_819_380);
+    // The "no well-defined expiration date" of RFC 5280 §4.1.2.5 is in range.
+    let never = "9999-12-31T23:59:59Z".parse::<Timestamp>().unwrap();
+    assert_eq!(never.unix_seconds(), 253_402_300_799);
+    assert_eq!(Timestamp::from_unix_seconds(253_402_300_799), Some(never));
+    assert_eq!(Timestamp::from_unix_seconds(253_402_300_800), None);
+    assert_eq!(
+        "10000-01-01T00:00:00Z".parse::<Timestamp>(),
+        Err(TimestampError::Invalid)
+    );
+}
+
+#[test]
+fn orders_adds_and_converts() {
+    let earlier: Timestamp = "2010-01-01T19:23:24Z".parse().unwrap();
+    let later: Timestamp = "2010-01-01T21:23:24+01:00".parse().unwrap();
+    assert!(earlier < later);
+    assert_eq!(earlier + Duration::from_secs(3_600), later);
+    assert_eq!(later - Duration::from_secs(3_600), earlier);
+    assert_eq!(
+        earlier
+            .checked_add(Duration::from_millis(500))
+            .unwrap()
+            .to_string(),
+        "2010-01-01T19:23:24.5Z"
+    );
+    let system = SystemTime::try_from(earlier).unwrap();
+    assert_eq!(Timestamp::try_from(system), Ok(earlier));
+    // Before the epoch, in whole seconds and with a fraction.
+    let second_before = Timestamp::from_unix_seconds(-1).unwrap();
+    let system = SystemTime::try_from(second_before).unwrap();
+    assert_eq!(Timestamp::try_from(system), Ok(second_before));
+    let before: Timestamp = "1937-01-01T11:40:27.87Z".parse().unwrap();
+    let system = SystemTime::try_from(before).unwrap();
+    assert_eq!(Timestamp::try_from(system), Ok(before));
+    assert_eq!(
+        SystemTime::UNIX_EPOCH.duration_since(system).unwrap(),
+        Duration::new(1_041_337_172, 130_000_000)
+    );
+    let year_11476 = SystemTime::UNIX_EPOCH + Duration::from_hours(83_333_334);
+    assert_eq!(
+        Timestamp::try_from(year_11476),
+        Err(TimestampError::OutOfRange)
+    );
+    assert!(Timestamp::now() > earlier);
+}
+
+/// A leeway reaching past either end of the range bounds nothing there: an expiry at the first
+/// instant has not passed one second into a leeway that would reach before it.
+#[test]
+fn a_leeway_past_the_range_bounds_nothing() {
+    let first = TimeOptions::at(Timestamp::MIN);
+    let second = Duration::from_secs(1);
+    assert!(
+        first
+            .with_leeway(second)
+            .check(None, Some(Timestamp::MIN), None)
+            .is_ok()
+    );
+    assert!(matches!(
+        first.check(None, Some(Timestamp::MIN), None),
+        Err(ValidationError::Expired { .. })
+    ));
+    let last = TimeOptions::at(Timestamp::MAX).with_leeway(second);
+    assert!(
+        last.check(Some(Timestamp::MAX), None, Some(Timestamp::MAX))
+            .is_ok()
+    );
+}
+
+/// A `NumericDate` past the range counts as the end its sign points to: an `exp` after year
+/// 9999 has not passed, an `nbf` or `iat` after it is in the future, and any of them before
+/// year 0 is in the past.
+#[test]
+fn numeric_dates_past_the_range_saturate() {
+    let now = TimeOptions::at("2026-01-01T00:00:00Z".parse().unwrap());
+    let claims = |nbf: Option<i64>, exp: Option<i64>, iat: Option<i64>| {
+        let mut claims = JwtClaims::default();
+        (claims.nbf, claims.exp, claims.iat) = (nbf, exp, iat);
+        claims
+    };
+    let after = 253_402_300_800;
+    let before = -62_167_219_201;
+    for exp in [after, i64::MAX] {
+        assert!(
+            now.check_claims(&claims(None, Some(exp), None)).is_ok(),
+            "{exp}"
+        );
+    }
+    for exp in [before, i64::MIN] {
+        assert!(matches!(
+            now.check_claims(&claims(None, Some(exp), None)),
+            Err(ValidationError::Expired { expired_at, .. }) if expired_at == Timestamp::MIN
+        ));
+    }
+    assert!(matches!(
+        now.check_claims(&claims(Some(after), None, None)),
+        Err(ValidationError::NotYetValid { not_before, .. }) if not_before == Timestamp::MAX
+    ));
+    assert!(matches!(
+        now.check_claims(&claims(None, None, Some(i64::MAX))),
+        Err(ValidationError::IssuedInFuture { issued_at, .. }) if issued_at == Timestamp::MAX
+    ));
+    assert!(
+        now.check_claims(&claims(Some(before), None, Some(i64::MIN)))
+            .is_ok()
+    );
+}

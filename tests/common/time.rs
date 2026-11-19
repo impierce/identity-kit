@@ -4,14 +4,14 @@
 
 use std::sync::Mutex;
 
-use chrono::{DateTime, Utc};
 use identity_kit::jose::Jwk;
 use identity_kit::resolver::{KeyReference, KeyResolutionError, KeyResolver, KeyRole};
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{CredentialStatus, StatusCheck, StatusError, TimeOptions};
 
 /// A status check that passes every entry and records the validation time it is handed.
 #[derive(Default)]
-pub(crate) struct RecordedTimes(Mutex<Vec<Option<DateTime<Utc>>>>);
+pub(crate) struct RecordedTimes(Mutex<Vec<Option<Timestamp>>>);
 
 #[async_trait::async_trait]
 impl StatusCheck for RecordedTimes {
@@ -25,7 +25,7 @@ impl StatusCheck for RecordedTimes {
 /// at and the time on the clock when it is asked.
 pub(crate) struct TimedResolver<R> {
     resolver: R,
-    asked: Mutex<Vec<(i64, DateTime<Utc>)>>,
+    asked: Mutex<Vec<(i64, Timestamp)>>,
 }
 
 impl<R> TimedResolver<R> {
@@ -54,7 +54,7 @@ impl<R: KeyResolver> KeyResolver for TimedResolver<R> {
         now: i64,
     ) -> Result<Jwk, KeyResolutionError> {
         if role == KeyRole::Issuer {
-            self.asked.lock().unwrap().push((now, Utc::now()));
+            self.asked.lock().unwrap().push((now, Timestamp::now()));
         }
         self.resolver.resolve_key_at(key, role, now).await
     }
@@ -67,7 +67,7 @@ pub(crate) fn assert_one_validation_time<R>(
     resolver: &TimedResolver<R>,
     check: &RecordedTimes,
     entries: usize,
-    started: DateTime<Utc>,
+    started: Timestamp,
 ) {
     let asked = resolver.asked.lock().unwrap();
     let [(key_time, asked_at)] = asked[..] else {
@@ -77,7 +77,7 @@ pub(crate) fn assert_one_validation_time<R>(
     assert_eq!(times.len(), entries, "{times:?}");
     for time in times.iter() {
         let time = time.expect("the status is checked at a fixed time");
-        assert_eq!(time.timestamp(), key_time);
+        assert_eq!(time.unix_seconds(), key_time);
         assert!(
             started <= time && time <= asked_at,
             "{time} is not the time of the key"

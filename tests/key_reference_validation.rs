@@ -10,7 +10,6 @@
 
 mod common;
 
-use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl, Uri};
 use identity_kit::jose::{DefaultVerifier, Jwk, JwsAlgorithm, JwsHeader, VerificationError};
 use identity_kit::methods::{DidJwk, DidKey};
@@ -22,6 +21,7 @@ use identity_kit::sd_jwt_vc::{
     Confirmation, KeyBinding, KeyBindingOptions, SdJwtCredentialValidator, SdJwtValidationError,
     SdJwtValidationOptions, SdJwtVc, SdJwtVcBuilder,
 };
+use identity_kit::vc::Timestamp;
 use identity_kit::vc::validation::{
     CredentialValidationOptions, JwtCredentialValidator, JwtPresentationValidator,
     PresentationValidationOptions, SubjectHolderRelationship, TimeOptions, ValidationError,
@@ -32,12 +32,12 @@ use serde_json::json;
 use common::fixtures::{RefusingRole, resolver};
 use common::{Ed25519Signer, Es256Signer};
 
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap()
+fn now() -> Timestamp {
+    "2024-06-01T12:00:00Z".parse::<Timestamp>().unwrap()
 }
 
-fn issued_at() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
+fn issued_at() -> Timestamp {
+    "2024-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
 }
 
 /// `did:key` of the RFC 8037 key and the fragment of its verification method.

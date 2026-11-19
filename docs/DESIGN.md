@@ -80,7 +80,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `in-memory`          | off     | test and development key store                                |
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
 | `pkcs11`             | off     | `cryptoki`; `tokio` (`rt`) for the blocking pool; PKCS#11 key store |
-| `vc`                 | on      | `chrono` (`now`, `serde`, `std` only); W3C VC/VP JWT profile and validators |
+| `vc`                 | on      | `time` (`formatting`, `parsing`, `std` only) behind `vc::Timestamp`; W3C VC/VP JWT profile and validators |
 | `status-list`        | on      | `miniz_oxide` (the compressed list); the Token Status List for JWT and SD-JWT credentials; implies `vc` |
 | `sd-jwt`             | on      | `getrandom` (salts); implies `vc` and `status-list`           |
 | `domain-linkage`     | on      | implies `vc` and `did-web` (for `HttpClient`)                 |
@@ -368,19 +368,19 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   (case-insensitive, `application/` optional), the signature under the key the
   `KeyReference` names, the key bound to `iss` unless the options waive it for a resolver of
   trusted keys (`IssuerBinding::Any`), the expected `iss` and `aud`, `exp`/`nbf`/`iat` against
-  an injectable clock in `NumericDate` seconds (the lower layer has no `chrono`) with a
+  an injectable clock in `NumericDate` seconds (the lower layer has no date-time crate) with a
   leeway, and required claims. It lives in `resolver` because it needs `KeyResolver`.
 
 ## Upper layer
 
-- `vc` (`vc`): `Jwt` newtype; `JwtClaims` re-exported from `jose`, with its `chrono` conversions;
+- `vc` (`vc`): `Jwt` newtype; `JwtClaims` re-exported from `jose`, with its `Timestamp` conversions;
   `Credential`/`Presentation` for the VCDM 1.1 JWT profile, built with `new` and `with_*`
   setters, checked on deserialization, with `to_jwt_claims`/`from_jwt_claims`
   (`iss`/`sub`/`jti`/`nbf`/`exp` mapping, a claim and its property must agree), deprecated
   outside domain linkage through deprecated aliases (ADR 0007);
   `CredentialV2`/`PresentationV2` as VC-JOSE-COSE JWT payloads (`typ: vc+jwt`/`vp+jwt`) and
-  `EnvelopedVc`/`EnvelopedVp` over `data:` URLs; `chrono::DateTime<Utc>` timestamps serialized
-  RFC 3339; `vc::validation` with `JwtCredentialValidator` and `JwtPresentationValidator`
+  `EnvelopedVc`/`EnvelopedVp` over `data:` URLs; `vc::Timestamp` timestamps (ADR 0011), serialized
+  RFC 3339 in UTC; `vc::validation` with `JwtCredentialValidator` and `JwtPresentationValidator`
   (each with `validate` for 1.1, deprecated, and `validate_v2` for 2.0, picked by the caller
   from `typ`)
   over `JwsVerifier` + `resolver::KeyResolver` (the key the token's `KeyReference` names, under
@@ -458,7 +458,7 @@ pub struct JwtValidationOptions { algorithms, typ, issuer, audience, role, issue
   once ported.
 - Determinism: same inputs produce byte-identical documents and configuration resources.
 - Layer boundary: `cargo build --no-default-features --features did-key,software` must succeed and
-  `cargo tree` in that configuration must not list `chrono`, `miniz_oxide` or `sd-jwt-payload`.
+  `cargo tree` in that configuration must not list `time`, `miniz_oxide` or `sd-jwt-payload`.
 - `cargo hack --each-feature`, `cargo publish --dry-run`, `cargo deny`, and clippy with
   `-D warnings` on the default lint set plus the lints `[lints.clippy]` in `Cargo.toml` adds:
   `clippy::pedantic` without `must_use_candidate` and `assert_is_empty`, and `dbg_macro`, `todo`, `print_stdout`,

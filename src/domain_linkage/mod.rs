@@ -42,7 +42,7 @@
 //! ```
 //! # #[cfg(feature = "did-key")]
 //! # {
-//! use chrono::{TimeZone as _, Utc};
+//! use identity_kit::vc::Timestamp;
 //! use identity_kit::did::Did;
 //! use identity_kit::domain_linkage::{DomainLinkageClient, DomainLinkageValidator};
 //! use identity_kit::jose::DefaultVerifier;
@@ -73,7 +73,7 @@
 //! let client = DomainLinkageClient::new(Static, DomainLinkageValidator::new(resolver, DefaultVerifier));
 //! // The example credential is valid from 2020-12-04 to 2025-12-04.
 //! let options = CredentialValidationOptions::new()
-//!     .with_time(TimeOptions::at(Utc.with_ymd_and_hms(2021, 1, 1, 0, 0, 0).unwrap()));
+//!     .with_time(TimeOptions::at("2021-01-01T00:00:00Z".parse::<Timestamp>()?));
 //!
 //! let report = client
 //!     .validate_origin(&Url::parse("https://identity.foundation")?, &options)
@@ -98,7 +98,7 @@ use core::fmt;
 use std::collections::BTreeMap;
 use std::error::Error;
 
-use chrono::{DateTime, Utc};
+use crate::vc::Timestamp;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use url::Url;
@@ -484,7 +484,7 @@ impl DomainLinkageConfiguration {
     /// The earliest expiry among the JWT credentials that read ([`entries`](Self::entries)),
     /// or `None` when none reads or none expires: when the configuration needs renewing at
     /// the latest.
-    pub fn earliest_expiry(&self) -> Option<DateTime<Utc>> {
+    pub fn earliest_expiry(&self) -> Option<Timestamp> {
         self.entries()
             .filter_map(|(_, entry)| entry.ok()?.expires)
             .min()
@@ -558,7 +558,7 @@ impl<'de> Deserialize<'de> for DomainLinkageConfiguration {
 /// # Examples
 ///
 /// ```
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::domain_linkage::UnverifiedLinkage;
 /// use identity_kit::vc::Jwt;
 ///
@@ -567,7 +567,7 @@ impl<'de> Deserialize<'de> for DomainLinkageConfiguration {
 /// let linkage = UnverifiedLinkage::from_jwt(&jwt)?;
 /// assert_eq!(linkage.did.as_str(), "did:key:z6MkoTHsgNNrby8JzCNQ1iRLyW5QQ6R8Xuu6AA8igGrMVPUM");
 /// assert_eq!(linkage.origin, "https://identity.foundation");
-/// assert_eq!(linkage.expires, Some(Utc.with_ymd_and_hms(2025, 12, 4, 20, 12, 19).unwrap()));
+/// assert_eq!(linkage.expires, Some("2025-12-04T20:12:19Z".parse::<Timestamp>()?));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -581,9 +581,9 @@ pub struct UnverifiedLinkage {
     /// The issuer it names, which the format requires to be [`did`](Self::did).
     pub issuer: Uri,
     /// When it becomes valid: `nbf`, or `issuanceDate` without one.
-    pub not_before: DateTime<Utc>,
+    pub not_before: Timestamp,
     /// When it expires: `exp`, or `expirationDate` without one, when either is present.
-    pub expires: Option<DateTime<Utc>>,
+    pub expires: Option<Timestamp>,
 }
 
 impl UnverifiedLinkage {
@@ -617,7 +617,7 @@ impl UnverifiedLinkage {
 /// # Examples
 ///
 /// ```
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::did::Did;
 /// use identity_kit::domain_linkage::DomainLinkageCredentialBuilder;
 /// use url::Url;
@@ -626,8 +626,8 @@ impl UnverifiedLinkage {
 /// let builder = DomainLinkageCredentialBuilder::new(
 ///     did.clone(),
 ///     &Url::parse("https://identity.foundation")?,
-///     Utc.with_ymd_and_hms(2020, 12, 4, 20, 12, 19).unwrap(),
-///     Utc.with_ymd_and_hms(2025, 12, 4, 20, 12, 19).unwrap(),
+///     "2020-12-04T20:12:19Z".parse::<Timestamp>()?,
+///     "2025-12-04T20:12:19Z".parse::<Timestamp>()?,
 /// )?;
 /// let claims = builder.jwt_claims();
 /// assert_eq!(claims.iss.as_deref(), Some(did.as_str()));
@@ -645,9 +645,9 @@ pub struct DomainLinkageCredentialBuilder {
     /// The origin, normalized.
     pub origin: String,
     /// `issuanceDate` and `nbf`.
-    pub issuance_date: DateTime<Utc>,
+    pub issuance_date: Timestamp,
     /// `expirationDate` and `exp`.
-    pub expiration_date: DateTime<Utc>,
+    pub expiration_date: Timestamp,
 }
 
 impl DomainLinkageCredentialBuilder {
@@ -660,8 +660,8 @@ impl DomainLinkageCredentialBuilder {
     pub fn new(
         did: Did,
         origin: &Url,
-        issuance_date: DateTime<Utc>,
-        expiration_date: DateTime<Utc>,
+        issuance_date: Timestamp,
+        expiration_date: Timestamp,
     ) -> Result<Self, DomainLinkageError> {
         Ok(Self {
             did,

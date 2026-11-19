@@ -24,15 +24,15 @@
 //! [`ClaimPath`] points at a claim in any JSON credential: the claim path of SD-JWT VC §5.6.1 and
 //! the claims path pointer of OID4VP §7, which DCQL applies to every JSON-based format.
 //! [`JwtClaims`] lives in [`jose`](crate::jose) and is re-exported here; this module adds its
-//! conversions between `NumericDate` values and `chrono` times.
+//! conversions between `NumericDate` values and [`Timestamp`]s.
 //! [`Jwt`] is a compact JWS as a string, signed with any [`Signer`](crate::jose::Signer) through
 //! [`Jwt::sign`]. The [`validation`] module verifies and validates the JWTs: signature through
 //! a [`KeyResolver`](validation::KeyResolver) and a [`JwsVerifier`](crate::jose::JwsVerifier),
 //! binding of the signing key to the issuer or holder, validity period, audience, nonce and
 //! status.
 //!
-//! Timestamps are [`chrono::DateTime<Utc>`](chrono::DateTime) values, serialized as RFC 3339
-//! in UTC (`2010-01-01T19:23:24Z`), the `dateTimeStamp` form the data model requires.
+//! Timestamps are [`Timestamp`] values, serialized as RFC 3339 in UTC
+//! (`2010-01-01T19:23:24Z`), the `dateTimeStamp` form the data model requires.
 //!
 //! # Examples
 //!
@@ -65,7 +65,7 @@
 //! let credential = Credential::from_jwt_claims(&claims)?;
 //! assert_eq!(credential.id.as_ref().map(|id| id.as_str()), Some("http://example.edu/credentials/3732"));
 //! assert_eq!(credential.issuer.id().as_str(), "https://example.com/keys/foo.jwk");
-//! assert_eq!(credential.issuance_date.to_rfc3339(), "2018-11-06T08:42:04+00:00");
+//! assert_eq!(credential.issuance_date.to_string(), "2018-11-06T08:42:04Z");
 //! assert_eq!(
 //!     credential.subject().and_then(|s| s.id.as_ref()).map(|id| id.as_str()),
 //!     Some("did:example:ebfeb1f712ebc6f1c276e12ec21")
@@ -84,6 +84,7 @@ mod jwt;
 mod model;
 mod path;
 pub(crate) mod presentation;
+mod timestamp;
 mod v2;
 pub mod validation;
 
@@ -106,6 +107,7 @@ pub use crate::jose::JwtClaims;
 pub(crate) use crate::jose::numeric_date;
 pub use model::{CONTEXT_V1, CONTEXT_V2, Party, Subject, TypedObject};
 pub use path::{ClaimPath, ClaimPathError, PathComponent};
+pub use timestamp::{Timestamp, TimestampError};
 /// A VCDM 1.1 verifiable presentation, for the JWT profile of VCDM 1.1 §6.3.1.
 ///
 /// Deprecated: present credentials as a [`PresentationV2`] (VC-JOSE-COSE) instead.

@@ -1,6 +1,6 @@
 //! `Credential`: a Verifiable Credentials Data Model 1.1 credential and its JWT profile.
 
-use chrono::{DateTime, Utc};
+use super::Timestamp;
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
@@ -22,7 +22,7 @@ use super::{CredentialError, JwtClaims, Party, Subject, TypedObject, claims};
 ///
 /// ```
 /// # #![allow(deprecated)]
-/// use chrono::{TimeZone as _, Utc};
+/// use identity_kit::vc::Timestamp;
 /// use identity_kit::did::Uri;
 /// use identity_kit::vc::{Credential, Subject};
 /// use serde_json::json;
@@ -30,7 +30,7 @@ use super::{CredentialError, JwtClaims, Party, Subject, TypedObject, claims};
 /// // VCDM 1.1 Example 1, as data.
 /// let credential = Credential::new(
 ///     Uri::parse("https://example.edu/issuers/565049")?,
-///     Utc.with_ymd_and_hms(2010, 1, 1, 0, 0, 0).unwrap(),
+///     "2010-01-01T00:00:00Z".parse::<Timestamp>()?,
 ///     Subject::new(Uri::parse("did:example:ebfeb1f712ebc6f1c276e12ec21")?)
 ///         .with_property("alumniOf", json!({ "id": "did:example:c276e12ec21ebfeb1f712ebc6f1" })),
 /// )
@@ -68,14 +68,14 @@ pub struct Credential {
     pub issuer: Party,
     /// When the credential becomes valid.
     #[serde(rename = "issuanceDate")]
-    pub issuance_date: DateTime<Utc>,
+    pub issuance_date: Timestamp,
     /// When the credential ceases to be valid.
     #[serde(
         rename = "expirationDate",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub expiration_date: Option<DateTime<Utc>>,
+    pub expiration_date: Option<Timestamp>,
     /// The subjects and the claims about them; one, in a credential that has a JWT form.
     #[serde(rename = "credentialSubject")]
     pub credential_subject: OneOrMany<Subject>,
@@ -139,7 +139,7 @@ impl Credential {
 
     /// A credential of type `VerifiableCredential` in the base context, issued by `issuer` at
     /// `issuance_date` about `subject`.
-    pub fn new(issuer: impl Into<Party>, issuance_date: DateTime<Utc>, subject: Subject) -> Self {
+    pub fn new(issuer: impl Into<Party>, issuance_date: Timestamp, subject: Subject) -> Self {
         Self {
             context: Context::uri(Self::CONTEXT),
             id: None,
@@ -180,7 +180,7 @@ impl Credential {
 
     /// This credential with its `expirationDate` set.
     #[must_use]
-    pub fn with_expiration_date(mut self, expiration_date: DateTime<Utc>) -> Self {
+    pub fn with_expiration_date(mut self, expiration_date: Timestamp) -> Self {
         self.expiration_date = Some(expiration_date);
         self
     }

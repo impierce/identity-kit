@@ -1,8 +1,6 @@
 //! The parties, resolvers and instants the credential tests share: an issuer of the RFC 8037
 //! key behind `did:key` and a holder of the RFC 7515 A.3 key behind `did:jwk`.
 
-#[cfg(feature = "vc")]
-use chrono::{DateTime, TimeZone as _, Utc};
 use identity_kit::did::{Did, DidUrl};
 use identity_kit::jose::Jwk;
 #[cfg(feature = "did-jwk")]
@@ -12,6 +10,8 @@ use identity_kit::methods::DidKey;
 #[cfg(all(feature = "did-key", feature = "did-jwk"))]
 use identity_kit::resolver::Resolver;
 use identity_kit::resolver::{KeyReference, KeyResolutionError, KeyResolver, KeyRole};
+#[cfg(feature = "vc")]
+use identity_kit::vc::Timestamp;
 
 use super::{Ed25519Signer, Es256Signer};
 
@@ -86,18 +86,18 @@ impl<R: KeyResolver> KeyResolver for RefusingRole<R> {
 
 /// A validation time inside [`issued_at`] to [`expires_at`].
 #[cfg(feature = "vc")]
-pub(crate) fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()
+pub(crate) fn now() -> Timestamp {
+    "2025-01-01T00:00:00Z".parse::<Timestamp>().unwrap()
 }
 
 /// The `iat` of RFC 9901's examples.
 #[cfg(feature = "vc")]
-pub(crate) fn issued_at() -> DateTime<Utc> {
-    Utc.timestamp_opt(1_683_000_000, 0).unwrap()
+pub(crate) fn issued_at() -> Timestamp {
+    Timestamp::from_unix_seconds(1_683_000_000).unwrap()
 }
 
 /// The `exp` of RFC 9901's examples.
 #[cfg(feature = "vc")]
-pub(crate) fn expires_at() -> DateTime<Utc> {
-    Utc.timestamp_opt(1_883_000_000, 0).unwrap()
+pub(crate) fn expires_at() -> Timestamp {
+    Timestamp::from_unix_seconds(1_883_000_000).unwrap()
 }

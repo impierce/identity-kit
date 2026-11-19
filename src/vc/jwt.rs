@@ -1,13 +1,13 @@
-//! `Jwt`, a compact JWS carrying a JSON claims set, and the `chrono` conversions of
+//! `Jwt`, a compact JWS carrying a JSON claims set, and the [`Timestamp`] conversions of
 //! [`JwtClaims`].
 
 use core::fmt;
 use core::str::FromStr;
 
-use chrono::{DateTime, Utc};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use super::Timestamp;
 #[cfg(feature = "status-list")]
 use crate::jose::numeric_date;
 use crate::jose::{CompactJws, JwsError, JwsHeader, JwtClaims, Signer, encode_compact};
@@ -151,37 +151,38 @@ pub(crate) fn required_numeric_date<'de, D: Deserializer<'de>>(
     numeric_date(deserializer)?.ok_or_else(|| serde::de::Error::custom("a NumericDate is required"))
 }
 
-/// The conversions between `NumericDate` values and `chrono` times, which come with the `vc`
+/// The conversions between `NumericDate` values and [`Timestamp`]s, which come with the `vc`
 /// feature.
 #[cfg_attr(docsrs, doc(cfg(feature = "vc")))]
 impl JwtClaims {
     /// `time` as a `NumericDate`: whole seconds since the Unix epoch, fractions dropped.
-    pub fn numeric_date(time: DateTime<Utc>) -> i64 {
-        time.timestamp()
+    pub fn numeric_date(time: Timestamp) -> i64 {
+        time.unix_seconds()
     }
 
-    /// The time a `NumericDate` names, if it is in the range `chrono` represents.
-    pub fn timestamp(numeric_date: i64) -> Option<DateTime<Utc>> {
-        DateTime::from_timestamp(numeric_date, 0)
+    /// The time a `NumericDate` names, if it is in the range of [`Timestamp`] (years 0000 to
+    /// 9999).
+    pub fn timestamp(numeric_date: i64) -> Option<Timestamp> {
+        Timestamp::from_unix_seconds(numeric_date)
     }
 
     /// This claims set with `exp` set to `time`.
     #[must_use]
-    pub fn with_exp(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_exp(mut self, time: Timestamp) -> Self {
         self.exp = Some(Self::numeric_date(time));
         self
     }
 
     /// This claims set with `nbf` set to `time`.
     #[must_use]
-    pub fn with_nbf(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_nbf(mut self, time: Timestamp) -> Self {
         self.nbf = Some(Self::numeric_date(time));
         self
     }
 
     /// This claims set with `iat` set to `time`.
     #[must_use]
-    pub fn with_iat(mut self, time: DateTime<Utc>) -> Self {
+    pub fn with_iat(mut self, time: Timestamp) -> Self {
         self.iat = Some(Self::numeric_date(time));
         self
     }

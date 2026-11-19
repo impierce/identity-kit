@@ -1149,9 +1149,9 @@ mod jwt {
 
 #[cfg(feature = "vc")]
 mod vc {
-    use chrono::{TimeZone as _, Utc};
     use identity_kit::did::Uri;
     use identity_kit::jose::DefaultVerifier;
+    use identity_kit::vc::Timestamp;
     use identity_kit::vc::validation::{
         CredentialValidationOptions, JwtCredentialValidator, TimeOptions, ValidationError,
     };
@@ -1176,8 +1176,9 @@ mod vc {
         let certified = certified();
         let validator = JwtCredentialValidator::new(resolver(&certified), DefaultVerifier);
         let at = |seconds: i64| {
-            CredentialValidationOptions::new()
-                .with_time(TimeOptions::at(Utc.timestamp_opt(seconds, 0).unwrap()))
+            CredentialValidationOptions::new().with_time(TimeOptions::at(
+                Timestamp::from_unix_seconds(seconds).unwrap(),
+            ))
         };
 
         let named = credential(&certified, "https://example.com").await;
@@ -1217,19 +1218,19 @@ mod vc {
 mod sd_jwt_vc {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use chrono::{DateTime, TimeZone as _, Utc};
     use identity_kit::jose::DefaultVerifier;
     use identity_kit::sd_jwt_vc::validation::{SdJwtValidationError, SdJwtValidationOptions};
     use identity_kit::sd_jwt_vc::{SdJwtCredentialValidator, SdJwtVc, SdJwtVcBuilder};
     use identity_kit::vc::CredentialError;
+    use identity_kit::vc::Timestamp;
     use identity_kit::vc::validation::{TimeOptions, ValidationError};
 
     use super::*;
 
     const VCT: &str = "urn:eudi:pid:1";
 
-    fn now() -> DateTime<Utc> {
-        Utc.timestamp_opt(DEFAULT_TIME, 0).unwrap()
+    fn now() -> Timestamp {
+        Timestamp::from_unix_seconds(DEFAULT_TIME).unwrap()
     }
 
     fn builder() -> SdJwtVcBuilder {
@@ -1306,7 +1307,7 @@ mod sd_jwt_vc {
         // The certificates must be valid at the validation time, not at the current one: the
         // chain expires in 2969, and the credential itself never does.
         let late = SdJwtValidationOptions::new().with_time(TimeOptions::at(
-            Utc.timestamp_opt(31_536_000_002, 0).unwrap(),
+            Timestamp::from_unix_seconds(31_536_000_002).unwrap(),
         ));
         assert!(key_resolution(
             &validator.validate_credential(credential, &late).await
@@ -1551,12 +1552,12 @@ mod sd_jwt_vc {
 
 #[cfg(all(feature = "status-list", feature = "did-web"))]
 mod status_list {
-    use chrono::{TimeZone as _, Utc};
     use identity_kit::jose::DefaultVerifier;
     use identity_kit::methods::web::HttpResponse;
     use identity_kit::status_list::{
         Status, StatusList, StatusListCheck, StatusListRef, StatusListToken,
     };
+    use identity_kit::vc::Timestamp;
     use identity_kit::vc::validation::{
         CredentialStatus, StatusCheck as _, StatusError, TimeOptions,
     };
@@ -1571,7 +1572,7 @@ mod status_list {
     #[tokio::test]
     async fn token_is_verified_under_its_chain() {
         let certified = certified();
-        let issued_at = Utc.timestamp_opt(DEFAULT_TIME, 0).unwrap();
+        let issued_at = Timestamp::from_unix_seconds(DEFAULT_TIME).unwrap();
         let token = StatusListToken::new(URI, issued_at, StatusList::new(1, 8).unwrap())
             .sign(&certified.signer)
             .await
@@ -1581,7 +1582,7 @@ mod status_list {
 
         let serving = || Web::default().with(URI, HttpResponse::new(200, token.as_str()));
         let status = Status::status_list(StatusListRef::new(URI, 0));
-        let at = |seconds: i64| TimeOptions::at(Utc.timestamp_opt(seconds, 0).unwrap());
+        let at = |seconds: i64| TimeOptions::at(Timestamp::from_unix_seconds(seconds).unwrap());
 
         let check = StatusListCheck::new(serving(), resolver(&certified), DefaultVerifier);
         check
