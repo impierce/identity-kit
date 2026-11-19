@@ -429,7 +429,7 @@ impl reqwest::dns::Resolve for PublicAddresses {
 }
 
 /// Whether `ip` is a globally routable unicast address: not loopback, private, link-local,
-/// unspecified, multicast, broadcast, documentation or otherwise reserved.
+/// unspecified, multicast, broadcast, documentation, benchmarking or otherwise reserved.
 pub(crate) fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -457,7 +457,9 @@ pub(crate) fn is_public(ip: IpAddr) -> bool {
                 || v6.is_multicast()
                 || v6.is_unique_local()
                 || v6.is_unicast_link_local()
-                || segments[0] == 0x2001 && segments[1] == 0x0db8 // documentation
+                || segments[0] == 0x2001 && segments[1] == 0x0db8 // documentation, RFC 3849
+                || segments[0] == 0x3fff && segments[1] < 0x1000 // documentation, RFC 9637
+                || segments[0] == 0x2001 && segments[1] == 0x0002 && segments[2] == 0 // benchmarking, RFC 5180
                 || segments[0] == 0x0064 && segments[1] == 0xff9b) // NAT64 well-known prefix
         }
     }
@@ -531,6 +533,9 @@ mod tests {
             "2600:db8::1",
             "64:1::1",
             "2600:ff9b::1",
+            "2001:2:1::1",
+            "2001:3::1",
+            "3fff:1000::1",
         ] {
             assert!(is_public(public.parse().unwrap()), "{public}");
         }
@@ -556,6 +561,10 @@ mod tests {
             "fe80::1",
             "ff02::1",
             "2001:db8::1",
+            "3fff::1",
+            "3fff:fff:ffff::1",
+            "2001:2::1",
+            "2001:2:0:ffff::1",
             "64:ff9b::7f00:1",
             "::ffff:127.0.0.1",
             "::ffff:10.0.0.1",
