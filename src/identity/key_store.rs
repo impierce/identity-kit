@@ -283,7 +283,8 @@ impl KeyStoreIdentity {
             return Err(IdentityError::UnsupportedKind(kind.clone()));
         }
         let capabilities = self.store.capabilities();
-        let Some(key_type) = key_type_for(alg).filter(|_| capabilities.supports(alg)) else {
+        let Some(key_type) = KeyType::for_algorithm(alg).filter(|_| capabilities.supports(alg))
+        else {
             return Err(IdentityError::UnsupportedAlgorithm(alg));
         };
         if !capabilities.can_generate {
@@ -348,18 +349,6 @@ impl KeyStoreIdentity {
     }
 }
 
-/// The key type generated for `alg`: `None` for ES384, which no [`KeyType`] of this crate is,
-/// and the 2048-bit key for the RSA algorithms.
-fn key_type_for(alg: JwsAlgorithm) -> Option<KeyType> {
-    match alg {
-        JwsAlgorithm::EdDSA => Some(KeyType::Ed25519),
-        JwsAlgorithm::ES256 => Some(KeyType::P256),
-        JwsAlgorithm::ES256K => Some(KeyType::Secp256k1),
-        JwsAlgorithm::RS256 | JwsAlgorithm::PS256 => Some(KeyType::Rsa2048),
-        JwsAlgorithm::ES384 => None,
-    }
-}
-
 impl fmt::Debug for KeyStoreIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let producers: Vec<&str> = self
@@ -397,7 +386,9 @@ impl Identity for KeyStoreIdentity {
                 .chain([IdentityKind::JwkThumbprint]);
             for kind in kinds {
                 for &alg in &capabilities.algorithms {
-                    if key_type_for(alg).is_some() && !pairs.contains(&(kind.clone(), alg)) {
+                    if KeyType::for_algorithm(alg).is_some()
+                        && !pairs.contains(&(kind.clone(), alg))
+                    {
                         pairs.push((kind.clone(), alg));
                     }
                 }

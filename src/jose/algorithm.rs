@@ -76,6 +76,22 @@ impl JwsAlgorithm {
     pub const fn is_ecdsa(self) -> bool {
         matches!(self, Self::ES256 | Self::ES256K | Self::ES384)
     }
+
+    /// The `kty` and `crv` of the keys this algorithm signs with (RFC 7518 §6, RFC 8037 §2,
+    /// RFC 8812 §3.1); `crv` is `None` for `RSA` keys.
+    ///
+    /// This is the crate's one mapping from algorithm to key type: key specs, signers, key
+    /// generation ([`KeyType::for_algorithm`](super::KeyType::for_algorithm)) and the key store
+    /// test suite all decide with it.
+    pub const fn jwk_type(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Self::EdDSA => ("OKP", Some("Ed25519")),
+            Self::ES256 => ("EC", Some("P-256")),
+            Self::ES256K => ("EC", Some("secp256k1")),
+            Self::ES384 => ("EC", Some("P-384")),
+            Self::RS256 | Self::PS256 => ("RSA", None),
+        }
+    }
 }
 
 impl fmt::Display for JwsAlgorithm {

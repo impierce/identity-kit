@@ -11,7 +11,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use identity_kit::jose::{
     CompactJws, DefaultVerifier, Jwk, JwkError, JwsAlgorithm, JwsError, JwsHeader, JwsVerifier,
-    SignError, Signer, VerificationError, encode_compact, normalize_ecdsa_signature,
+    KeyType, SignError, Signer, VerificationError, encode_compact, normalize_ecdsa_signature,
 };
 use serde_json::{Value, json};
 
@@ -1133,5 +1133,45 @@ fn algorithms_convert_to_and_from_jsonwebtoken() {
     assert_eq!(
         A::try_from(JwsAlgorithm::ES256K).unwrap_err().name(),
         "ES256K"
+    );
+}
+
+#[test]
+fn each_algorithm_fits_its_key_type() {
+    let jwk_types: Vec<_> = JwsAlgorithm::ALL
+        .iter()
+        .map(|alg| (alg.as_str(), alg.jwk_type()))
+        .collect();
+
+    assert_eq!(
+        jwk_types,
+        [
+            ("EdDSA", ("OKP", Some("Ed25519"))),
+            ("ES256", ("EC", Some("P-256"))),
+            ("ES256K", ("EC", Some("secp256k1"))),
+            ("ES384", ("EC", Some("P-384"))),
+            ("RS256", ("RSA", None)),
+            ("PS256", ("RSA", None)),
+        ]
+    );
+}
+
+#[test]
+fn each_algorithm_generates_its_smallest_key_type() {
+    let key_types: Vec<_> = JwsAlgorithm::ALL
+        .iter()
+        .map(|&alg| (alg.as_str(), KeyType::for_algorithm(alg)))
+        .collect();
+
+    assert_eq!(
+        key_types,
+        [
+            ("EdDSA", Some(KeyType::Ed25519)),
+            ("ES256", Some(KeyType::P256)),
+            ("ES256K", Some(KeyType::Secp256k1)),
+            ("ES384", None),
+            ("RS256", Some(KeyType::Rsa2048)),
+            ("PS256", Some(KeyType::Rsa2048)),
+        ]
     );
 }

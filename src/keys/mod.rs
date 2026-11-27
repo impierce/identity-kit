@@ -187,25 +187,13 @@ impl KeySpec {
     /// P-256 key, `ES256K` a secp256k1 key and `RS256` or `PS256` an RSA key. `ES384` fits no
     /// [`KeyType`] this crate has.
     pub fn validate(&self) -> Result<(), KeyStoreError> {
-        if algorithm_fits(self.key_type, self.alg) {
+        if self.key_type.jwk_type() == self.alg.jwk_type() {
             Ok(())
         } else {
             Err(KeyStoreError::InvalidSpec {
                 key_type: self.key_type,
                 alg: self.alg,
             })
-        }
-    }
-}
-
-/// Whether `alg` is an algorithm for keys of type `key_type`.
-fn algorithm_fits(key_type: KeyType, alg: JwsAlgorithm) -> bool {
-    match key_type {
-        KeyType::Ed25519 => alg == JwsAlgorithm::EdDSA,
-        KeyType::P256 => alg == JwsAlgorithm::ES256,
-        KeyType::Secp256k1 => alg == JwsAlgorithm::ES256K,
-        KeyType::Rsa2048 | KeyType::Rsa4096 => {
-            matches!(alg, JwsAlgorithm::RS256 | JwsAlgorithm::PS256)
         }
     }
 }

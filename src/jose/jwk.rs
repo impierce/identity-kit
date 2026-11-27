@@ -32,6 +32,43 @@ pub enum KeyType {
     Rsa4096,
 }
 
+impl KeyType {
+    /// The `kty` and `crv` of a JWK of this type; `crv` is `None` for the RSA types.
+    pub const fn jwk_type(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Self::Ed25519 => ("OKP", Some("Ed25519")),
+            Self::P256 => ("EC", Some("P-256")),
+            Self::Secp256k1 => ("EC", Some("secp256k1")),
+            Self::Rsa2048 | Self::Rsa4096 => ("RSA", None),
+        }
+    }
+
+    /// The key type to generate for `alg`: the smallest one whose [`jwk_type`](Self::jwk_type)
+    /// is the algorithm's ([`JwsAlgorithm::jwk_type`](super::JwsAlgorithm::jwk_type)), so
+    /// [`Rsa2048`](Self::Rsa2048) for RS256 and PS256. `None` when no key type of this crate
+    /// signs with `alg`, as for ES384.
+    pub fn for_algorithm(alg: super::JwsAlgorithm) -> Option<Self> {
+        Self::smallest_first()
+            .into_iter()
+            .find(|key_type| key_type.jwk_type() == alg.jwk_type())
+    }
+
+    /// Every key type, the smaller of two of one `kty` first.
+    fn smallest_first() -> [Self; 5] {
+        // The match makes a new variant a compile error here until it is listed.
+        match Self::Ed25519 {
+            Self::Ed25519 | Self::P256 | Self::Secp256k1 | Self::Rsa2048 | Self::Rsa4096 => {}
+        }
+        [
+            Self::Ed25519,
+            Self::P256,
+            Self::Secp256k1,
+            Self::Rsa2048,
+            Self::Rsa4096,
+        ]
+    }
+}
+
 /// A JSON Web Key (RFC 7517).
 ///
 /// A `Jwk` carries the common members (`kty`, `use`, `key_ops`, `alg`, `kid`), the public

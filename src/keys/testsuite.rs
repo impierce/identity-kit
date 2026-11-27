@@ -50,7 +50,7 @@ pub async fn run(store: &dyn KeyStore) {
 
     let mut keys = Vec::new();
     for &alg in &capabilities.algorithms {
-        let key_type = key_type_for(alg).unwrap_or_else(|| {
+        let key_type = KeyType::for_algorithm(alg).unwrap_or_else(|| {
             panic!("{alg} is advertised but no KeyType of this crate generates it")
         });
         let spec = KeySpec::new(key_type, alg);
@@ -62,15 +62,13 @@ pub async fn run(store: &dyn KeyStore) {
 
     // A label becomes the key id, and a taken label is `AlreadyExists`.
     let (first_id, first_alg) = keys[0].clone();
+    let first_key_type = KeyType::for_algorithm(first_alg).expect("checked above");
     let label = format!(
         "identity-kit-testsuite-{}",
         first_alg.as_str().to_lowercase()
     );
     let labelled = store
-        .generate(
-            KeySpec::new(key_type_for(first_alg).expect("checked above"), first_alg)
-                .with_label(&label),
-        )
+        .generate(KeySpec::new(first_key_type, first_alg).with_label(&label))
         .await
         .expect("generate with a label");
     assert_eq!(
@@ -79,10 +77,7 @@ pub async fn run(store: &dyn KeyStore) {
         "the key id of a labelled key is the label"
     );
     let duplicate = store
-        .generate(
-            KeySpec::new(key_type_for(first_alg).expect("checked above"), first_alg)
-                .with_label(&label),
-        )
+        .generate(KeySpec::new(first_key_type, first_alg).with_label(&label))
         .await;
     assert!(
         matches!(duplicate, Err(KeyStoreError::AlreadyExists(ref id)) if id.as_str() == label),
@@ -91,7 +86,7 @@ pub async fn run(store: &dyn KeyStore) {
     keys.push((labelled, first_alg));
 
     // A spec whose algorithm does not fit its key type is `InvalidSpec`.
-    let wrong_type = match key_type_for(first_alg).expect("checked above") {
+    let wrong_type = match first_key_type {
         KeyType::Ed25519 => KeyType::P256,
         _ => KeyType::Ed25519,
     };
@@ -105,9 +100,9 @@ pub async fn run(store: &dyn KeyStore) {
     if let Some(alg) = JwsAlgorithm::ALL
         .iter()
         .copied()
-        .find(|alg| !capabilities.supports(*alg) && key_type_for(*alg).is_some())
+        .find(|alg| !capabilities.supports(*alg) && KeyType::for_algorithm(*alg).is_some())
     {
-        let key_type = key_type_for(alg).expect("filtered above");
+        let key_type = KeyType::for_algorithm(alg).expect("filtered above");
         let refused = store.generate(KeySpec::new(key_type, alg)).await;
         assert!(
             matches!(
@@ -242,7 +237,7 @@ async fn check_key(store: &dyn KeyStore, id: &KeyId, alg: JwsAlgorithm) {
             "public_jwk for `{id}` names `alg` {key_alg}, but the key signs with {alg}"
         );
     }
-    let (kty, crv) = expected_key_type(alg);
+    let (kty, crv) = alg.jwk_type();
     assert_eq!(
         (public.kty(), public.crv()),
         (kty, crv),
@@ -409,28 +404,5 @@ fn verify(alg: JwsAlgorithm, data: &[u8], signature: &[u8], public: &crate::jose
     match DefaultVerifier.verify(alg, data, signature, public) {
         Ok(()) | Err(VerificationError::UnsupportedAlgorithm(_)) => {}
         Err(e) => panic!("signature of `{id}` ({alg}) does not verify with its public JWK: {e}"),
-    }
-}
-
-/// The key type that signs with `alg`, for generation; `None` for ES384, which no [`KeyType`]
-/// of this crate produces, and for the RSA algorithms, where the 2048-bit key stands in.
-fn key_type_for(alg: JwsAlgorithm) -> Option<KeyType> {
-    match alg {
-        JwsAlgorithm::EdDSA => Some(KeyType::Ed25519),
-        JwsAlgorithm::ES256 => Some(KeyType::P256),
-        JwsAlgorithm::ES256K => Some(KeyType::Secp256k1),
-        JwsAlgorithm::RS256 | JwsAlgorithm::PS256 => Some(KeyType::Rsa2048),
-        JwsAlgorithm::ES384 => None,
-    }
-}
-
-/// The `kty` and `crv` of a public JWK for `alg`.
-fn expected_key_type(alg: JwsAlgorithm) -> (&'static str, Option<&'static str>) {
-    match alg {
-        JwsAlgorithm::EdDSA => ("OKP", Some("Ed25519")),
-        JwsAlgorithm::ES256 => ("EC", Some("P-256")),
-        JwsAlgorithm::ES256K => ("EC", Some("secp256k1")),
-        JwsAlgorithm::ES384 => ("EC", Some("P-384")),
-        JwsAlgorithm::RS256 | JwsAlgorithm::PS256 => ("RSA", None),
     }
 }

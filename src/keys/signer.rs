@@ -210,16 +210,9 @@ fn check_alg(key: &KeyId, public: &Jwk, alg: JwsAlgorithm) -> Result<(), KeyStor
     }
 }
 
-/// Whether `public` is a key `alg` signs with, by its `kty` and `crv` (RFC 7518 §6, RFC 8037 §2,
-/// RFC 8812 §3.1).
+/// Whether `public` is a key `alg` signs with, by its `kty` and `crv`.
 fn fits(public: &Jwk, alg: JwsAlgorithm) -> bool {
-    match alg {
-        JwsAlgorithm::EdDSA => public.kty() == "OKP" && public.crv() == Some("Ed25519"),
-        JwsAlgorithm::ES256 => public.kty() == "EC" && public.crv() == Some("P-256"),
-        JwsAlgorithm::ES256K => public.kty() == "EC" && public.crv() == Some("secp256k1"),
-        JwsAlgorithm::ES384 => public.kty() == "EC" && public.crv() == Some("P-384"),
-        JwsAlgorithm::RS256 | JwsAlgorithm::PS256 => public.kty() == "RSA",
-    }
+    (public.kty(), public.crv()) == alg.jwk_type()
 }
 
 impl<S> fmt::Debug for KeySigner<S> {
