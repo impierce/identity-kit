@@ -12,7 +12,7 @@ remote signers (an HSM, a cloud KMS), and a software backend follows the same ru
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `capabilities` | Truthful and stable. Every algorithm listed signs; `generate` and `delete` succeed only when `can_generate` / `can_delete` is set. No duplicate algorithms. |
 | `public_jwk`   | The public key, never private parameters. `alg` is set to the key's algorithm when the backend knows it; `kid` is the key id for the shipped backends. `KeyStoreIdentity` does not publish it: the DIDs it derives and its `public_jwk` carry the RFC 7638 thumbprint as `kid`, so a label stays inside the store. A backend whose vault returns DER builds the JWK with `Jwk::from_spki_der` (a `SubjectPublicKeyInfo`) or, for an RSA key returned as a PKCS #1 `RSAPublicKey`, `Jwk::from_pkcs1_der`. |
-| `sign`         | Takes the raw signing input (the backend hashes) and returns the JWS form of the signature: 64 bytes for EdDSA, raw `r \|\| s` for ECDSA (never DER), the modulus-sized octet string for RSA. |
+| `sign`         | Takes the raw signing input (the backend hashes) and returns the JWS form of the signature: 64 bytes for EdDSA, raw `r \|\| s` for ECDSA (never DER), the modulus-sized octet string for RSA, the FIPS 204 encoding for ML-DSA. |
 | `exists`       | `Ok(false)` for an unknown key, never an error.                                                                                                        |
 | `generate`     | Rejects a spec whose algorithm does not fit the key type (`InvalidSpec`), a key type or algorithm the backend cannot make (`UnsupportedKeyType`, `UnsupportedAlgorithm`) and a taken label (`AlreadyExists`). Default: `Unsupported("generate")`. |
 | `delete`       | `NotFound` for an unknown key. Default: `Unsupported("delete")`.                                                                                        |
@@ -72,6 +72,9 @@ that ECDSA signatures are not DER, that ES256K signatures have a low `s`, exerci
 | `ES384`   | none in this crate    |         ❌         |         ❌         |                    ❌                     |
 | `RS256`   | `Rsa2048`, `Rsa4096`  |         ❌         |         ❌         | ✅ with `CKM_RSA_PKCS` (`rsa_algorithm`)  |
 | `PS256`   | `Rsa2048`, `Rsa4096`  |         ❌         |         ❌         | ✅ with `CKM_RSA_PKCS_PSS` (`rsa_algorithm`) |
+| `ML-DSA-44` | `Akp`               |   ✅ (`ml-dsa`)    |   ✅ (`ml-dsa`)    |                    ❌                     |
+| `ML-DSA-65` | `Akp`               |   ✅ (`ml-dsa`)    |   ✅ (`ml-dsa`)    |                    ❌                     |
+| `ML-DSA-87` | `Akp`               |   ✅ (`ml-dsa`)    |   ✅ (`ml-dsa`)    |                    ❌                     |
 
 The software backends never sign with RSA: the `rsa` crate's private-key operations are affected
 by RUSTSEC-2023-0071 and [ADR 0001](adr/0001-rsa-verification-only.md) keeps them out of the
@@ -82,6 +85,14 @@ when the file is opened.
 
 ECDSA signatures of the software backends use RFC 6979 deterministic nonces, so the same key and
 input give the same signature. Backends are free to use random nonces.
+
+ML-DSA keys are `AKP` JWKs (RFC 9964): `alg` names the parameter set, `pub` is the public key and
+`priv` the 32-byte seed, from which the software backends derive the key and check `pub` when it
+is loaded. Their signatures are hedged, FIPS 204's default: fresh randomness on every signature,
+even in a seeded `InMemoryKeyStore`, so the same input gives a different signature each time.
+`Pkcs11KeyStore` does not offer ML-DSA. A remote backend whose signer caps the message size (AWS
+KMS signs at most 4096 bytes) signs the external μ of the signing input instead, which
+`jose::ml_dsa_external_mu` computes; the `KeyStore` trait does not change for it.
 
 ## `InMemoryKeyStore` (feature `in-memory`)
 

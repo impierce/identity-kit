@@ -39,6 +39,9 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `DefaultVerifier`: EdDSA, ES256 (ES384 is in `JwsAlgorithm` but not verified) |   ✅   |               | [RFC 7518][rfc7518], [RFC 8037][rfc8037]                              | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | ES256K verification via `k256`                                         |   ✅   | `secp256k1`   | [RFC 8812][rfc8812]                                                   | [#7](https://github.com/impierce/identity-kit/issues/7) |
 | RSA algorithms (RS256, PS256), verification only ([ADR 0001](adr/0001-rsa-verification-only.md)) |   ✅   | `rsa`         | [RFC 7518 §3.3, §3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.3) | [#7](https://github.com/impierce/identity-kit/issues/7) |
+| ML-DSA-44, ML-DSA-65, ML-DSA-87 verification: pure ML-DSA, empty context string |   ✅   | `ml-dsa`      | [RFC 9964 §5][rfc9964], [FIPS 204][fips204]                           |                                                         |
+| `AKP` keys: `pub`, `priv` (32-byte seed, redacted like `d`), thumbprint over `alg`, `kty`, `pub`, `Jwk::from_ml_dsa_public` |   ✅   |               | [RFC 9964 §3, §4, §6][rfc9964]                                        |                                                         |
+| `ml_dsa_external_mu`: the μ a remote signer (AWS KMS `EXTERNAL_MU`, an HSM) signs in place of a long signing input |   ✅   | `ml-dsa`      | [FIPS 204 Algorithm 2][fips204], [RFC 9964 §5][rfc9964]               |                                                         |
 | `JwtClaims` and `OneOrMany` moved down from `vc` ([ADR 0006](adr/0006-extension-points-identity-and-key-reference.md)) |   ✅   |               | [RFC 7519][rfc7519]                                                   | [#54](https://github.com/impierce/identity-kit/issues/54) |
 | `CompactJwe`: decode, encrypt and decrypt in the compact serialization with `ECDH-ES` on P-256 (Concat KDF) and `A128GCM`/`A256GCM`, for encrypted responses ([ADR 0009](adr/0009-jwe-for-encrypted-responses.md)) |   ✅   | `jwe`         | [RFC 7516][rfc7516], [RFC 7518 §4.6, §5.3][rfc7518], [OID4VP §8.3][oid4vp], [HAIP §5][haip] | [#183](https://github.com/impierce/identity-kit/issues/183) |
 | `JweDecrypter` trait for the recipient's key, `EcdhKey` for a per-request P-256 key kept as a private JWK |   ✅   | `jwe`         | [RFC 7518 §4.6][rfc7518], [HAIP §5][haip]                             | [#183](https://github.com/impierce/identity-kit/issues/183) |
@@ -52,6 +55,7 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 | `KeySigner` over an owned store handle (`Arc<dyn KeyStore>`), and from a known public JWK |   ✅   |                |                                                 | [#62](https://github.com/impierce/identity-kit/issues/62) |
 | `InMemoryKeyStore` with optional deterministic seed                                       |   ✅   | `in-memory`    |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `SoftwareKeyStore`: private JWK set file, permission check, `zeroize`, atomic writes       |   ✅   | `software`     | [RFC 7517 §5](https://www.rfc-editor.org/rfc/rfc7517#section-5) | [#8](https://github.com/impierce/identity-kit/issues/8)   |
+| ML-DSA-44/65/87 in `InMemoryKeyStore` and `SoftwareKeyStore`: generate, load an `AKP` key with `priv`, hedged signing |   ✅   | `ml-dsa`       | [RFC 9964][rfc9964], [FIPS 204][fips204]        |                                                           |
 | `keys::testsuite`: one behavioural suite every backend must pass                           |   ✅   | `test-vectors` |                                                 | [#8](https://github.com/impierce/identity-kit/issues/8)   |
 | `Pkcs11KeyStore`, tested against SoftHSM2 in CI                                           |   ✅   | `pkcs11`       | [PKCS #11 v3.1][pkcs11]                         | [#13](https://github.com/impierce/identity-kit/issues/13) |
 
@@ -85,8 +89,8 @@ additive; see [`DESIGN.md`](DESIGN.md#features) for what each one pulls in.
 
 | Feature                                                                                                | Status | Cargo feature | Specification                                                      | Issue                                                     |
 | ------------------------------------------------------------------------------------------------------ | :----: | ------------- | ------------------------------------------------------------------ | --------------------------------------------------------- |
-| `did:key`: Ed25519, P-256, secp256k1, RSA and X25519 multicodec keys, base58btc multibase              |   ✅   | `did-key`     | [did:key][did-key], [multicodec][multicodec], [multibase][multibase] | [#10](https://github.com/impierce/identity-kit/issues/10) |
-| `did:jwk`: base64url JWK as method-specific id, created in JCS canonical form                          |   ✅   | `did-jwk`     | [did:jwk][did-jwk], [RFC 8785][rfc8785]                            | [#10](https://github.com/impierce/identity-kit/issues/10), [#30](https://github.com/impierce/identity-kit/issues/30) |
+| `did:key`: Ed25519, P-256, secp256k1, RSA and X25519 multicodec keys, base58btc multibase; `AKP` (ML-DSA) keys refused as too long ([ADR 0012](adr/0012-ml-dsa-not-in-did-key-and-did-jwk.md)) |   ✅   | `did-key`     | [did:key][did-key], [multicodec][multicodec], [multibase][multibase] | [#10](https://github.com/impierce/identity-kit/issues/10) |
+| `did:jwk`: base64url JWK as method-specific id, created in JCS canonical form; `AKP` (ML-DSA) keys refused as too long ([ADR 0012](adr/0012-ml-dsa-not-in-did-key-and-did-jwk.md)) |   ✅   | `did-jwk`     | [did:jwk][did-jwk], [RFC 8785][rfc8785]                            | [#10](https://github.com/impierce/identity-kit/issues/10), [#30](https://github.com/impierce/identity-kit/issues/30) |
 | `did:web`: origin mapping, resolver over an injected `HttpClient`, hardened default client, producer   |   ✅   | `did-web`, `reqwest` | [did:web][did-web]                                                 | [#10](https://github.com/impierce/identity-kit/issues/10) |
 | `ReqwestClient::builder` for development and tests: `dangerous_allow_loopback`, `dangerous_allow_private_network`; plain `http` only when every address is local, link-local always refused; the fetch helpers (DID configuration, Linked VP, JWKS, status list redirects) defer `http` URLs to it through `HttpClient::allows_plain_http` | ✅ | `local-network` | [did:web][did-web] | [#37](https://github.com/impierce/identity-kit/issues/37), [#162](https://github.com/impierce/identity-kit/issues/162) |
 
@@ -205,6 +209,8 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 | [RFC 8785: JSON Canonicalization Scheme][rfc8785] | IETF   | `methods::jwk`                            |
 | [RFC 8812: secp256k1 in JOSE][rfc8812]       | IETF        | `jose` (`secp256k1`)                      |
 | [RFC 9901: SD-JWT][rfc9901]                  | IETF        | `sd_jwt_vc`                               |
+| [RFC 9964: ML-DSA in JOSE][rfc9964]          | IETF        | `jose` (`ml-dsa`), `keys`                 |
+| [FIPS 204: ML-DSA][fips204]                  | NIST        | `jose` (`ml-dsa`), `keys`                 |
 | [OpenID4VP 1.0][oid4vp]                      | OpenID Foundation | `vc` (`ClaimPath`), `jose` (`jwe`), `resolver` (`X509Certificate`, `x509`) |
 | [SD-JWT VC][sd-jwt-vc]                       | IETF draft  | `sd_jwt_vc`                               |
 | [Token Status List][status-list] (draft 21)  | IETF draft  | `status_list`                             |
@@ -235,6 +241,8 @@ Decided in [`DESIGN.md`](DESIGN.md#principles); each would need an ADR to revisi
 [rfc8785]: https://www.rfc-editor.org/rfc/rfc8785
 [rfc8812]: https://www.rfc-editor.org/rfc/rfc8812
 [rfc9901]: https://www.rfc-editor.org/rfc/rfc9901
+[rfc9964]: https://www.rfc-editor.org/rfc/rfc9964
+[fips204]: https://csrc.nist.gov/pubs/fips/204/final
 [sd-jwt-vc]: https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/
 [haip]: https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html
 [status-list]: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-status-list-21

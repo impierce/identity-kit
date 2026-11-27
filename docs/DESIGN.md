@@ -77,6 +77,7 @@ All additive. CI runs `cargo hack --each-feature` and the no-default-features bu
 | `local-network` | off  | Development and tests only: `ReqwestClient::builder` opt-ins for loopback and private addresses (implies `reqwest`) |
 | `secp256k1`          | on      | `k256`                                                        |
 | `rsa`                | off     | `rsa`                                                         |
+| `ml-dsa`             | on      | `ml-dsa`, `shake`; ML-DSA-44/65/87 and `AKP` keys (RFC 9964), signing in the software stores |
 | `in-memory`          | off     | test and development key store                                |
 | `software`           | on      | `zeroize`; JWK-file key store                                 |
 | `pkcs11`             | off     | `cryptoki`; `tokio` (`rt`) for the blocking pool; PKCS#11 key store |
@@ -170,11 +171,13 @@ impl Jwk {
     pub fn from_pkcs1_der(der: &[u8]) -> Result<Jwk>;   // RSA `RSAPublicKey` (RFC 8017 A.1.1), what some vaults return
     pub fn to_pkcs1_der(&self) -> Result<Vec<u8>>;      // the same parser `rsa-pub` Multikeys use
 }
-pub enum JwsAlgorithm { EdDSA, ES256, ES256K, ES384, RS256, PS256 }  // From/TryFrom jsonwebtoken::Algorithm
+pub enum JwsAlgorithm { EdDSA, ES256, ES256K, ES384, RS256, PS256, MlDsa44, MlDsa65, MlDsa87 }  // From/TryFrom jsonwebtoken::Algorithm
+impl JwsAlgorithm { pub const fn jwk_type(self) -> (&'static str, Option<&'static str>); }  // the one alg → `kty`/`crv` mapping
 pub trait JwsVerifier: Send + Sync {
     fn verify(&self, alg: JwsAlgorithm, signing_input: &[u8], signature: &[u8], key: &Jwk) -> Result<(), VerificationError>;
 }
-pub struct DefaultVerifier;                    // ed25519-dalek, p256, k256 (secp256k1), rsa (rsa)
+pub struct DefaultVerifier;                    // ed25519-dalek, p256, k256 (secp256k1), rsa (rsa), ml-dsa (ml-dsa)
+pub fn ml_dsa_external_mu(key: &Jwk, message: &[u8]) -> Result<[u8; 64]>;  // the μ remote signers sign (AWS KMS `EXTERNAL_MU`)
 pub struct CompactJws { .. }                   // decode(token); header(), kid(), alg(), signing_input(), payload(), signature(), claims::<T>() (unverified)
 pub async fn encode_compact(header: &Header, payload: &[u8], signer: &dyn Signer) -> Result<String>;
 #[async_trait] pub trait Signer: Send + Sync { fn alg(&self) -> JwsAlgorithm; fn kid(&self) -> Option<&str>; async fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>>; }
@@ -184,6 +187,12 @@ pub enum OneOrMany<T> { One(T), Many(Vec<T>) }  // `aud`; DID Core `controller` 
 
 `jsonwebtoken` has no ES256K; sign and verify it with `k256` directly. ECDSA signatures are always
 the JWS raw `r || s` form at the trait boundary.
+
+ML-DSA (RFC 9964) is pure ML-DSA with the empty context string, never HashML-DSA. Its key is an
+`AKP` JWK: `alg` names the parameter set, `pub` the public key, `priv` the 32-byte seed. A remote
+signer that caps the message size signs the external μ of the signing input; the `KeyStore` trait
+stays as it is, and a remote store calls `ml_dsa_external_mu` inside its own `sign`. `did:key` and
+`did:jwk` refuse `AKP` keys as too long; `did:web` carries them (ADR 0012).
 
 With `jwe` (ADR 0009), the compact JWE of an encrypted response (OpenID4VP §8.3, HAIP §5):
 
@@ -210,13 +219,14 @@ Designed for remote signers first:
 - Private keys never leave the backend; `sign` is remote and async.
 - Generation is optional: a KMS or HSM is usually provisioned out of band.
 - One algorithm per key. Backends declare which algorithms they support (PKCS#11: Ed25519, ECDSA,
-  RSA depending on the module).
+  RSA depending on the module; the in-memory and software stores: EdDSA, ES256, ES256K and
+  ML-DSA-44/65/87, each behind its feature).
 - Backends convert their native signature encoding (such as DER-encoded ECDSA) to raw `r || s`.
 - Callers cache public keys; a round trip per `kid` lookup is unacceptable.
 
 ```rust
 pub struct KeyId(String);
-pub enum KeyType { Ed25519, P256, Secp256k1, Rsa2048, Rsa4096 }
+pub enum KeyType { Ed25519, P256, Secp256k1, Rsa2048, Rsa4096, Akp }  // for_algorithm(alg): the smallest that fits
 pub struct KeySpec { key_type: KeyType, alg: JwsAlgorithm, label: Option<String> }
 pub struct KeyStoreCapabilities { can_generate: bool, can_delete: bool, remote: bool, algorithms: Vec<JwsAlgorithm> }
 

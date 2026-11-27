@@ -17,7 +17,7 @@ Add it to a project with `cargo add identity-kit`. The API reference is on [docs
 
 - ✅ `Did`, `DidUrl` and `DidMethod` parsing and validation per [W3C DID Core](https://www.w3.org/TR/did-core/)
 - ✅ `DidDocument` data model and [DID Resolution](https://www.w3.org/TR/did-resolution/) types
-- ✅ JWK and compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) with EdDSA, ECDSA and RSA verification
+- ✅ JWK and compact JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)) with EdDSA, ECDSA, RSA and ML-DSA ([RFC 9964](https://www.rfc-editor.org/rfc/rfc9964)) verification
 - ✅ Compact JWE ([RFC 7516](https://www.rfc-editor.org/rfc/rfc7516)) with ECDH-ES on P-256 and AES-GCM, for the encrypted responses the [OpenID4VC High Assurance Interoperability Profile](https://openid.net/specs/openid4vc-high-assurance-interoperability-profile-1_0.html) requires
 - ✅ `KeyStore` trait designed for remote signers, with in-memory and file-based backends
 - ✅ PKCS#11 key store backend, tested against SoftHSM2
@@ -48,6 +48,7 @@ All features are additive; the lower layer (`did`, `jose`, `keys`, `identity`, `
 | `local-network` |  | Development and tests only: `ReqwestClient::builder` with opt-ins to reach loopback and private addresses over `http`; implies `reqwest` |
 | `secp256k1`      |   ✅    | ES256K signatures and `secp256k1` keys, via `k256`                                       |
 | `rsa`            |         | RS256 and PS256 signature verification with keys of 2048 bits or more, via `rsa`         |
+| `ml-dsa`         |   ✅    | ML-DSA-44, ML-DSA-65 and ML-DSA-87 signatures and `AKP` keys (RFC 9964), via `ml-dsa`    |
 | `software`       |   ✅    | `SoftwareKeyStore`: private keys in a JWK set file                                       |
 | `in-memory`      |         | `InMemoryKeyStore`: keys in memory, optionally derived from a seed                       |
 | `pkcs11`         |         | `Pkcs11KeyStore`: keys in a PKCS#11 module (an HSM, SoftHSM2), via `cryptoki` and `tokio`'s blocking pool |
@@ -71,8 +72,8 @@ The crate ships vendor-neutral backends; a cloud KMS or HSM backend implements t
 
 | Backend            | Feature     | Keys live in                           | Generates | Deletes | Signs with                              |
 | ------------------ | ----------- | -------------------------------------- | :-------: | :-----: | --------------------------------------- |
-| `InMemoryKeyStore` | `in-memory` | Process memory, zeroized on drop       |    ✅     |   ✅    | EdDSA, ES256, ES256K (`secp256k1`)      |
-| `SoftwareKeyStore` | `software`  | A private JWK set file, permission-checked, atomically rewritten |    ✅     |   ✅    | EdDSA, ES256, ES256K (`secp256k1`)      |
+| `InMemoryKeyStore` | `in-memory` | Process memory, zeroized on drop       |    ✅     |   ✅    | EdDSA, ES256, ES256K (`secp256k1`), ML-DSA-44/65/87 (`ml-dsa`) |
+| `SoftwareKeyStore` | `software`  | A private JWK set file, permission-checked, atomically rewritten |    ✅     |   ✅    | EdDSA, ES256, ES256K (`secp256k1`), ML-DSA-44/65/87 (`ml-dsa`) |
 | `Pkcs11KeyStore`   | `pkcs11`    | A PKCS#11 token: an HSM, a smart card, SoftHSM2 | ✅ unless write-protected | ✅ unless write-protected | What the module offers: EdDSA, ES256, ES256K (`secp256k1`), RS256 or PS256 |
 
 Neither software backend signs with RSA: see [ADR 0001](https://github.com/impierce/identity-kit/blob/HEAD/docs/adr/0001-rsa-verification-only.md); the PKCS#11 backend signs RSA in the module.
