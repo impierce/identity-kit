@@ -140,3 +140,97 @@ fn verify_as<P: ml_dsa::MlDsaParams>(public: &[u8], message: &[u8], signature: &
     };
     ml_dsa::VerifyingKey::<P>::decode(&public).verify_with_context(message, &[], &signature)
 }
+
+/// An ML-DSA private key of the software key stores: the 32-byte seed RFC 9964 §4 stores in
+/// `priv`, the public key it derives and the expanded key that signs. Zeroized on drop.
+#[cfg(all(feature = "ml-dsa", any(feature = "in-memory", feature = "software")))]
+pub(crate) struct SigningKey {
+    seed: zeroize::Zeroizing<[u8; 32]>,
+    public: Vec<u8>,
+    expanded: ExpandedKey,
+}
+
+/// The expanded key of one parameter set, boxed: an ML-DSA-87 key is tens of kilobytes.
+#[cfg(all(feature = "ml-dsa", any(feature = "in-memory", feature = "software")))]
+enum ExpandedKey {
+    MlDsa44(Box<ml_dsa::ExpandedSigningKey<ml_dsa::MlDsa44>>),
+    MlDsa65(Box<ml_dsa::ExpandedSigningKey<ml_dsa::MlDsa65>>),
+    MlDsa87(Box<ml_dsa::ExpandedSigningKey<ml_dsa::MlDsa87>>),
+}
+
+#[cfg(all(feature = "ml-dsa", any(feature = "in-memory", feature = "software")))]
+impl SigningKey {
+    /// The key of `set` that `seed` derives (`ML-DSA.KeyGen_internal`, FIPS 204 Algorithm 6).
+    pub(crate) fn from_seed(set: ParameterSet, seed: &[u8; 32]) -> Self {
+        let (expanded, public) = match set {
+            ParameterSet::MlDsa44 => {
+                let (key, public) = expand::<ml_dsa::MlDsa44>(seed);
+                (ExpandedKey::MlDsa44(key), public)
+            }
+            ParameterSet::MlDsa65 => {
+                let (key, public) = expand::<ml_dsa::MlDsa65>(seed);
+                (ExpandedKey::MlDsa65(key), public)
+            }
+            ParameterSet::MlDsa87 => {
+                let (key, public) = expand::<ml_dsa::MlDsa87>(seed);
+                (ExpandedKey::MlDsa87(key), public)
+            }
+        };
+        Self {
+            seed: zeroize::Zeroizing::new(*seed),
+            public,
+            expanded,
+        }
+    }
+
+    pub(crate) fn parameter_set(&self) -> ParameterSet {
+        match self.expanded {
+            ExpandedKey::MlDsa44(_) => ParameterSet::MlDsa44,
+            ExpandedKey::MlDsa65(_) => ParameterSet::MlDsa65,
+            ExpandedKey::MlDsa87(_) => ParameterSet::MlDsa87,
+        }
+    }
+
+    pub(crate) fn seed(&self) -> &[u8; 32] {
+        &self.seed
+    }
+
+    /// The encoded public key (`pkEncode`).
+    pub(crate) fn public_key(&self) -> &[u8] {
+        &self.public
+    }
+
+    /// Signs `message` with hedged (randomized) ML-DSA and the empty context string (FIPS 204
+    /// Algorithm 2, RFC 9964 §5), with fresh randomness from the operating system.
+    ///
+    /// # Errors
+    ///
+    /// When the operating system's random number generator fails.
+    pub(crate) fn sign(&self, message: &[u8]) -> Result<Vec<u8>, ml_dsa::Error> {
+        let mut random = getrandom::SysRng;
+        Ok(match &self.expanded {
+            ExpandedKey::MlDsa44(key) => key
+                .sign_randomized(message, &[], &mut random)?
+                .encode()
+                .to_vec(),
+            ExpandedKey::MlDsa65(key) => key
+                .sign_randomized(message, &[], &mut random)?
+                .encode()
+                .to_vec(),
+            ExpandedKey::MlDsa87(key) => key
+                .sign_randomized(message, &[], &mut random)?
+                .encode()
+                .to_vec(),
+        })
+    }
+}
+
+/// The expanded key of `seed` and its encoded public key.
+#[cfg(all(feature = "ml-dsa", any(feature = "in-memory", feature = "software")))]
+fn expand<P: ml_dsa::MlDsaParams>(
+    seed: &[u8; 32],
+) -> (Box<ml_dsa::ExpandedSigningKey<P>>, Vec<u8>) {
+    let key = Box::new(ml_dsa::ExpandedSigningKey::<P>::from_seed(&(*seed).into()));
+    let public = key.verifying_key().encode().to_vec();
+    (key, public)
+}

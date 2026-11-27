@@ -109,7 +109,7 @@ impl<S: KeyStore> KeySigner<S> {
     /// [`KeyStoreError::UnsupportedAlgorithm`] when the store does not advertise `alg`,
     /// [`KeyStoreError::AlgorithmMismatch`] when `public` names another algorithm, and
     /// [`KeyStoreError::InvalidKey`] when `public` carries private parameters or is not a key
-    /// for `alg` (its `kty` and `crv`).
+    /// for `alg` (its `kty` and `crv`, and the `alg` an `AKP` key must have).
     ///
     /// # Examples
     ///
@@ -210,9 +210,11 @@ fn check_alg(key: &KeyId, public: &Jwk, alg: JwsAlgorithm) -> Result<(), KeyStor
     }
 }
 
-/// Whether `public` is a key `alg` signs with, by its `kty` and `crv`.
+/// Whether `public` is a key `alg` signs with, by its `kty` and `crv`, and for an `AKP` key by
+/// having an `alg`, which names its parameter set (RFC 9964 §3) and which [`check_alg`] compares.
 fn fits(public: &Jwk, alg: JwsAlgorithm) -> bool {
     (public.kty(), public.crv()) == alg.jwk_type()
+        && (public.kty() != "AKP" || public.alg().is_some())
 }
 
 impl<S> fmt::Debug for KeySigner<S> {

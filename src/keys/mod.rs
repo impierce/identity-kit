@@ -9,11 +9,13 @@
 //! - Every key has one algorithm. A backend declares what it signs with, and whether it can
 //!   generate and delete keys, in [`KeyStoreCapabilities`]; the declaration must be truthful and
 //!   [`testsuite`] (feature `test-vectors`) checks it.
-//! - Signatures are returned in their JWS form: 64 bytes for EdDSA, raw `r || s` for ECDSA.
+//! - Signatures are returned in their JWS form: 64 bytes for EdDSA, raw `r || s` for ECDSA, the
+//!   FIPS 204 encoding for ML-DSA.
 //!
 //! Three backends ship with the crate. [`InMemoryKeyStore`] (feature `in-memory`) and
 //! [`SoftwareKeyStore`] (feature `software`), a private JWK set file, are for development and
-//! tests: both sign EdDSA, ES256 and, with the `secp256k1` feature, ES256K, and neither signs
+//! tests: both sign EdDSA, ES256, with the `secp256k1` feature ES256K and with the `ml-dsa`
+//! feature ML-DSA-44, ML-DSA-65 and ML-DSA-87 (hedged), and neither signs
 //! with RSA, which stays outside the software backends per
 //! `docs/adr/0001-rsa-verification-only.md`. [`Pkcs11KeyStore`] (feature `pkcs11`) signs in a
 //! PKCS#11 module, an HSM or a software token, with whatever the module offers, RSA included.
@@ -184,8 +186,9 @@ impl KeySpec {
     /// # Errors
     ///
     /// [`KeyStoreError::InvalidSpec`] when it does not: `EdDSA` needs an Ed25519 key, `ES256` a
-    /// P-256 key, `ES256K` a secp256k1 key and `RS256` or `PS256` an RSA key. `ES384` fits no
-    /// [`KeyType`] this crate has.
+    /// P-256 key, `ES256K` a secp256k1 key, `RS256` or `PS256` an RSA key and the ML-DSA
+    /// algorithms an [`Akp`](KeyType::Akp) key, as [`JwsAlgorithm::jwk_type`] maps them. `ES384`
+    /// fits no [`KeyType`] this crate has.
     pub fn validate(&self) -> Result<(), KeyStoreError> {
         if self.key_type.jwk_type() == self.alg.jwk_type() {
             Ok(())
@@ -284,7 +287,9 @@ impl KeyStoreCapabilities {
 ///   to the key's algorithm when the backend knows it.
 /// - [`sign`](Self::sign) takes the raw signing input (the backend hashes) and returns the JWS
 ///   form of the signature: 64 bytes for EdDSA, raw `r || s` for ECDSA, the modulus-sized octet
-///   string for RSA. A key signs only with its own algorithm; any other `alg` is
+///   string for RSA, the FIPS 204 encoding for ML-DSA. A remote signer that caps the message
+///   size signs ML-DSA's external μ instead ([`ml_dsa_external_mu`](crate::jose::ml_dsa_external_mu)).
+///   A key signs only with its own algorithm; any other `alg` is
 ///   [`KeyStoreError::AlgorithmMismatch`].
 /// - An unknown key is [`KeyStoreError::NotFound`] from every operation but
 ///   [`exists`](Self::exists), which returns `false`.

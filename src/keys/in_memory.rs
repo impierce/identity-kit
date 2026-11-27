@@ -11,12 +11,14 @@ use crate::jose::{Jwk, JwsAlgorithm};
 
 /// A [`KeyStore`] holding its keys in memory.
 ///
-/// Signs EdDSA, ES256 and (feature `secp256k1`) ES256K; generates and deletes. Keys are lost
+/// Signs EdDSA, ES256, (feature `secp256k1`) ES256K and (feature `ml-dsa`) ML-DSA-44, ML-DSA-65
+/// and ML-DSA-87; generates and deletes. Keys are lost
 /// when the store is dropped, and zeroized then. Meant for tests, examples and development, not
 /// for production keys.
 ///
 /// [`InMemoryKeyStore::with_seed`] makes key generation deterministic, so that a fixture's keys,
 /// key ids and (for EdDSA and the RFC 6979 ECDSA signatures) signatures are stable across runs.
+/// ML-DSA signatures are not: they are hedged with fresh randomness from the operating system.
 /// A seeded store must never hold production keys: anyone with the seed has them.
 ///
 /// The key id of a generated key is the spec's label when set, the RFC 7638 thumbprint of its

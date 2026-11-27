@@ -50,7 +50,7 @@ mod error;
 #[cfg(feature = "jwe")]
 mod jwe;
 mod jwk;
-mod ml_dsa;
+pub(crate) mod ml_dsa;
 mod multikey;
 mod one_or_many;
 mod pkcs1;
