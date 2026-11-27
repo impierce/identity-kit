@@ -1183,3 +1183,33 @@ mod local_network {
         assert!(!both.all_local(&[]));
     }
 }
+
+/// The public part of the RFC 9964 Appendix A.1 key, an ML-DSA-44 `AKP` key.
+fn rfc9964_public() -> Jwk {
+    serde_json::from_str::<Jwk>(include_str!("vectors/rfc9964/ml_dsa_44_jwk.json"))
+        .unwrap()
+        .public()
+}
+
+#[tokio::test]
+async fn did_web_document_carries_an_akp_key() {
+    let method = DidWeb::new(Web::default());
+    let document = method
+        .produce(&[rfc9964_public()], url("https://example.com/user/alice"))
+        .await
+        .unwrap();
+    let resolver = Resolver::builder()
+        .with(DidWeb::new(Web::default().serving(
+            "https://example.com/user/alice/did.json",
+            200,
+            serde_json::to_string(&document).unwrap(),
+        )))
+        .build();
+
+    let key = resolver
+        .resolve_public_key(&document.verification_method[0].id, None)
+        .await
+        .unwrap();
+
+    assert_eq!(key, rfc9964_public());
+}
