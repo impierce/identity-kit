@@ -378,6 +378,25 @@ async fn rsa_key_too_long_for_a_did() {
     assert!(matches!(DidKey::did(&p384), Err(DidKeyError::Key(_))));
 }
 
+/// The public part of the RFC 9964 Appendix A.1 key, an ML-DSA-44 `AKP` key.
+fn rfc9964_public() -> Jwk {
+    serde_json::from_str::<Jwk>(include_str!("vectors/rfc9964/ml_dsa_44_jwk.json"))
+        .unwrap()
+        .public()
+}
+
+#[test]
+fn akp_key_too_long_for_did_key() {
+    let result = DidKey::did(&rfc9964_public());
+
+    assert_eq!(
+        result,
+        Err(DidKeyError::TooLong {
+            max: DidKey::MAX_DID_LEN
+        })
+    );
+}
+
 /// An `rsa-pub` Multikey is a PKCS #1 key of any size, so the did:key of a 1024-bit key
 /// resolves. RS256 and PS256 need 2048 bits (RFC 7518 §3.3, §3.5), so no signature under it
 /// verifies.

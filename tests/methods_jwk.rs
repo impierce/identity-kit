@@ -502,3 +502,22 @@ async fn numbers_take_their_canonical_form() {
     let key = serde_json::to_value(produced.verification_method[0].public_key_jwk()).unwrap();
     assert_eq!(key["ext"], json!(46285));
 }
+
+/// The public part of the RFC 9964 Appendix A.1 key, an ML-DSA-44 `AKP` key.
+fn rfc9964_public() -> Jwk {
+    serde_json::from_str::<Jwk>(include_str!("vectors/rfc9964/ml_dsa_44_jwk.json"))
+        .unwrap()
+        .public()
+}
+
+#[test]
+fn akp_key_too_long_for_did_jwk() {
+    let result = DidJwk::did(&rfc9964_public());
+
+    assert_eq!(
+        result,
+        Err(DidError::TooLong {
+            max: DidJwk::MAX_DID_LEN
+        })
+    );
+}

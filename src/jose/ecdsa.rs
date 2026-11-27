@@ -104,9 +104,12 @@ fn component_size(alg: JwsAlgorithm) -> Result<usize, EcdsaSignatureError> {
     match alg {
         JwsAlgorithm::ES256 | JwsAlgorithm::ES256K => Ok(32),
         JwsAlgorithm::ES384 => Ok(48),
-        JwsAlgorithm::EdDSA | JwsAlgorithm::RS256 | JwsAlgorithm::PS256 => {
-            Err(EcdsaSignatureError::NotEcdsa(alg))
-        }
+        JwsAlgorithm::EdDSA
+        | JwsAlgorithm::RS256
+        | JwsAlgorithm::PS256
+        | JwsAlgorithm::MlDsa44
+        | JwsAlgorithm::MlDsa65
+        | JwsAlgorithm::MlDsa87 => Err(EcdsaSignatureError::NotEcdsa(alg)),
     }
 }
 

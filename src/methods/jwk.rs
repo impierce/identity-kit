@@ -84,8 +84,9 @@ impl DidJwk {
     /// # Errors
     ///
     /// - [`DidError::TooLong`] when the encoded key exceeds [`MAX_DID_LEN`](Self::MAX_DID_LEN)
-    ///   bytes, as a JWK carrying an `x5c` chain or large extension members may; base64url is
-    ///   otherwise valid DID syntax.
+    ///   bytes, as a JWK carrying an `x5c` chain or large extension members may, and as every
+    ///   `AKP` (ML-DSA) key does (`docs/adr/0012-ml-dsa-not-in-did-key-and-did-jwk.md`);
+    ///   base64url is otherwise valid DID syntax.
     /// - [`DidError::UnsupportedNumber`] when an extension member holds a number with no finite
     ///   double value, which only `serde_json`'s `arbitrary_precision` feature keeps.
     ///

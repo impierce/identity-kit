@@ -109,7 +109,7 @@ impl<S: KeyStore> KeySigner<S> {
     /// [`KeyStoreError::UnsupportedAlgorithm`] when the store does not advertise `alg`,
     /// [`KeyStoreError::AlgorithmMismatch`] when `public` names another algorithm, and
     /// [`KeyStoreError::InvalidKey`] when `public` carries private parameters or is not a key
-    /// for `alg` (its `kty` and `crv`).
+    /// for `alg` (its `kty` and `crv`, and the `alg` an `AKP` key must have).
     ///
     /// # Examples
     ///
@@ -210,16 +210,11 @@ fn check_alg(key: &KeyId, public: &Jwk, alg: JwsAlgorithm) -> Result<(), KeyStor
     }
 }
 
-/// Whether `public` is a key `alg` signs with, by its `kty` and `crv` (RFC 7518 §6, RFC 8037 §2,
-/// RFC 8812 §3.1).
+/// Whether `public` is a key `alg` signs with, by its `kty` and `crv`, and for an `AKP` key by
+/// having an `alg`, which names its parameter set (RFC 9964 §3) and which [`check_alg`] compares.
 fn fits(public: &Jwk, alg: JwsAlgorithm) -> bool {
-    match alg {
-        JwsAlgorithm::EdDSA => public.kty() == "OKP" && public.crv() == Some("Ed25519"),
-        JwsAlgorithm::ES256 => public.kty() == "EC" && public.crv() == Some("P-256"),
-        JwsAlgorithm::ES256K => public.kty() == "EC" && public.crv() == Some("secp256k1"),
-        JwsAlgorithm::ES384 => public.kty() == "EC" && public.crv() == Some("P-384"),
-        JwsAlgorithm::RS256 | JwsAlgorithm::PS256 => public.kty() == "RSA",
-    }
+    (public.kty(), public.crv()) == alg.jwk_type()
+        && (public.kty() != "AKP" || public.alg().is_some())
 }
 
 impl<S> fmt::Debug for KeySigner<S> {

@@ -15,9 +15,13 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["secp256k1", "software", "did-key", "did-jwk", "did-web", "reqwest", "vc", "status-list", "sd-jwt", "domain-linkage", "linked-vp"]
+default = ["secp256k1", "software", "did-key", "did-jwk", "did-web", "reqwest", "vc", "status-list", "sd-jwt", "domain-linkage", "linked-vp", "ml-dsa"]
 # ES256K signatures and `secp256k1` keys, via `k256`.
 secp256k1 = ["dep:k256"]
+# ML-DSA-44, ML-DSA-65 and ML-DSA-87 signatures and `AKP` keys (RFC 9964), via `ml-dsa`; `shake`
+# for the external μ of remote signers, and `getrandom`'s `SysRng` for the software stores'
+# hedged signatures.
+ml-dsa = ["dep:ml-dsa", "dep:shake", "getrandom?/sys_rng"]
 # RS256 and PS256 signatures, via `rsa`; keys of at least 2048 bits (RFC 7518 §3.3, §3.5).
 rsa = ["dep:rsa"]
 # `InMemoryKeyStore`: a key store for tests and development, with an optional deterministic seed.
@@ -78,6 +82,7 @@ indexmap = { version = "2.0", features = ["serde"] }
 jsonwebtoken = { version = "11.1", default-features = false }
 k256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"], optional = true }
 miniz_oxide = { version = "0.9", optional = true }
+ml-dsa = { version = "0.1.2", default-features = false, features = ["alloc", "rand_core", "zeroize"], optional = true }
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "gzip"], optional = true }
 rsa = { version = "0.10.0-rc.19", default-features = false, features = ["encoding", "sha2", "std"], optional = true }
@@ -87,6 +92,7 @@ rustls-webpki = { version = "0.103.15", default-features = false, features = ["r
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"] }
 sha2 = "0.11"
+shake = { version = "0.1", optional = true }
 thiserror = "2.0"
 time = { version = "0.3.55", default-features = false, features = ["formatting", "parsing", "std"], optional = true }
 tokio = { version = "1.0", features = ["net"], optional = true }

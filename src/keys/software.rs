@@ -59,8 +59,9 @@ impl SoftwareKeyStoreOptions {
 /// A [`KeyStore`] over a file holding a JWK set of private keys.
 ///
 /// The file is `{"keys": [...]}` (RFC 7517 §5) where every key is a private JWK with a `kid`,
-/// the key id, and an `alg`, the one algorithm it signs with. Signs EdDSA, ES256 and (feature
-/// `secp256k1`) ES256K; generates and deletes. RSA keys in the file are refused, since the crate
+/// the key id, and an `alg`, the one algorithm it signs with. Signs EdDSA, ES256, (feature
+/// `secp256k1`) ES256K and (feature `ml-dsa`) ML-DSA-44, ML-DSA-65 and ML-DSA-87, an `AKP` key
+/// whose `priv` is the 32-byte seed of RFC 9964 §4; generates and deletes. RSA keys in the file are refused, since the crate
 /// never signs with RSA (`docs/adr/0001-rsa-verification-only.md`).
 ///
 /// The whole file is read when the store is opened and every key is checked then: a key whose

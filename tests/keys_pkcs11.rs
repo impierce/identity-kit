@@ -569,6 +569,22 @@ async fn algorithms_can_be_narrowed() {
 }
 
 #[tokio::test]
+async fn pkcs11_store_does_not_offer_ml_dsa() {
+    let token = token!();
+    let _shared = TOKEN.read().await;
+    let store = open(&token);
+
+    let result = store
+        .generate(KeySpec::new(KeyType::Akp, JwsAlgorithm::MlDsa65))
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(KeyStoreError::UnsupportedAlgorithm(JwsAlgorithm::MlDsa65))
+    ));
+}
+
+#[tokio::test]
 async fn a_missing_token_is_refused() {
     let token = token!();
     let _shared = TOKEN.read().await;

@@ -152,8 +152,15 @@ impl DidKey {
     ///   or undecodable material.
     /// - [`DidKeyError::TooLong`] when the Multikey string is so long that the DID exceeds
     ///   [`MAX_DID_LEN`](Self::MAX_DID_LEN) bytes, as a very large RSA key is; base58btc is
-    ///   otherwise valid DID syntax.
+    ///   otherwise valid DID syntax. Always for an `AKP` (ML-DSA) key, whose public key alone is
+    ///   longer than that (`docs/adr/0012-ml-dsa-not-in-did-key-and-did-jwk.md`).
     pub fn did(jwk: &Jwk) -> Result<Did, DidKeyError> {
+        // ML-DSA has no multicodec, and its smallest public key (1312 bytes) would not fit anyway.
+        if jwk.kty() == "AKP" {
+            return Err(DidKeyError::TooLong {
+                max: Self::MAX_DID_LEN,
+            });
+        }
         let multikey = jwk.to_multikey()?;
         Did::parse_with_max_len(&format!("did:key:{multikey}"), Self::MAX_DID_LEN).map_err(|_| {
             DidKeyError::TooLong {

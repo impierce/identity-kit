@@ -5,7 +5,7 @@ use core::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-/// A JWS digital signature algorithm (RFC 7518 §3.1, RFC 8037 §3.1, RFC 8812 §3.2).
+/// A JWS digital signature algorithm (RFC 7518 §3.1, RFC 8037 §3.1, RFC 8812 §3.2, RFC 9964 §5).
 ///
 /// Only asymmetric algorithms are listed: a DID controller signs with a private key and anyone
 /// resolves the public key, so HMAC and `none` have no place here. Conversions to and from
@@ -47,6 +47,18 @@ pub enum JwsAlgorithm {
     RS256,
     /// RSASSA-PSS with SHA-256 and MGF1 with SHA-256 (RFC 7518 §3.5), with a key of at least 2048 bits.
     PS256,
+    /// ML-DSA-44 (FIPS 204, RFC 9964 §5): pure ML-DSA with an empty context string, an `AKP` key
+    /// of 1312 bytes, 2420-byte signatures.
+    #[serde(rename = "ML-DSA-44")]
+    MlDsa44,
+    /// ML-DSA-65 (FIPS 204, RFC 9964 §5): pure ML-DSA with an empty context string, an `AKP` key
+    /// of 1952 bytes, 3309-byte signatures.
+    #[serde(rename = "ML-DSA-65")]
+    MlDsa65,
+    /// ML-DSA-87 (FIPS 204, RFC 9964 §5): pure ML-DSA with an empty context string, an `AKP` key
+    /// of 2592 bytes, 4627-byte signatures.
+    #[serde(rename = "ML-DSA-87")]
+    MlDsa87,
 }
 
 impl JwsAlgorithm {
@@ -58,6 +70,9 @@ impl JwsAlgorithm {
         Self::ES384,
         Self::RS256,
         Self::PS256,
+        Self::MlDsa44,
+        Self::MlDsa65,
+        Self::MlDsa87,
     ];
 
     /// The IANA name, for example `ES256`.
@@ -69,12 +84,33 @@ impl JwsAlgorithm {
             Self::ES384 => "ES384",
             Self::RS256 => "RS256",
             Self::PS256 => "PS256",
+            Self::MlDsa44 => "ML-DSA-44",
+            Self::MlDsa65 => "ML-DSA-65",
+            Self::MlDsa87 => "ML-DSA-87",
         }
     }
 
     /// Whether this is an ECDSA algorithm, whose JWS signature is the raw `r || s` concatenation.
     pub const fn is_ecdsa(self) -> bool {
         matches!(self, Self::ES256 | Self::ES256K | Self::ES384)
+    }
+
+    /// The `kty` and `crv` of the keys this algorithm signs with (RFC 7518 §6, RFC 8037 §2,
+    /// RFC 8812 §3.1, RFC 9964 §3); `crv` is `None` for `RSA` and `AKP` keys. An `AKP` key also
+    /// names its algorithm in `alg`, which must be this one.
+    ///
+    /// This is the crate's one mapping from algorithm to key type: key specs, signers, key
+    /// generation ([`KeyType::for_algorithm`](super::KeyType::for_algorithm)) and the key store
+    /// test suite all decide with it.
+    pub const fn jwk_type(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Self::EdDSA => ("OKP", Some("Ed25519")),
+            Self::ES256 => ("EC", Some("P-256")),
+            Self::ES256K => ("EC", Some("secp256k1")),
+            Self::ES384 => ("EC", Some("P-384")),
+            Self::RS256 | Self::PS256 => ("RSA", None),
+            Self::MlDsa44 | Self::MlDsa65 | Self::MlDsa87 => ("AKP", None),
+        }
     }
 }
 
@@ -128,7 +164,8 @@ impl TryFrom<jsonwebtoken::Algorithm> for JwsAlgorithm {
 impl TryFrom<JwsAlgorithm> for jsonwebtoken::Algorithm {
     type Error = UnknownAlgorithm;
 
-    /// Fails for [`JwsAlgorithm::ES256K`], which `jsonwebtoken` does not implement.
+    /// Fails for [`JwsAlgorithm::ES256K`] and the ML-DSA algorithms, which `jsonwebtoken` does not
+    /// implement.
     fn try_from(alg: JwsAlgorithm) -> Result<Self, Self::Error> {
         match alg {
             JwsAlgorithm::EdDSA => Ok(Self::EdDSA),

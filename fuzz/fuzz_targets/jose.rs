@@ -10,7 +10,9 @@
 use std::str::FromStr as _;
 use std::sync::LazyLock;
 
-use identity_kit::jose::{CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, KeyType};
+use identity_kit::jose::{
+    CompactJws, DefaultVerifier, Jwk, JwsAlgorithm, KeyType, ml_dsa_external_mu,
+};
 use identity_kit::resolver::KeyReference;
 use libfuzzer_sys::fuzz_target;
 
@@ -100,6 +102,7 @@ fn exercise_jwk(jwk: &Jwk) {
     let _ = jwk.x25519_public_bytes();
     let _ = jwk.p256_public_bytes();
     let _ = jwk.secp256k1_public_bytes();
+    let _ = ml_dsa_external_mu(jwk, b"");
     if let Ok(multikey) = jwk.to_multikey() {
         let back = Jwk::from_multikey(&multikey).expect("an encoded Multikey decodes");
         assert_eq!(back.to_multikey().as_deref(), Ok(multikey.as_str()));

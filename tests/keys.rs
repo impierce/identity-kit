@@ -623,6 +623,12 @@ async fn in_memory_store_labels_rejects_and_deletes() {
             JwsAlgorithm::ES256,
             #[cfg(feature = "secp256k1")]
             JwsAlgorithm::ES256K,
+            #[cfg(feature = "ml-dsa")]
+            JwsAlgorithm::MlDsa44,
+            #[cfg(feature = "ml-dsa")]
+            JwsAlgorithm::MlDsa65,
+            #[cfg(feature = "ml-dsa")]
+            JwsAlgorithm::MlDsa87,
         ])
         .with_generate()
         .with_delete()
@@ -1006,11 +1012,7 @@ async fn provisioned() -> (Provisioned, Vec<(KeyId, JwsAlgorithm)>) {
     let inner = InMemoryKeyStore::with_seed([4; 32]);
     let mut keys = Vec::new();
     for alg in inner.capabilities().algorithms {
-        let key_type = match alg {
-            JwsAlgorithm::EdDSA => KeyType::Ed25519,
-            JwsAlgorithm::ES256 => KeyType::P256,
-            _ => KeyType::Secp256k1,
-        };
+        let key_type = KeyType::for_algorithm(alg).unwrap();
         keys.push((inner.generate(spec(key_type, alg)).await.unwrap(), alg));
     }
     (Provisioned(inner), keys)
@@ -1382,4 +1384,172 @@ async fn unusable_keys_keep_their_cause() {
             .unwrap()
             .is::<serde_json::Error>()
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// ML-DSA (RFC 9964)
+// ---------------------------------------------------------------------------------------------
+
+/// RFC 9964 Appendix A.1: the ML-DSA-44 key of the all-zero seed, `priv` the seed.
+const RFC9964_A1_JWK: &str = include_str!("vectors/rfc9964/ml_dsa_44_jwk.json");
+
+/// The RFC 9964 key with `priv` replaced.
+#[cfg(feature = "ml-dsa")]
+fn rfc9964_with_priv(seed: &[u8]) -> Jwk {
+    let mut key: Value = serde_json::from_str(RFC9964_A1_JWK).unwrap();
+    key["priv"] = json!(b64(seed));
+    serde_json::from_value(key).unwrap()
+}
+
+#[test]
+fn ml_dsa_key_spec_with_the_wrong_key_type_is_invalid() {
+    let result = spec(KeyType::P256, JwsAlgorithm::MlDsa44).validate();
+
+    assert!(matches!(
+        result,
+        Err(KeyStoreError::InvalidSpec {
+            key_type: KeyType::P256,
+            alg: JwsAlgorithm::MlDsa44
+        })
+    ));
+}
+
+#[cfg(feature = "ml-dsa")]
+#[tokio::test]
+async fn software_store_loads_an_akp_key_with_priv() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("keys.json");
+    write_key_set(&path, &format!(r#"{{"keys":[{RFC9964_A1_JWK}]}}"#));
+    let store = SoftwareKeyStore::open(&path).unwrap();
+
+    let public = store
+        .public_jwk(&KeyId::new("T4xl70S7MT6Zeq6r9V9fPJGVn76wfnXJ21-gyo0Gu6o"))
+        .await
+        .unwrap();
+
+    assert_eq!(public, jwk(RFC9964_A1_JWK).public());
+}
+
+#[cfg(feature = "ml-dsa")]
+#[tokio::test]
+async fn generated_ml_dsa_keys_are_persisted_with_priv() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("keys.json");
+    let store = SoftwareKeyStore::create(&path).unwrap();
+
+    store
+        .generate(spec(KeyType::Akp, JwsAlgorithm::MlDsa44))
+        .await
+        .unwrap();
+
+    let file = file_json(&path);
+    let mut members: Vec<_> = file["keys"][0].as_object().unwrap().keys().collect();
+    members.sort();
+    assert_eq!(members, ["alg", "kid", "kty", "priv", "pub"]);
+}
+
+#[cfg(feature = "ml-dsa")]
+#[test]
+fn key_signer_refuses_an_akp_key_without_alg() {
+    let store = InMemoryKeyStore::new();
+    let mut public: Value = serde_json::to_value(jwk(RFC9964_A1_JWK).public()).unwrap();
+    public.as_object_mut().unwrap().remove("alg");
+
+    let result = KeySigner::from_public_jwk(
+        &store,
+        KeyId::new("ml-dsa"),
+        JwsAlgorithm::MlDsa44,
+        serde_json::from_value(public).unwrap(),
+    );
+
+    assert!(matches!(result, Err(KeyStoreError::InvalidKey { .. })));
+}
+
+#[cfg(feature = "ml-dsa")]
+#[test]
+fn akp_priv_that_does_not_match_pub_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SoftwareKeyStore::create(dir.path().join("keys.json")).unwrap();
+
+    let error = store.import(rfc9964_with_priv(&[1; 32])).unwrap_err();
+
+    assert!(matches!(
+        error,
+        KeyStoreError::InvalidKey { reason, .. }
+            if reason == "public member `pub` does not match the private key"
+    ));
+}
+
+#[cfg(feature = "ml-dsa")]
+#[test]
+fn akp_priv_of_the_wrong_length_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SoftwareKeyStore::create(dir.path().join("keys.json")).unwrap();
+
+    let error = store.import(rfc9964_with_priv(&[0; 31])).unwrap_err();
+
+    assert!(matches!(
+        error,
+        KeyStoreError::InvalidKey { reason, .. }
+            if reason == "expected a 32-byte `priv`, found 31 bytes"
+    ));
+}
+
+#[cfg(feature = "ml-dsa")]
+#[tokio::test]
+async fn ml_dsa_signing_is_hedged() {
+    let store = InMemoryKeyStore::with_seed([3; 32]);
+    let key = store
+        .generate(spec(KeyType::Akp, JwsAlgorithm::MlDsa65))
+        .await
+        .unwrap();
+    let public = store.public_jwk(&key).await.unwrap();
+
+    let first = store
+        .sign(&key, JwsAlgorithm::MlDsa65, b"data")
+        .await
+        .unwrap();
+    let second = store
+        .sign(&key, JwsAlgorithm::MlDsa65, b"data")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (
+            first == second,
+            DefaultVerifier.verify(JwsAlgorithm::MlDsa65, b"data", &first, &public),
+            DefaultVerifier.verify(JwsAlgorithm::MlDsa65, b"data", &second, &public),
+        ),
+        (false, Ok(()), Ok(()))
+    );
+}
+
+#[cfg(not(feature = "ml-dsa"))]
+#[tokio::test]
+async fn ml_dsa_generation_without_the_feature_is_disabled() {
+    let store = InMemoryKeyStore::new();
+
+    let result = store
+        .generate(spec(KeyType::Akp, JwsAlgorithm::MlDsa44))
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(KeyStoreError::UnsupportedKeyType(KeyType::Akp))
+    ));
+}
+
+#[cfg(not(feature = "ml-dsa"))]
+#[test]
+fn akp_key_without_the_feature_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SoftwareKeyStore::create(dir.path().join("keys.json")).unwrap();
+
+    let error = store.import(jwk(RFC9964_A1_JWK)).unwrap_err();
+
+    assert!(matches!(
+        error,
+        KeyStoreError::InvalidKey { reason, .. }
+            if reason == "ML-DSA keys need the `ml-dsa` feature"
+    ));
 }

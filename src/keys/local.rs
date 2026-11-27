@@ -9,6 +9,8 @@ use zeroize::Zeroizing;
 use std::error::Error;
 
 use super::{KeyId, KeySpec, KeyStoreError};
+#[cfg(feature = "ml-dsa")]
+use crate::jose::ml_dsa::{ParameterSet, SigningKey};
 use crate::jose::{Jwk, JwsAlgorithm, KeyType, base64url};
 
 /// A private key of one of the types the software backends sign with.
@@ -19,6 +21,8 @@ pub(super) enum LocalKey {
     P256(p256::ecdsa::SigningKey),
     #[cfg(feature = "secp256k1")]
     Secp256k1(k256::ecdsa::SigningKey),
+    #[cfg(feature = "ml-dsa")]
+    MlDsa(SigningKey),
 }
 
 /// The algorithms the software backends sign with.
@@ -27,16 +31,24 @@ pub(super) const ALGORITHMS: &[JwsAlgorithm] = &[
     JwsAlgorithm::ES256,
     #[cfg(feature = "secp256k1")]
     JwsAlgorithm::ES256K,
+    #[cfg(feature = "ml-dsa")]
+    JwsAlgorithm::MlDsa44,
+    #[cfg(feature = "ml-dsa")]
+    JwsAlgorithm::MlDsa65,
+    #[cfg(feature = "ml-dsa")]
+    JwsAlgorithm::MlDsa87,
 ];
 
 impl LocalKey {
-    /// Generates a key of `key_type` from `random`, which fills a buffer with secret random bytes.
+    /// Generates a key as `spec` describes from `random`, which fills a buffer with secret random
+    /// bytes. An ML-DSA key is the one its 32-byte seed derives; the spec's algorithm names the
+    /// parameter set.
     pub(super) fn generate(
-        key_type: KeyType,
+        spec: &KeySpec,
         random: &mut dyn FnMut(&mut [u8]) -> Result<(), KeyStoreError>,
     ) -> Result<Self, KeyStoreError> {
         let mut secret = Zeroizing::new([0u8; 32]);
-        match key_type {
+        match spec.key_type {
             KeyType::Ed25519 => {
                 random(secret.as_mut())?;
                 Ok(Self::Ed25519(ed25519_dalek::SigningKey::from_bytes(
@@ -58,6 +70,15 @@ impl LocalKey {
                     return Ok(Self::Secp256k1(key));
                 }
             },
+            #[cfg(feature = "ml-dsa")]
+            KeyType::Akp => {
+                let set = ParameterSet::of(spec.alg).ok_or(KeyStoreError::InvalidSpec {
+                    key_type: spec.key_type,
+                    alg: spec.alg,
+                })?;
+                random(secret.as_mut())?;
+                Ok(Self::MlDsa(SigningKey::from_seed(set, &secret)))
+            }
             other => Err(KeyStoreError::UnsupportedKeyType(other)),
         }
     }
@@ -68,6 +89,9 @@ impl LocalKey {
     /// hand-edited file is caught when it is loaded rather than when a signature fails to verify.
     #[cfg(feature = "software")]
     pub(super) fn from_jwk(jwk: &Jwk) -> Result<Self, Unusable> {
+        if jwk.kty() == "AKP" {
+            return Self::from_akp_jwk(jwk);
+        }
         let d = jwk
             .private
             .d
@@ -114,6 +138,38 @@ impl LocalKey {
         Ok(key)
     }
 
+    /// The ML-DSA key behind a private `AKP` JWK: `priv` is the 32-byte seed (RFC 9964 §4), and
+    /// the public key it derives must be `pub`.
+    #[cfg(all(feature = "software", feature = "ml-dsa"))]
+    fn from_akp_jwk(jwk: &Jwk) -> Result<Self, Unusable> {
+        let (set, public) = jwk
+            .ml_dsa_public_key()
+            .map_err(|error| Unusable::caused("invalid public key", error))?;
+        let seed = jwk
+            .private
+            .priv_key
+            .as_deref()
+            .ok_or("missing private member `priv`")?;
+        let seed =
+            Zeroizing::new(base64url::decode(seed).map_err(|_| "`priv` is not valid base64url")?);
+        let seed: &[u8; 32] = seed.as_slice().try_into().map_err(|_| {
+            Unusable::new(format!(
+                "expected a 32-byte `priv`, found {} bytes",
+                seed.len()
+            ))
+        })?;
+        let key = SigningKey::from_seed(set, seed);
+        if key.public_key() != public.as_slice() {
+            return Err("public member `pub` does not match the private key".into());
+        }
+        Ok(Self::MlDsa(key))
+    }
+
+    #[cfg(all(feature = "software", not(feature = "ml-dsa")))]
+    fn from_akp_jwk(_: &Jwk) -> Result<Self, Unusable> {
+        Err("ML-DSA keys need the `ml-dsa` feature".into())
+    }
+
     /// The one algorithm this key signs with.
     #[cfg(feature = "software")]
     pub(super) fn alg(&self) -> JwsAlgorithm {
@@ -122,6 +178,8 @@ impl LocalKey {
             Self::P256(_) => JwsAlgorithm::ES256,
             #[cfg(feature = "secp256k1")]
             Self::Secp256k1(_) => JwsAlgorithm::ES256K,
+            #[cfg(feature = "ml-dsa")]
+            Self::MlDsa(key) => key.parameter_set().alg(),
         }
     }
 
@@ -140,28 +198,51 @@ impl LocalKey {
                 let point = key.verifying_key().to_sec1_point(false);
                 Jwk::from_secp256k1_public(point.as_bytes())
             }
+            #[cfg(feature = "ml-dsa")]
+            Self::MlDsa(key) => {
+                Jwk::from_ml_dsa_public(key.parameter_set().alg(), key.public_key())
+            }
         }
         .unwrap_or_else(|_| {
             unreachable!("a generated or loaded private key has a valid public key")
         })
     }
 
-    /// The private JWK: the public members plus `d`.
+    /// The private JWK: the public members plus `d`, or `priv` for an ML-DSA key.
     pub(super) fn private_jwk(&self) -> Jwk {
         let secret: Zeroizing<Vec<u8>> = match self {
             Self::Ed25519(key) => Zeroizing::new(key.to_bytes().to_vec()),
             Self::P256(key) => Zeroizing::new(key.to_bytes().to_vec()),
             #[cfg(feature = "secp256k1")]
             Self::Secp256k1(key) => Zeroizing::new(key.to_bytes().to_vec()),
+            #[cfg(feature = "ml-dsa")]
+            Self::MlDsa(key) => Zeroizing::new(key.seed().to_vec()),
         };
         let mut jwk = self.public_jwk();
-        jwk.private.d = Some(base64url::encode(&secret));
+        let encoded = Some(base64url::encode(&secret));
+        // RFC 9964 §4 keeps the ML-DSA seed in `priv`; every other type has its key in `d`.
+        if jwk.kty() == "AKP" {
+            jwk.private.priv_key = encoded;
+        } else {
+            jwk.private.d = encoded;
+        }
         jwk
     }
 
     /// Signs `data`, returning the JWS form of the signature.
-    pub(super) fn sign(&self, data: &[u8]) -> Vec<u8> {
-        match self {
+    ///
+    /// # Errors
+    ///
+    /// [`KeyStoreError::Backend`] when an ML-DSA signature cannot get its randomness.
+    #[cfg_attr(
+        not(feature = "ml-dsa"),
+        expect(
+            clippy::unnecessary_wraps,
+            reason = "only ML-DSA signing can fail, and only with the `ml-dsa` feature"
+        )
+    )]
+    pub(super) fn sign(&self, data: &[u8]) -> Result<Vec<u8>, KeyStoreError> {
+        Ok(match self {
             Self::Ed25519(key) => {
                 use ed25519_dalek::Signer as _;
                 key.sign(data).to_bytes().to_vec()
@@ -177,7 +258,9 @@ impl LocalKey {
                 let signature: k256::ecdsa::Signature = key.sign(data);
                 signature.to_bytes().to_vec()
             }
-        }
+            #[cfg(feature = "ml-dsa")]
+            Self::MlDsa(key) => key.sign(data).map_err(KeyStoreError::backend)?,
+        })
     }
 }
 
@@ -264,7 +347,7 @@ impl Entry {
                 requested: alg,
             });
         }
-        Ok(self.key.sign(data))
+        self.key.sign(data)
     }
 }
 
@@ -279,7 +362,7 @@ pub(super) fn generate(
     if !ALGORITHMS.contains(&spec.alg) {
         return Err(KeyStoreError::UnsupportedKeyType(spec.key_type));
     }
-    let key = LocalKey::generate(spec.key_type, random)?;
+    let key = LocalKey::generate(spec, random)?;
     let id = match &spec.label {
         Some(label) => KeyId::new(label.as_str()),
         None => KeyId::new(key.public_jwk().thumbprint_sha256().map_err(|e| {
