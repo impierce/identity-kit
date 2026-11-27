@@ -371,7 +371,7 @@ async fn check_unknown_key(store: &dyn KeyStore) {
 }
 
 /// The JWS form of a signature under `alg`: 64 bytes for EdDSA, raw `r || s` of twice the
-/// field size for ECDSA, the modulus size for RSA.
+/// field size for ECDSA, the modulus size for RSA, the FIPS 204 Table 2 size for ML-DSA.
 fn check_signature_form(
     alg: JwsAlgorithm,
     signature: &[u8],
@@ -384,6 +384,9 @@ fn check_signature_form(
         JwsAlgorithm::RS256 | JwsAlgorithm::PS256 => {
             public.rsa_public_components().ok().map(|(n, _)| n.len())
         }
+        JwsAlgorithm::MlDsa44 => Some(2420),
+        JwsAlgorithm::MlDsa65 => Some(3309),
+        JwsAlgorithm::MlDsa87 => Some(4627),
     };
     if let Some(expected) = expected {
         assert_eq!(

@@ -824,6 +824,8 @@ impl Inner {
                     ],
                 )
             }
+            // No ML-DSA algorithm is ever in `self.algorithms`, so the check above refuses first.
+            KeyType::Akp => return Err(KeyStoreError::UnsupportedKeyType(spec.key_type)),
         };
         if !self.key_pair_generation.contains(&generation) {
             return Err(KeyStoreError::UnsupportedKeyType(spec.key_type));

@@ -1087,7 +1087,17 @@ fn algorithm_names_round_trip() {
             .iter()
             .map(|a| a.as_str())
             .collect::<Vec<_>>(),
-        ["EdDSA", "ES256", "ES256K", "ES384", "RS256", "PS256"]
+        [
+            "EdDSA",
+            "ES256",
+            "ES256K",
+            "ES384",
+            "RS256",
+            "PS256",
+            "ML-DSA-44",
+            "ML-DSA-65",
+            "ML-DSA-87"
+        ]
     );
     for bad in ["HS256", "none", "es256", "EDDSA", "", "RS384"] {
         let err = bad.parse::<JwsAlgorithm>().unwrap_err();
@@ -1137,6 +1147,45 @@ fn algorithms_convert_to_and_from_jsonwebtoken() {
 }
 
 #[test]
+fn ml_dsa_algorithms_have_their_rfc9964_names() {
+    let names: Vec<_> = [
+        JwsAlgorithm::MlDsa44,
+        JwsAlgorithm::MlDsa65,
+        JwsAlgorithm::MlDsa87,
+    ]
+    .iter()
+    .map(|alg| {
+        (
+            alg.as_str(),
+            serde_json::to_string(alg).unwrap(),
+            alg.as_str().parse::<JwsAlgorithm>().unwrap(),
+        )
+    })
+    .collect();
+
+    assert_eq!(
+        names,
+        [
+            (
+                "ML-DSA-44",
+                "\"ML-DSA-44\"".to_owned(),
+                JwsAlgorithm::MlDsa44
+            ),
+            (
+                "ML-DSA-65",
+                "\"ML-DSA-65\"".to_owned(),
+                JwsAlgorithm::MlDsa65
+            ),
+            (
+                "ML-DSA-87",
+                "\"ML-DSA-87\"".to_owned(),
+                JwsAlgorithm::MlDsa87
+            ),
+        ]
+    );
+}
+
+#[test]
 fn each_algorithm_fits_its_key_type() {
     let jwk_types: Vec<_> = JwsAlgorithm::ALL
         .iter()
@@ -1152,6 +1201,9 @@ fn each_algorithm_fits_its_key_type() {
             ("ES384", ("EC", Some("P-384"))),
             ("RS256", ("RSA", None)),
             ("PS256", ("RSA", None)),
+            ("ML-DSA-44", ("AKP", None)),
+            ("ML-DSA-65", ("AKP", None)),
+            ("ML-DSA-87", ("AKP", None)),
         ]
     );
 }
@@ -1172,6 +1224,9 @@ fn each_algorithm_generates_its_smallest_key_type() {
             ("ES384", None),
             ("RS256", Some(KeyType::Rsa2048)),
             ("PS256", Some(KeyType::Rsa2048)),
+            ("ML-DSA-44", Some(KeyType::Akp)),
+            ("ML-DSA-65", Some(KeyType::Akp)),
+            ("ML-DSA-87", Some(KeyType::Akp)),
         ]
     );
 }

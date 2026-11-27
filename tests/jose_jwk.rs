@@ -8,7 +8,7 @@ use std::error::Error as _;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use identity_kit::jose::{Jwk, JwkError, KeyType};
+use identity_kit::jose::{Jwk, JwkError, JwsAlgorithm, KeyType, ml_dsa_external_mu};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 
@@ -835,4 +835,143 @@ proptest! {
         prop_assert_eq!(jwk.public(), jwk.clone());
         prop_assert_eq!(jwk.thumbprint_sha256().unwrap(), RFC8037_THUMBPRINT);
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// AKP (RFC 9964)
+// ---------------------------------------------------------------------------------------------
+
+/// RFC 9964 Appendix A.1: the ML-DSA-44 key of the all-zero seed, `kid` its thumbprint.
+const RFC9964_A1_JWK: &str = include_str!("vectors/rfc9964/ml_dsa_44_jwk.json");
+
+fn rfc9964_private() -> Jwk {
+    serde_json::from_str(RFC9964_A1_JWK).unwrap()
+}
+
+/// The RFC 9964 key with `members` replaced (`null` removes one).
+fn rfc9964_with(members: &Value) -> Jwk {
+    let mut key: Value = serde_json::from_str(RFC9964_A1_JWK).unwrap();
+    for (name, value) in members.as_object().unwrap() {
+        if value.is_null() {
+            key.as_object_mut().unwrap().remove(name);
+        } else {
+            key[name] = value.clone();
+        }
+    }
+    serde_json::from_value(key).unwrap()
+}
+
+#[test]
+fn rfc9964_akp_thumbprint() {
+    let jwk = rfc9964_private();
+
+    assert_eq!(
+        jwk.thumbprint_sha256().unwrap(),
+        "T4xl70S7MT6Zeq6r9V9fPJGVn76wfnXJ21-gyo0Gu6o"
+    );
+}
+
+#[test]
+fn akp_thumbprint_needs_alg_kty_and_pub() {
+    let jwk = rfc9964_with(&json!({ "alg": null }));
+
+    assert_eq!(jwk.thumbprint_sha256(), Err(JwkError::MissingMember("alg")));
+}
+
+#[test]
+fn akp_thumbprint_needs_pub() {
+    let jwk = rfc9964_with(&json!({ "pub": null }));
+
+    assert_eq!(jwk.thumbprint_sha256(), Err(JwkError::MissingMember("pub")));
+}
+
+#[test]
+fn akp_without_alg_is_refused() {
+    let jwk = rfc9964_with(&json!({ "alg": null }));
+
+    let result = ml_dsa_external_mu(&jwk, b"");
+
+    assert_eq!(result, Err(JwkError::MissingMember("alg")));
+}
+
+#[test]
+fn akp_with_a_non_ml_dsa_alg_is_refused() {
+    let jwk = rfc9964_with(&json!({ "alg": "ES256" }));
+
+    let result = ml_dsa_external_mu(&jwk, b"");
+
+    assert_eq!(
+        result,
+        Err(JwkError::InvalidKey {
+            key: "AKP",
+            reason: "`alg` \"ES256\" is not ML-DSA-44, ML-DSA-65 or ML-DSA-87".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn akp_pub_of_the_wrong_length_is_refused() {
+    let jwk = rfc9964_with(&json!({ "alg": "ML-DSA-65" }));
+
+    let result = ml_dsa_external_mu(&jwk, b"");
+
+    assert_eq!(
+        result,
+        Err(JwkError::InvalidKeyLength {
+            key: "ML-DSA-65",
+            expected: 1952,
+            actual: 1312,
+        })
+    );
+}
+
+#[test]
+fn ml_dsa_public_key_becomes_an_akp_jwk() {
+    let rfc9964 = rfc9964_private();
+    let public = URL_SAFE_NO_PAD.decode(rfc9964.pub_key().unwrap()).unwrap();
+
+    let jwk = Jwk::from_ml_dsa_public(JwsAlgorithm::MlDsa44, &public).unwrap();
+
+    assert_eq!(
+        serde_json::to_value(&jwk).unwrap(),
+        json!({ "kty": "AKP", "pub": rfc9964.pub_key().unwrap(), "alg": "ML-DSA-44" })
+    );
+}
+
+#[test]
+fn akp_public_drops_priv() {
+    let jwk = rfc9964_private();
+
+    let public = serde_json::to_value(jwk.public()).unwrap();
+
+    assert_eq!(public.get("priv"), None);
+}
+
+#[test]
+fn akp_with_priv_is_private() {
+    let jwk = rfc9964_with(&json!({ "kid": null, "alg": null, "pub": null }));
+
+    assert!(jwk.is_private());
+}
+
+#[test]
+fn akp_debug_hides_priv() {
+    let jwk = rfc9964_private();
+
+    let debug = format!("{jwk:?}");
+
+    assert!(!debug.contains("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+}
+
+#[test]
+fn akp_spki_is_not_parsed() {
+    let result = Jwk::from_spki_der(KeyType::Akp, &[]);
+
+    assert_eq!(
+        result,
+        Err(JwkError::UnsupportedKeyType {
+            kty: "AKP".to_owned(),
+            crv: None,
+        })
+    );
 }

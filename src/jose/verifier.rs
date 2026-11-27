@@ -7,7 +7,8 @@ use super::{Jwk, JwsAlgorithm, VerificationError};
 /// The verifier is the crate's crypto extension point: [`DefaultVerifier`] implements the
 /// algorithms with RustCrypto, and an application can substitute an HSM-backed or FIPS-validated
 /// one. Implementations take the signature in the JWS form of the algorithm: 64 bytes for EdDSA,
-/// raw `r || s` (not DER) for ECDSA, the modulus-sized octet string for RSA.
+/// raw `r || s` (not DER) for ECDSA, the modulus-sized octet string for RSA, the FIPS 204
+/// encoding (`sigEncode`) for ML-DSA.
 pub trait JwsVerifier: Send + Sync {
     /// Verifies that `signature` over `signing_input` was made with the private counterpart of
     /// `key` under `alg`.
@@ -63,7 +64,9 @@ impl<T: JwsVerifier + ?Sized> JwsVerifier for std::sync::Arc<T> {
 }
 
 /// A [`JwsVerifier`] over RustCrypto: `ed25519-dalek` for EdDSA, `p256` for ES256, `k256` for
-/// ES256K (feature `secp256k1`) and `rsa` for RS256 and PS256 (feature `rsa`).
+/// ES256K (feature `secp256k1`), `rsa` for RS256 and PS256 (feature `rsa`) and `ml-dsa` for
+/// ML-DSA-44, ML-DSA-65 and ML-DSA-87 with an `AKP` key (feature `ml-dsa`; pure ML-DSA with the
+/// empty context string, RFC 9964 §5).
 ///
 /// ES384 is in the [`JwsAlgorithm`] vocabulary but not implemented here; verifying it returns
 /// [`VerificationError::UnsupportedAlgorithm`].
@@ -159,6 +162,12 @@ impl JwsVerifier for DefaultVerifier {
                 rsa::pss::VerifyingKey::<sha2::Sha256>::new(public_key)
                     .verify(signing_input, &signature)
                     .map_err(|_| VerificationError::InvalidSignature)
+            }
+            // `check_key_restrictions` has matched the key's `alg`, which an `AKP` key must have,
+            // to `alg`, so the key's parameter set is the algorithm's.
+            #[cfg(feature = "ml-dsa")]
+            JwsAlgorithm::MlDsa44 | JwsAlgorithm::MlDsa65 | JwsAlgorithm::MlDsa87 => {
+                super::ml_dsa::verify(signing_input, signature, key)
             }
             other => Err(VerificationError::UnsupportedAlgorithm(other)),
         }

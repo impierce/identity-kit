@@ -1,4 +1,4 @@
-//! `Jwk`: a JSON Web Key (RFC 7517) with the parameters of RFC 7518 and RFC 8037.
+//! `Jwk`: a JSON Web Key (RFC 7517) with the parameters of RFC 7518, RFC 8037 and RFC 9964.
 
 use core::fmt;
 
@@ -8,8 +8,8 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use super::JwkError;
-use super::base64url;
+use super::ml_dsa::ParameterSet;
+use super::{JwkError, JwsAlgorithm, base64url};
 
 /// The kind of key behind a [`Jwk`], as a key store or HSM names it.
 ///
@@ -30,6 +30,9 @@ pub enum KeyType {
     /// RSA with a 4096-bit modulus, used with [`RS256`](super::JwsAlgorithm::RS256) and
     /// [`PS256`](super::JwsAlgorithm::PS256).
     Rsa4096,
+    /// An Algorithm Key Pair (`kty` `AKP`, RFC 9964 §3), whose parameter set is the algorithm it
+    /// is used with: ML-DSA-44, ML-DSA-65 or ML-DSA-87.
+    Akp,
 }
 
 impl KeyType {
@@ -40,6 +43,7 @@ impl KeyType {
             Self::P256 => ("EC", Some("P-256")),
             Self::Secp256k1 => ("EC", Some("secp256k1")),
             Self::Rsa2048 | Self::Rsa4096 => ("RSA", None),
+            Self::Akp => ("AKP", None),
         }
     }
 
@@ -47,17 +51,22 @@ impl KeyType {
     /// is the algorithm's ([`JwsAlgorithm::jwk_type`](super::JwsAlgorithm::jwk_type)), so
     /// [`Rsa2048`](Self::Rsa2048) for RS256 and PS256. `None` when no key type of this crate
     /// signs with `alg`, as for ES384.
-    pub fn for_algorithm(alg: super::JwsAlgorithm) -> Option<Self> {
+    pub fn for_algorithm(alg: JwsAlgorithm) -> Option<Self> {
         Self::smallest_first()
             .into_iter()
             .find(|key_type| key_type.jwk_type() == alg.jwk_type())
     }
 
     /// Every key type, the smaller of two of one `kty` first.
-    fn smallest_first() -> [Self; 5] {
+    fn smallest_first() -> [Self; 6] {
         // The match makes a new variant a compile error here until it is listed.
         match Self::Ed25519 {
-            Self::Ed25519 | Self::P256 | Self::Secp256k1 | Self::Rsa2048 | Self::Rsa4096 => {}
+            Self::Ed25519
+            | Self::P256
+            | Self::Secp256k1
+            | Self::Rsa2048
+            | Self::Rsa4096
+            | Self::Akp => {}
         }
         [
             Self::Ed25519,
@@ -65,6 +74,7 @@ impl KeyType {
             Self::Secp256k1,
             Self::Rsa2048,
             Self::Rsa4096,
+            Self::Akp,
         ]
     }
 }
@@ -72,9 +82,9 @@ impl KeyType {
 /// A JSON Web Key (RFC 7517).
 ///
 /// A `Jwk` carries the common members (`kty`, `use`, `key_ops`, `alg`, `kid`), the public
-/// parameters of RFC 7518 and RFC 8037 (`crv`, `x`, `y`, `n`, `e`), the private parameters (`d`,
-/// `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`) and any other member in an insertion-ordered map, so a
-/// key round-trips through JSON with its extension members intact.
+/// parameters of RFC 7518, RFC 8037 and RFC 9964 (`crv`, `x`, `y`, `n`, `e`, `pub`), the private
+/// parameters (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`, `priv`) and any other member in an
+/// insertion-ordered map, so a key round-trips through JSON with its extension members intact.
 ///
 /// Private parameters never appear in `Debug` or `Display` output and are zeroized when the key
 /// is dropped. [`Jwk::public`] strips them; serde serialization keeps them, because a key store
@@ -113,6 +123,9 @@ pub struct Jwk {
     n: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     e: Option<String>,
+    /// The public key of an `AKP` key.
+    #[serde(rename = "pub", default, skip_serializing_if = "Option::is_none")]
+    pub_key: Option<String>,
     // Private parameters follow the public ones, as in the examples of RFC 7517 Appendix A.2.
     #[serde(flatten)]
     pub(crate) private: PrivateParams,
@@ -128,7 +141,7 @@ pub struct Jwk {
     additional: IndexMap<String, Value>,
 }
 
-/// The private parameters of RFC 7518 §6.2.2, §6.3.2 and §6.4 and RFC 8037 §2.
+/// The private parameters of RFC 7518 §6.2.2, §6.3.2 and §6.4, RFC 8037 §2 and RFC 9964 §3.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub(crate) struct PrivateParams {
     /// EC and OKP private key, RSA private exponent.
@@ -149,6 +162,9 @@ pub(crate) struct PrivateParams {
     /// Symmetric key value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) k: Option<String>,
+    /// The private key of an `AKP` key: the 32-byte seed for ML-DSA (RFC 9964 §4).
+    #[serde(rename = "priv", default, skip_serializing_if = "Option::is_none")]
+    pub(crate) priv_key: Option<String>,
 }
 
 impl PrivateParams {
@@ -193,6 +209,29 @@ fn check_rsa_modulus_size(n: &[u8]) -> Result<(), JwkError> {
     Ok(())
 }
 
+/// The ML-DSA parameter set an `AKP` key's `alg` names.
+fn akp_parameter_set(alg: &str) -> Result<ParameterSet, JwkError> {
+    alg.parse()
+        .ok()
+        .and_then(ParameterSet::of)
+        .ok_or_else(|| JwkError::InvalidKey {
+            key: "AKP",
+            reason: format!("`alg` {alg:?} is not ML-DSA-44, ML-DSA-65 or ML-DSA-87"),
+        })
+}
+
+/// Refuses an ML-DSA public key of another length than `set` encodes.
+fn check_ml_dsa_public_key(set: ParameterSet, public: &[u8]) -> Result<(), JwkError> {
+    if public.len() != set.public_key_len() {
+        return Err(JwkError::InvalidKeyLength {
+            key: set.alg().as_str(),
+            expected: set.public_key_len(),
+            actual: public.len(),
+        });
+    }
+    Ok(())
+}
+
 impl Jwk {
     /// A key with only `kty` set, the starting point of the `from_*` constructors.
     fn with_kty(kty: &str) -> Self {
@@ -203,6 +242,7 @@ impl Jwk {
             y: None,
             n: None,
             e: None,
+            pub_key: None,
             key_use: None,
             key_ops: None,
             alg: None,
@@ -325,6 +365,26 @@ impl Jwk {
         Ok(jwk)
     }
 
+    /// An `AKP` key for `alg` (RFC 9964 §3) from its ML-DSA public key as FIPS 204 encodes it
+    /// (`pkEncode`), with `alg` set, as `AKP` requires.
+    ///
+    /// Every octet string of the right length is an ML-DSA public key, so only the length is
+    /// checked. Needs no Cargo feature.
+    ///
+    /// # Errors
+    ///
+    /// [`JwkError::InvalidKey`] when `alg` is not ML-DSA-44, ML-DSA-65 or ML-DSA-87 and
+    /// [`JwkError::InvalidKeyLength`] when `public` is not 1312, 1952 or 2592 bytes as its
+    /// parameter set requires.
+    pub fn from_ml_dsa_public(alg: JwsAlgorithm, public: &[u8]) -> Result<Self, JwkError> {
+        let set = akp_parameter_set(alg.as_str())?;
+        check_ml_dsa_public_key(set, public)?;
+        let mut jwk = Self::with_kty("AKP");
+        jwk.alg = Some(alg.as_str().to_owned());
+        jwk.pub_key = Some(base64url::encode(public));
+        Ok(jwk)
+    }
+
     /// A key from a DER-encoded X.509 `SubjectPublicKeyInfo` (RFC 5280 §4.1.2.7), the form in
     /// which KMS and HSM backends return public keys.
     ///
@@ -336,6 +396,8 @@ impl Jwk {
     /// - [`JwkError::InvalidKey`] when `der` does not decode as a key of the hinted type.
     /// - [`JwkError::KeyMismatch`] when it decodes but has another size than hinted.
     /// - [`JwkError::FeatureDisabled`] when the hinted type is compiled out.
+    /// - [`JwkError::UnsupportedKeyType`] for [`KeyType::Akp`]: this crate does not parse
+    ///   ML-DSA `SubjectPublicKeyInfo`s; build the key with [`Jwk::from_ml_dsa_public`].
     pub fn from_spki_der(hint: KeyType, der: &[u8]) -> Result<Self, JwkError> {
         match hint {
             KeyType::Ed25519 => {
@@ -401,10 +463,14 @@ impl Jwk {
                 key: "RSA",
                 feature: "rsa",
             }),
+            KeyType::Akp => Err(JwkError::UnsupportedKeyType {
+                kty: "AKP".to_owned(),
+                crv: None,
+            }),
         }
     }
 
-    /// The key type (`kty`): `OKP`, `EC`, `RSA` or `oct`.
+    /// The key type (`kty`): `OKP`, `EC`, `RSA`, `oct` or `AKP`.
     pub fn kty(&self) -> &str {
         &self.kty
     }
@@ -432,6 +498,11 @@ impl Jwk {
     /// The base64url RSA public exponent `e`.
     pub fn e(&self) -> Option<&str> {
         self.e.as_deref()
+    }
+
+    /// The base64url public key (`pub`) of an `AKP` key.
+    pub fn pub_key(&self) -> Option<&str> {
+        self.pub_key.as_deref()
     }
 
     /// The public key use (`use`): `sig` or `enc`.
@@ -464,8 +535,8 @@ impl Jwk {
         &mut self.additional
     }
 
-    /// Whether the key carries private parameters (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth` or
-    /// `k`).
+    /// Whether the key carries private parameters (`d`, `p`, `q`, `dp`, `dq`, `qi`, `oth`, `k`
+    /// or `priv`).
     pub fn is_private(&self) -> bool {
         !self.private.is_empty()
     }
@@ -513,8 +584,9 @@ impl Jwk {
     /// The RFC 7638 JWK thumbprint with SHA-256, as base64url.
     ///
     /// The thumbprint hashes the required members of the key type (`crv`, `kty`, `x`, `y` for
-    /// `EC`; `crv`, `kty`, `x` for `OKP`; `e`, `kty`, `n` for `RSA`; `k`, `kty` for `oct`) in
-    /// lexicographic order with no whitespace, exactly as they appear in the key.
+    /// `EC`; `crv`, `kty`, `x` for `OKP`; `e`, `kty`, `n` for `RSA`; `k`, `kty` for `oct`; `alg`,
+    /// `kty`, `pub` for `AKP`, RFC 9964 §6) in lexicographic order with no whitespace, exactly as
+    /// they appear in the key.
     ///
     /// # Errors
     ///
@@ -570,6 +642,11 @@ impl Jwk {
             "oct" => format!(
                 r#"{{"k":{},"kty":{kty}}}"#,
                 member("k", self.private.k.as_deref())?
+            ),
+            "AKP" => format!(
+                r#"{{"alg":{},"kty":{kty},"pub":{}}}"#,
+                member("alg", self.alg())?,
+                member("pub", self.pub_key())?
             ),
             _ => return Err(self.unsupported()),
         })
@@ -740,6 +817,16 @@ impl Jwk {
         })
     }
 
+    /// The parameter set and the public key of an `AKP` key for ML-DSA, checked as RFC 9964 §5
+    /// requires: `alg` present and ML-DSA, `pub` of the parameter set's length.
+    pub(crate) fn ml_dsa_public_key(&self) -> Result<(ParameterSet, Vec<u8>), JwkError> {
+        self.expect("ML-DSA", "AKP", None)?;
+        let set = akp_parameter_set(self.alg().ok_or(JwkError::MissingMember("alg"))?)?;
+        let public = decode_member("pub", self.pub_key())?;
+        check_ml_dsa_public_key(set, &public)?;
+        Ok((set, public))
+    }
+
     /// A [`jsonwebtoken::DecodingKey`] for this key, so a JWT can be verified with `jsonwebtoken`.
     ///
     /// Supports `OKP`/`Ed25519`, `EC`/`P-256`, `EC`/`P-384` and `RSA` keys, the types
@@ -811,6 +898,7 @@ impl fmt::Debug for Jwk {
             ("y", &self.y),
             ("n", &self.n),
             ("e", &self.e),
+            ("pub", &self.pub_key),
             ("use", &self.key_use),
             ("alg", &self.alg),
             ("kid", &self.kid),
